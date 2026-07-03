@@ -1,0 +1,46 @@
+[package]
+name = "forge-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rand.workspace = true
+regex.workspace = true
+base64.workspace = true
+percent-encoding.workspace = true
+shlex.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+futures.workspace = true
+url.workspace = true
+http.workspace = true
+tokio-tungstenite.workspace = true
+eventsource-stream.workspace = true
+graphql-parser.workspace = true
+serde_json_path.workspace = true
+jsonschema.workspace = true
+openapiv3.workspace = true
+rhai.workspace = true
+rusqlite.workspace = true
+oauth2.workspace = true
+tiny_http.workspace = true
+open.workspace = true
+csv.workspace = true
+quick-xml.workspace = true
+quick-junit.workspace = true
+similar.workspace = true
+cookie.workspace = true
+tempfile.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+pretty_assertions.workspace = true
