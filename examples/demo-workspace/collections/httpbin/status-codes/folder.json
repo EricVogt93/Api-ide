@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "Status Codes",
+  "description": "Requests exercising httpbin's arbitrary status code endpoint.",
+  "auth": {
+    "type": "inherit"
+  },
+  "order": [
+    "get-404.request.json"
+  ]
+}

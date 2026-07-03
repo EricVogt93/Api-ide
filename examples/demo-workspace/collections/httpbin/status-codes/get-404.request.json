@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "name": "Get 404",
+  "description": "Requests a guaranteed 404 response to demonstrate a negative status assertion.",
+  "method": "GET",
+  "url": "{{baseUrl}}/status/404",
+  "auth": {
+    "type": "inherit"
+  },
+  "body": {
+    "type": "none"
+  },
+  "assertions": [
+    { "type": "statusCode", "op": "eq", "value": 404 }
+  ],
+  "settings": {
+    "skipInRuns": false
+  }
+}

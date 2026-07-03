@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "name": "Auth Bearer",
+  "description": "Demonstrates bearer authentication using a secret environment variable.",
+  "method": "GET",
+  "url": "{{baseUrl}}/bearer",
+  "auth": {
+    "type": "bearer",
+    "token": "{{apiToken}}"
+  },
+  "body": {
+    "type": "none"
+  },
+  "assertions": [
+    { "type": "statusCode", "op": "eq", "value": 200 }
+  ]
+}

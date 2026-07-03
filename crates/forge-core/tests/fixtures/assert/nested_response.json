@@ -1,0 +1,11 @@
+{
+  "id": 7,
+  "name": "gizmo",
+  "in_stock": false,
+  "tags": ["new", "featured"],
+  "pricing": {
+    "currency": "USD",
+    "amount": 19.99
+  },
+  "weird.field": "dots-in-key"
+}
