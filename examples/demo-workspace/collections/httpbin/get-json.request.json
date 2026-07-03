@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "name": "Get JSON",
+  "description": "Fetches a small sample JSON document and verifies its shape, content type and response time.",
+  "method": "GET",
+  "url": "{{baseUrl}}/json",
+  "auth": {
+    "type": "inherit"
+  },
+  "body": {
+    "type": "none"
+  },
+  "assertions": [
+    { "type": "statusCode", "op": "eq", "value": 200 },
+    { "type": "contentType", "value": "application/json" },
+    { "type": "jsonPath", "path": "$.slideshow.title", "op": "exists" },
+    { "type": "responseTimeBelow", "maxMs": 5000 }
+  ]
+}

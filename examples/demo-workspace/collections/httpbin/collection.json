@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "name": "HTTPBin",
+  "description": "Sample requests against https://httpbin.org demonstrating collections, environments, assertions, variable extraction and folders.",
+  "variables": {
+    "contentType": "application/json"
+  },
+  "auth": {
+    "type": "none"
+  },
+  "order": [
+    "get-json.request.json",
+    "post-echo.request.json",
+    "auth-bearer.request.json",
+    "status-codes"
+  ]
+}

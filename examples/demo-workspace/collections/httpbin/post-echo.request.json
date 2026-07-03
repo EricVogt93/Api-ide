@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "name": "Post Echo",
+  "description": "Posts a JSON payload containing a freshly generated UUID and verifies httpbin's echo, extracting the generated id into a variable for later requests.",
+  "method": "POST",
+  "url": "{{baseUrl}}/post",
+  "auth": {
+    "type": "inherit"
+  },
+  "body": {
+    "type": "json",
+    "text": "{\n  \"id\": \"{{$uuid}}\",\n  \"source\": \"forge-demo\"\n}"
+  },
+  "assertions": [
+    { "type": "statusCode", "op": "eq", "value": 200 },
+    { "type": "jsonPath", "path": "$.url", "op": "equals", "value": "https://httpbin.org/post" },
+    { "type": "jsonPath", "path": "$.json.source", "op": "equals", "value": "forge-demo" }
+  ],
+  "extractors": [
+    { "source": "jsonPath", "expr": "$.json.id", "var": "echoedId", "scope": "runtime" }
+  ]
+}
