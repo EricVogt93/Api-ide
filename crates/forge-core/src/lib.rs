@@ -6,4 +6,16 @@
 //! curl/code-snippet conversion and execution history. Both the GUI and
 //! the CLI are thin shells over this crate.
 
+pub mod assert;
+pub mod convert;
+pub mod exec;
+pub mod history;
+pub mod model;
+pub mod openapi;
+pub mod protocols;
+pub mod runner;
+pub mod script;
+pub mod store;
+pub mod vars;
+
 pub const FORMAT_VERSION: u32 = 1;

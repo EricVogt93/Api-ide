@@ -27,7 +27,11 @@ percent-encoding = "2"
 shlex = "2"
 # http / async
 reqwest = { version = "0.13", default-features = false, features = [
-    "rustls-tls",
+    "rustls",
+    "rustls-native-certs",
+    "http2",
+    "charset",
+    "system-proxy",
     "cookies",
     "json",
     "multipart",
@@ -54,7 +58,7 @@ openapiv3 = "2"
 # scripting
 rhai = { version = "1", features = ["sync", "serde"] }
 # storage
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 # auth
 oauth2 = "5"
 tiny_http = "0.12"
