@@ -29,6 +29,7 @@ serde_json_path.workspace = true
 jsonschema.workspace = true
 openapiv3.workspace = true
 rhai.workspace = true
+rquickjs.workspace = true
 rusqlite.workspace = true
 oauth2.workspace = true
 tiny_http.workspace = true

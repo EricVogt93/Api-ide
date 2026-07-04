@@ -57,6 +57,7 @@ jsonschema = { version = "0.46", default-features = false }
 openapiv3 = "2"
 # scripting
 rhai = { version = "1", features = ["sync", "serde"] }
+rquickjs = { version = "0.12", features = ["bindgen"] }
 # storage
 rusqlite = { version = "0.37", features = ["bundled"] }
 # auth
