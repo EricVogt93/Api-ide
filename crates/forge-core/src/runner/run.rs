@@ -1,8 +1,8 @@
 //! The run loop: sequential execution with variable chaining, scripts,
 //! assertions and event streaming.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::assert::{apply_extractors, evaluate_all};
 use crate::exec::HttpEngine;
 use crate::model::{AuthConfig, Environment, SecretValues};
-use crate::script::ScriptEngine;
+use crate::script::Scripting;
 use crate::store::{CollectionNode, RequestNode, TreeNode, Workspace};
 use crate::vars::VarScopes;
 
@@ -25,6 +25,17 @@ struct PlannedRequest<'a> {
     folder_vars: Vec<&'a BTreeMap<String, String>>,
     /// Nearest ancestor first, collection auth last (outermost).
     auth_chain: AuthChain<'a>,
+    /// Suite lifecycle hooks in scope for this request, outermost
+    /// (collection) first, innermost (nearest folder) last.
+    hook_chain: Vec<HookScope<'a>>,
+}
+
+/// One collection/folder's suite hooks, identified by its directory (used
+/// to fire `beforeAll`/`afterAll` exactly once per run per scope).
+#[derive(Clone, Copy)]
+struct HookScope<'a> {
+    dir: &'a Path,
+    hooks: &'a crate::model::SuiteHooks,
 }
 
 /// Execute `scope` sequentially, streaming [`RunEvent`]s as they happen.
@@ -59,7 +70,13 @@ pub async fn run(
 
     let _ = events.send(RunEvent::RunStarted { total, iterations: iteration_count });
 
-    let script_engine = ScriptEngine::new();
+    // `beforeAll`/`afterAll` fire once per run (not once per data-driven
+    // iteration): precompute, for every collection/folder that has at least
+    // one non-`skip_in_runs` request under it, the static planned-list
+    // index of its first and last such request.
+    let (first_index, last_index) = hook_scope_bounds(&planned);
+
+    let scripting = Scripting::new();
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut skipped = 0usize;
@@ -75,7 +92,7 @@ pub async fn run(
             let _ = events.send(RunEvent::IterationStarted { iteration: iter_idx });
         }
 
-        for planned_req in &planned {
+        for (planned_idx, planned_req) in planned.iter().enumerate() {
             let def = &planned_req.node.def;
 
             if stop_remaining || cancel.is_cancelled() {
@@ -98,30 +115,71 @@ pub async fn run(
                 iteration: iter_idx,
             });
 
-            let mut scopes = VarScopes::new()
-                .with_collection(planned_req.collection_vars)
-                .with_folders(planned_req.folder_vars.iter().copied());
-            if let Some((env, secrets)) = env_pair {
-                scopes = scopes.with_environment(env, secrets);
-            }
-            scopes.set_iteration_row(row.clone());
-            for (k, v) in &runtime_vars {
-                scopes.set_runtime(k.clone(), v.clone());
-            }
-
-            let outcome = execute_one(
-                workspace,
+            // Hooks run first — they mutate `runtime_vars`, and the var
+            // scope built below must see whatever they set (e.g. a
+            // `beforeEach` value used in this very request's URL/headers).
+            let mut outcome = match run_before_hooks(
+                &scripting,
                 planned_req,
-                &scopes,
-                engine,
-                &script_engine,
-                &mut runtime_vars,
-                id,
-                name,
+                planned_idx,
                 iter_idx,
-                &cancel,
-            )
-            .await;
+                &first_index,
+                &mut runtime_vars,
+            ) {
+                Err(failure) => RequestOutcome {
+                    id: id.clone(),
+                    name: name.clone(),
+                    iteration: iter_idx,
+                    result: Err(failure.message),
+                    assertions: Vec::new(),
+                    script_log: failure.log,
+                    script_error: None,
+                    extracted: Vec::new(),
+                },
+                Ok(before_log) => {
+                    let mut scopes = VarScopes::new()
+                        .with_collection(planned_req.collection_vars)
+                        .with_folders(planned_req.folder_vars.iter().copied());
+                    if let Some((env, secrets)) = env_pair {
+                        scopes = scopes.with_environment(env, secrets);
+                    }
+                    scopes.set_iteration_row(row.clone());
+                    for (k, v) in &runtime_vars {
+                        scopes.set_runtime(k.clone(), v.clone());
+                    }
+
+                    let mut outcome = execute_one(
+                        workspace,
+                        planned_req,
+                        &scopes,
+                        engine,
+                        &scripting,
+                        &mut runtime_vars,
+                        id,
+                        name,
+                        iter_idx,
+                        &cancel,
+                    )
+                    .await;
+                    if !before_log.is_empty() {
+                        let mut log = before_log;
+                        log.append(&mut outcome.script_log);
+                        outcome.script_log = log;
+                    }
+                    outcome
+                }
+            };
+
+            run_after_hooks(
+                &scripting,
+                planned_req,
+                planned_idx,
+                iter_idx,
+                iteration_count,
+                &last_index,
+                &mut runtime_vars,
+                &mut outcome,
+            );
 
             let ok = outcome.passed();
             let _ = events.send(RunEvent::RequestFinished(Box::new(outcome)));
@@ -152,6 +210,131 @@ pub async fn run(
     Ok(summary)
 }
 
+/// For every collection/folder dir that has at least one non-`skip_in_runs`
+/// request under it, the static planned-list index of its first
+/// (`first_index`) and last (`last_index`) such request.
+fn hook_scope_bounds(planned: &[PlannedRequest<'_>]) -> (HashMap<PathBuf, usize>, HashMap<PathBuf, usize>) {
+    let mut first_index = HashMap::new();
+    let mut last_index = HashMap::new();
+    for (idx, p) in planned.iter().enumerate() {
+        if p.node.def.settings.skip_in_runs {
+            continue;
+        }
+        for scope in &p.hook_chain {
+            first_index.entry(scope.dir.to_path_buf()).or_insert(idx);
+            last_index.insert(scope.dir.to_path_buf(), idx);
+        }
+    }
+    (first_index, last_index)
+}
+
+/// A `beforeAll`/`beforeEach` hook failure: the request it was guarding
+/// never runs.
+struct HookFailure {
+    message: String,
+    log: Vec<String>,
+}
+
+/// Run every applicable `beforeAll` (only for scopes whose first executed
+/// request is this one, and only in the first iteration) then `beforeEach`
+/// hook for `planned_req`, outermost scope first. Vars set by hooks that do
+/// run — including the one that fails — are merged into `runtime_vars`
+/// immediately. `Ok(log)` carries every hook's log lines (prefixed `hook:`)
+/// to be prepended to the request's own outcome; `Err` means the first
+/// hook error, and the request never executes.
+fn run_before_hooks(
+    scripting: &Scripting,
+    planned_req: &PlannedRequest<'_>,
+    planned_idx: usize,
+    iter_idx: usize,
+    first_index: &HashMap<PathBuf, usize>,
+    runtime_vars: &mut BTreeMap<String, String>,
+) -> Result<Vec<String>, HookFailure> {
+    let mut log = Vec::new();
+    for scope in &planned_req.hook_chain {
+        if iter_idx == 0 && first_index.get(scope.dir) == Some(&planned_idx) {
+            if let Some(script) = &scope.hooks.before_all {
+                let out = scripting.run_hook(scope.hooks.language, script, runtime_vars);
+                log.extend(out.log.into_iter().map(|l| format!("hook: {l}")));
+                for (k, v) in out.vars_set {
+                    runtime_vars.insert(k, v);
+                }
+                if let Some(err) = out.error {
+                    return Err(HookFailure { message: format!("beforeAll hook failed: {err}"), log });
+                }
+            }
+        }
+        if let Some(script) = &scope.hooks.before_each {
+            let out = scripting.run_hook(scope.hooks.language, script, runtime_vars);
+            log.extend(out.log.into_iter().map(|l| format!("hook: {l}")));
+            for (k, v) in out.vars_set {
+                runtime_vars.insert(k, v);
+            }
+            if let Some(err) = out.error {
+                return Err(HookFailure { message: format!("beforeEach hook failed: {err}"), log });
+            }
+        }
+    }
+    Ok(log)
+}
+
+/// Run every applicable `afterEach` then `afterAll` (only for scopes whose
+/// last executed request is this one, and only in the final iteration) hook
+/// for `planned_req`, innermost scope first (the reverse of
+/// [`run_before_hooks`]). Both get `res` when the request actually
+/// produced one; hook errors never flip `outcome.passed()` — they're
+/// appended to `outcome.script_log` instead.
+#[allow(clippy::too_many_arguments)]
+fn run_after_hooks(
+    scripting: &Scripting,
+    planned_req: &PlannedRequest<'_>,
+    planned_idx: usize,
+    iter_idx: usize,
+    iteration_count: usize,
+    last_index: &HashMap<PathBuf, usize>,
+    runtime_vars: &mut BTreeMap<String, String>,
+    outcome: &mut RequestOutcome,
+) {
+    let Ok(exec_result) = outcome.result.clone() else { return };
+    let is_final_iter = iter_idx + 1 == iteration_count;
+
+    for scope in planned_req.hook_chain.iter().rev() {
+        if let Some(script) = &scope.hooks.after_each {
+            apply_post_hook(scripting, scope.hooks.language, script, &exec_result, runtime_vars, outcome, "afterEach");
+        }
+        if is_final_iter && last_index.get(scope.dir) == Some(&planned_idx) {
+            if let Some(script) = &scope.hooks.after_all {
+                apply_post_hook(scripting, scope.hooks.language, script, &exec_result, runtime_vars, outcome, "afterAll");
+            }
+        }
+    }
+}
+
+/// Run one `afterEach`/`afterAll` script and fold its output into
+/// `outcome`: log lines (prefixed `hook:`), assertions, and `vars.set`
+/// calls always merge in; an error is appended to the log (prefixed with
+/// `label`) without failing the request.
+#[allow(clippy::too_many_arguments)]
+fn apply_post_hook(
+    scripting: &Scripting,
+    lang: crate::model::ScriptLang,
+    script: &str,
+    res: &crate::exec::ExecutionResult,
+    runtime_vars: &mut BTreeMap<String, String>,
+    outcome: &mut RequestOutcome,
+    label: &str,
+) {
+    let out = scripting.run_post(lang, script, res, runtime_vars);
+    outcome.script_log.extend(out.log.into_iter().map(|l| format!("hook: {l}")));
+    outcome.assertions.extend(out.assertions);
+    for (k, v) in out.vars_set {
+        runtime_vars.insert(k, v);
+    }
+    if let Some(err) = out.error {
+        outcome.script_log.push(format!("{label}: {err}"));
+    }
+}
+
 /// Resolve, script and execute a single request, folding extractor / script
 /// output into `runtime_vars` as it goes.
 #[allow(clippy::too_many_arguments)]
@@ -160,7 +343,7 @@ async fn execute_one(
     planned: &PlannedRequest<'_>,
     scopes: &VarScopes,
     engine: &HttpEngine,
-    script_engine: &ScriptEngine,
+    scripting: &Scripting,
     runtime_vars: &mut BTreeMap<String, String>,
     id: String,
     name: String,
@@ -189,7 +372,7 @@ async fn execute_one(
     let mut script_error = None;
 
     if let Some(pre) = &def.scripts.pre_request {
-        let out = script_engine.run_pre(pre, &mut resolved, runtime_vars);
+        let out = scripting.run_pre(def.scripts.language, pre, &mut resolved, runtime_vars);
         script_log.extend(out.log);
         for (k, v) in out.vars_set {
             runtime_vars.insert(k, v);
@@ -249,7 +432,7 @@ async fn execute_one(
 
     let mut script_error = None;
     if let Some(post) = &def.scripts.post_response {
-        let out = script_engine.run_post(post, &exec_result, runtime_vars);
+        let out = scripting.run_post(def.scripts.language, post, &exec_result, runtime_vars);
         script_log.extend(out.log);
         assertions.extend(out.assertions);
         for (k, v) in out.vars_set {
@@ -321,17 +504,21 @@ fn plan_requests<'a>(workspace: &'a Workspace, scope: &RunScope) -> Result<Vec<P
     }
 }
 
-type Ancestors<'a> = Vec<(&'a BTreeMap<String, String>, &'a AuthConfig)>;
+/// Nearest-ancestor-last: outermost folder first, immediate parent folder
+/// last (collection is implicit — not included here, added separately).
+type Ancestors<'a> = Vec<(&'a Path, &'a BTreeMap<String, String>, &'a AuthConfig, &'a crate::model::SuiteHooks)>;
 
 fn build_planned<'a>(
     col: &'a CollectionNode,
     ancestors: &Ancestors<'a>,
     node: &'a RequestNode,
 ) -> PlannedRequest<'a> {
-    let folder_vars: Vec<&'a BTreeMap<String, String>> = ancestors.iter().rev().map(|(v, _)| *v).collect();
-    let mut auth_chain: AuthChain<'a> = ancestors.iter().rev().map(|(_, a)| *a).collect();
+    let folder_vars: Vec<&'a BTreeMap<String, String>> = ancestors.iter().rev().map(|(_, v, _, _)| *v).collect();
+    let mut auth_chain: AuthChain<'a> = ancestors.iter().rev().map(|(_, _, a, _)| *a).collect();
     auth_chain.push(&col.meta.auth);
-    PlannedRequest { node, collection_vars: &col.meta.variables, folder_vars, auth_chain }
+    let mut hook_chain = vec![HookScope { dir: &col.dir, hooks: &col.meta.hooks }];
+    hook_chain.extend(ancestors.iter().map(|(dir, _, _, hooks)| HookScope { dir, hooks }));
+    PlannedRequest { node, collection_vars: &col.meta.variables, folder_vars, auth_chain, hook_chain }
 }
 
 /// Collect every request under `children` unconditionally (depth-first,
@@ -347,7 +534,7 @@ fn collect_subtree<'a>(
             TreeNode::Request(r) => out.push(build_planned(col, &ancestors, r)),
             TreeNode::Folder(f) => {
                 let mut next = ancestors.clone();
-                next.push((&f.meta.variables, &f.meta.auth));
+                next.push((&f.dir, &f.meta.variables, &f.meta.auth, &f.meta.hooks));
                 collect_subtree(col, &f.children, next, out);
             }
         }
@@ -368,7 +555,7 @@ fn collect_folder<'a>(
     for child in children {
         if let TreeNode::Folder(f) = child {
             let mut next = ancestors.clone();
-            next.push((&f.meta.variables, &f.meta.auth));
+            next.push((&f.dir, &f.meta.variables, &f.meta.auth, &f.meta.hooks));
             if norm(&workspace.rel_id(&f.dir)) == norm(rel) {
                 collect_subtree(col, &f.children, next, out);
                 return true;
@@ -404,7 +591,7 @@ fn find_request_in<'a>(
             TreeNode::Request(_) => {}
             TreeNode::Folder(f) => {
                 let mut next = ancestors.clone();
-                next.push((&f.meta.variables, &f.meta.auth));
+                next.push((&f.dir, &f.meta.variables, &f.meta.auth, &f.meta.hooks));
                 if let Some(p) = find_request_in(col, &f.children, next, target) {
                     return Some(p);
                 }

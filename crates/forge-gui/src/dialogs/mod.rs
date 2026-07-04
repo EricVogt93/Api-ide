@@ -12,6 +12,7 @@
 pub mod about;
 pub mod curl_import;
 pub mod env_editor;
+pub mod hooks_editor;
 pub mod openapi_import;
 pub mod search;
 pub mod settings;
@@ -35,6 +36,7 @@ pub struct DialogManager {
     pub openapi_import: openapi_import::OpenApiImportState,
     pub snippet_export: snippet_export::SnippetExportState,
     pub env_editor: env_editor::EnvEditorState,
+    pub hooks_editor: hooks_editor::HooksEditorState,
 }
 
 /// Render whichever overlay dialogs are currently open. Call once per frame;
@@ -49,6 +51,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     openapi_import::show(ctx, state);
     snippet_export::show(ctx, state);
     env_editor::show(ctx, state);
+    hooks_editor::show(ctx, state);
 }
 
 /// Detect the global dialog-opening gestures that don't fit a single

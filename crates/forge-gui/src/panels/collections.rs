@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use egui::{RichText, Ui};
 
 use forge_core::convert::{to_curl, CurlExportOptions};
-use forge_core::model::{Method, RequestDef};
+use forge_core::model::{Method, RequestDef, SuiteHooks};
 use forge_core::runner::{RunOptions, RunScope};
 use forge_core::store::{
     create_collection, create_folder, create_request, delete_dir, delete_request, duplicate_request, rename_folder,
@@ -87,6 +87,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     let mut new_pending: Option<PendingAction> = None;
     let mut duplicate: Option<PathBuf> = None;
     let mut export_code: Option<String> = None;
+    let mut edit_hooks: Option<(PathBuf, bool)> = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         for row in &rows {
@@ -121,6 +122,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                             }
                             if ui.button("Delete").clicked() {
                                 new_pending = Some(PendingAction::DeleteDir(row.path.clone(), row.name.clone()));
+                                ui.close();
+                            }
+                            ui.separator();
+                            if ui.button("Edit Hooks...").clicked() {
+                                edit_hooks = Some((row.path.clone(), is_collection));
                                 ui.close();
                             }
                             ui.separator();
@@ -226,6 +232,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         if let Some(def) = def {
             state.dialogs.snippet_export.open(def);
         }
+    }
+
+    if let Some((path, is_collection)) = edit_hooks {
+        let hooks = state.workspace.as_ref().map(|ws| find_hooks(ws, &path, is_collection)).unwrap_or_default();
+        state.dialogs.hooks_editor.open(path, is_collection, hooks);
     }
 
     if let Some(scope) = run_scope {
@@ -408,6 +419,28 @@ fn close_tabs_matching(state: &mut AppState, predicate: impl Fn(&str) -> bool) {
     for idx in idxs {
         state.close_tab(idx);
     }
+}
+
+/// Look up the current suite hooks of the collection/folder at `dir`
+/// (empty if not found — e.g. the tree changed underneath a stale path).
+fn find_hooks(workspace: &Workspace, dir: &Path, is_collection: bool) -> SuiteHooks {
+    if is_collection {
+        return workspace.collections.iter().find(|c| c.dir == dir).map(|c| c.meta.hooks.clone()).unwrap_or_default();
+    }
+    fn search(children: &[TreeNode], dir: &Path) -> Option<SuiteHooks> {
+        for child in children {
+            if let TreeNode::Folder(f) = child {
+                if f.dir == dir {
+                    return Some(f.meta.hooks.clone());
+                }
+                if let Some(h) = search(&f.children, dir) {
+                    return Some(h);
+                }
+            }
+        }
+        None
+    }
+    workspace.collections.iter().find_map(|c| search(&c.children, dir)).unwrap_or_default()
 }
 
 /// Reload the workspace from disk after a mutating operation, keeping open

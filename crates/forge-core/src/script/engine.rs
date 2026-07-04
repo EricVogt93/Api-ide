@@ -136,6 +136,36 @@ impl ScriptEngine {
         }
     }
 
+    /// Run a suite lifecycle hook (`beforeAll`/`beforeEach`/`afterEach`/
+    /// `afterAll`). Exposes `vars`/`log`/`assert`/`test`/helpers, same as
+    /// [`Self::run_post`], but never binds `req` or `res` — hooks that need
+    /// the response (`afterEach`/`afterAll`) go through [`Self::run_post`]
+    /// instead, reusing its `res` plumbing.
+    pub fn run_hook(&self, script: &str, vars: &BTreeMap<String, String>) -> ScriptOutput {
+        let mut engine = self.lock_engine();
+
+        let vars_state = Arc::new(Mutex::new(vars.clone()));
+        let vars_sets = Arc::new(Mutex::new(Vec::new()));
+        let assertions = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::new()));
+
+        register_vars_type(&mut engine);
+        register_log(&mut engine, log.clone());
+        register_assertions(&mut engine, assertions.clone());
+
+        let mut scope = Scope::new();
+        scope.push("vars", VarsHandle::new(vars_state, vars_sets.clone()));
+
+        let (log, error) = run_script(&engine, script, &mut scope, &log);
+
+        ScriptOutput {
+            log,
+            error,
+            assertions: assertions.lock().map(|v| v.clone()).unwrap_or_default(),
+            vars_set: vars_sets.lock().map(|v| v.clone()).unwrap_or_default(),
+        }
+    }
+
     fn lock_engine(&self) -> std::sync::MutexGuard<'_, Engine> {
         self.engine.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -491,6 +521,37 @@ mod tests {
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
         assert_eq!(out.log, vec!["unit".to_string()]);
+    }
+
+    #[test]
+    fn hook_script_sets_vars_and_records_assertions_without_req_or_res() {
+        let engine = ScriptEngine::new();
+
+        let out = engine.run_hook(
+            r#"
+                vars.set("suite", "started");
+                assert(vars.get("suite") == "started", "suite var visible");
+                log("hook ran");
+            "#,
+            &empty_vars(),
+        );
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert_eq!(out.vars_set, vec![("suite".to_string(), "started".to_string())]);
+        assert_eq!(out.assertions.len(), 1);
+        assert!(out.assertions[0].passed);
+        assert_eq!(out.log, vec!["hook ran".to_string()]);
+    }
+
+    #[test]
+    fn hook_script_has_no_req_or_res_binding() {
+        let engine = ScriptEngine::new();
+
+        let out = engine.run_hook("req.url;", &empty_vars());
+        assert!(out.error.is_some(), "expected `req` to be unavailable in a hook script");
+
+        let out = engine.run_hook("res.status;", &empty_vars());
+        assert!(out.error.is_some(), "expected `res` to be unavailable in a hook script");
     }
 
     #[test]

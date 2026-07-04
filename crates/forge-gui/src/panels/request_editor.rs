@@ -10,7 +10,7 @@ use egui::{Color32, FontId, RichText, TextBuffer, TextEdit, Ui};
 use forge_core::assert::{generate_from_response, GenerateOptions};
 use forge_core::model::{
     ApiKeyPlacement, AuthConfig, BodyDef, ExtractScope, Extractor, ExtractorSource, KeyValue, Method,
-    MultipartPart, Param, ParamKind, PartContent, RawLanguage, RequestDef,
+    MultipartPart, Param, ParamKind, PartContent, RawLanguage, RequestDef, ScriptLang,
 };
 use forge_core::runner::{RunOptions, RunScope};
 use forge_core::store::{TreeNode, Workspace};
@@ -894,8 +894,35 @@ fn extract_tab(ui: &mut Ui, extractors: &mut Vec<Extractor>) -> bool {
     changed
 }
 
+/// A "Language: Rhai | JavaScript" combo box shared by the request editor's
+/// Scripts tab and the collections tree's hooks editor dialog. Returns
+/// `true` when the selection changed.
+pub fn language_combo(ui: &mut Ui, id_salt: &str, lang: &mut ScriptLang) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("Language:");
+        let label = match lang {
+            ScriptLang::Rhai => "Rhai",
+            ScriptLang::Js => "JavaScript",
+        };
+        egui::ComboBox::from_id_salt(id_salt).selected_text(label).show_ui(ui, |ui| {
+            if ui.selectable_value(lang, ScriptLang::Rhai, "Rhai").changed() {
+                changed = true;
+            }
+            if ui.selectable_value(lang, ScriptLang::Js, "JavaScript").changed() {
+                changed = true;
+            }
+        });
+    });
+    changed
+}
+
 fn scripts_tab(ui: &mut Ui, def: &mut RequestDef, scopes: &VarScopes) -> bool {
     let mut changed = false;
+    if language_combo(ui, "req-scripts-lang", &mut def.scripts.language) {
+        changed = true;
+    }
+    ui.add_space(4.0);
     ui.label("Pre-request script");
     let mut pre = def.scripts.pre_request.clone().unwrap_or_default();
     if code_editor(ui, "script-pre", &mut pre, Lang::Plain, Some(scopes), false, 6, true).changed() {
