@@ -37,3 +37,13 @@ pub const TRIANGLE_DOWN: &str = "\u{25BE}"; // ▾
 pub const CLOSE: &str = "\u{2715}"; // ✕
 /// Dirty-tab marker.
 pub const DIRTY: &str = "\u{25CF}"; // ●
+/// Bottom tool-window stripe: problems (errors & warnings).
+pub const PROBLEMS: &str = "\u{26A1}"; // ⚡
+/// Bottom tool-window stripe: embedded terminal.
+pub const TERMINAL: &str = "\u{203A}_"; // ›_
+/// Bottom tool-window stripe: application event log.
+pub const LOG: &str = "\u{2261}"; // ≡
+/// Error severity marker.
+pub const ERROR: &str = "\u{2716}"; // ✖
+/// Warning severity marker.
+pub const WARNING: &str = "\u{26A0}"; // ⚠

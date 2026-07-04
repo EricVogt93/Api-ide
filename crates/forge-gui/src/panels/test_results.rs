@@ -105,6 +105,11 @@ impl RunLog {
         self.run_id.is_some()
     }
 
+    /// All request nodes across every iteration (for the Problems view).
+    pub fn requests(&self) -> impl Iterator<Item = &RequestTreeNode> {
+        self.iterations.iter().flat_map(|i| i.requests.iter())
+    }
+
     /// Fold one event belonging to `run_id` into the tree. A no-op if this
     /// log isn't currently tracking that run (e.g. a stale event arriving
     /// after `clear()`/a newer run started).
@@ -211,14 +216,18 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     let mut new_selected: Option<Selected> = None;
     let mut open_tab: Option<String> = None;
 
+    let top_down = egui::Layout::top_down(egui::Align::Min);
     ui.horizontal(|ui| {
-        ui.allocate_ui(egui::vec2(tree_width, available.y), |ui| {
+        // allocate_ui inherits the surrounding (horizontal) layout, so the
+        // panes must switch back to top-down explicitly or tree rows flow
+        // sideways.
+        ui.allocate_ui_with_layout(egui::vec2(tree_width, available.y), top_down, |ui| {
             egui::ScrollArea::vertical().id_salt("run-tree-scroll").auto_shrink([false, false]).show(ui, |ui| {
                 render_tree(ui, state, theme, &mut new_selected, &mut open_tab);
             });
         });
         ui.separator();
-        ui.allocate_ui(egui::vec2((available.x - tree_width - 12.0).max(100.0), available.y), |ui| {
+        ui.allocate_ui_with_layout(egui::vec2((available.x - tree_width - 12.0).max(100.0), available.y), top_down, |ui| {
             egui::ScrollArea::vertical().id_salt("run-detail-scroll").auto_shrink([false, false]).show(ui, |ui| {
                 render_detail(ui, state, theme);
             });

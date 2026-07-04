@@ -15,6 +15,8 @@ use crate::panels::collections::CollectionsUiState;
 use crate::panels::console::ConsoleState;
 use crate::panels::cookies::CookiesUiState;
 use crate::panels::history::HistoryUiState;
+use crate::panels::log::EventLog;
+use crate::panels::terminal::TerminalState;
 use crate::panels::test_results::RunLog;
 use crate::theme::ThemeKind;
 use crate::widgets::response_view::ResponseViewState;
@@ -117,17 +119,31 @@ impl RunState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BottomTool {
     Run,
+    Problems,
+    Terminal,
+    Log,
     History,
     Console,
     Cookies,
 }
 
 impl BottomTool {
-    pub const ALL: [BottomTool; 4] = [BottomTool::Run, BottomTool::History, BottomTool::Console, BottomTool::Cookies];
+    pub const ALL: [BottomTool; 7] = [
+        BottomTool::Run,
+        BottomTool::Problems,
+        BottomTool::Terminal,
+        BottomTool::Log,
+        BottomTool::History,
+        BottomTool::Console,
+        BottomTool::Cookies,
+    ];
 
     pub fn label(&self) -> &'static str {
         match self {
             BottomTool::Run => "Run",
+            BottomTool::Problems => "Problems",
+            BottomTool::Terminal => "Terminal",
+            BottomTool::Log => "Log",
             BottomTool::History => "History",
             BottomTool::Console => "Console",
             BottomTool::Cookies => "Cookies",
@@ -163,6 +179,10 @@ pub struct AppState {
     pub history_ui: HistoryUiState,
     pub console: ConsoleState,
     pub cookies_ui: CookiesUiState,
+    /// Embedded terminal (bottom tool window).
+    pub terminal: TerminalState,
+    /// Application event log (bottom tool window).
+    pub log: EventLog,
     /// Font size (px) of the monospace text style, live-adjustable from the
     /// Settings dialog's Editor tab.
     pub editor_font_size: f32,
@@ -197,6 +217,8 @@ impl Default for AppState {
             history_ui: HistoryUiState::default(),
             console: ConsoleState::default(),
             cookies_ui: CookiesUiState::default(),
+            terminal: TerminalState::default(),
+            log: EventLog::default(),
             editor_font_size: 13.0,
             dialogs: DialogManager::default(),
             pending_workspace: None,

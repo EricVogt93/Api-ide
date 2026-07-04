@@ -123,11 +123,24 @@ fn render_tab(
 
                 if tab.run_id.is_some() {
                     ui.spinner();
-                    if ui.button(format!("{} Stop", crate::theme::icons::STOP)).clicked() {
+                    let stop = egui::Button::new(
+                        egui::RichText::new(format!("{} Stop", crate::theme::icons::STOP)).color(egui::Color32::WHITE),
+                    )
+                    .fill(theme.error_color());
+                    if ui.add(stop).clicked() {
                         *stop_clicked = true;
                     }
-                } else if ui.button(format!("{} Send", crate::theme::icons::PLAY)).clicked() {
-                    *send_clicked = true;
+                } else {
+                    // New-UI-style primary action: accent-filled Send button.
+                    let send = egui::Button::new(
+                        egui::RichText::new(format!("{} Send", crate::theme::icons::PLAY))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    )
+                    .fill(theme.accent_color());
+                    if ui.add(send).clicked() {
+                        *send_clicked = true;
+                    }
                 }
                 if ui.button("Export code...").clicked() {
                     *export_def = Some(tab.def.clone());

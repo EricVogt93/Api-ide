@@ -1,5 +1,6 @@
-//! Theming: complete [`egui::Style`]s for the two built-in themes, plus font
-//! setup and small icon glyph constants used across the shell.
+//! Theming: complete [`egui::Style`]s for the two built-in themes (JetBrains
+//! *New UI* Dark and Light), plus font setup and small icon glyph constants
+//! used across the shell.
 
 pub mod darcula;
 pub mod fonts;
@@ -15,12 +16,27 @@ pub enum ThemeKind {
     Light,
 }
 
+/// Shared New-UI spacing polish applied by both theme builders: more air
+/// between widgets, larger paddings, comfortable menus.
+pub(crate) fn polish_spacing(style: &mut egui::Style) {
+    let s = &mut style.spacing;
+    s.item_spacing = egui::vec2(8.0, 6.0);
+    s.button_padding = egui::vec2(10.0, 5.0);
+    s.menu_margin = egui::Margin::same(6);
+    s.window_margin = egui::Margin::same(10);
+    s.icon_width = 16.0;
+    s.icon_spacing = 6.0;
+    s.interact_size.y = 24.0;
+    s.combo_height = 240.0;
+    s.scroll = egui::style::ScrollStyle::thin();
+}
+
 impl ThemeKind {
     pub const ALL: [ThemeKind; 2] = [ThemeKind::Darcula, ThemeKind::Light];
 
     pub fn label(&self) -> &'static str {
         match self {
-            ThemeKind::Darcula => "Darcula",
+            ThemeKind::Darcula => "Dark",
             ThemeKind::Light => "Light",
         }
     }
@@ -63,6 +79,30 @@ impl ThemeKind {
         match self {
             ThemeKind::Darcula => darcula::ERROR,
             ThemeKind::Light => light::ERROR,
+        }
+    }
+
+    /// Accent color for warnings.
+    pub fn warn_color(&self) -> egui::Color32 {
+        match self {
+            ThemeKind::Darcula => darcula::WARN,
+            ThemeKind::Light => light::WARN,
+        }
+    }
+
+    /// The New UI accent blue (focus, active-tab underline, primary action).
+    pub fn accent_color(&self) -> egui::Color32 {
+        match self {
+            ThemeKind::Darcula => darcula::ACCENT,
+            ThemeKind::Light => light::ACCENT,
+        }
+    }
+
+    /// Dimmed/secondary text color (hints, timestamps, counters).
+    pub fn dim_color(&self) -> egui::Color32 {
+        match self {
+            ThemeKind::Darcula => darcula::TEXT_DIM,
+            ThemeKind::Light => light::TEXT_DIM,
         }
     }
 

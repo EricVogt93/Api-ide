@@ -31,7 +31,14 @@ pub struct SearchState {
     selected: usize,
     /// Set for one frame after opening, so the query box grabs focus.
     just_opened: bool,
-    last_shift_press: Option<Instant>,
+    /// Time of the last completed *bare* Shift tap (see
+    /// [`detect_double_shift`]).
+    last_tap: Option<Instant>,
+    /// A Shift key is currently held down.
+    shift_down: bool,
+    /// Another key/character was pressed while Shift was held — this press
+    /// is a modifier chord (e.g. typing `:`), not a bare tap.
+    shift_tainted: bool,
 }
 
 impl SearchState {
@@ -50,26 +57,49 @@ impl SearchState {
     }
 }
 
-/// Detect a bare double `Shift` press (no other modifier held) within
-/// [`DOUBLE_PRESS_WINDOW`]. Consumes matching key events from `ctx`'s input.
+/// Detect a bare double `Shift` tap within [`DOUBLE_PRESS_WINDOW`].
+///
+/// A *tap* is Shift pressed and released with no other key or text event in
+/// between — so typing shifted characters (`:`, `{`, uppercase letters)
+/// never counts, even though it presses Shift. Any interleaved key/text
+/// also invalidates a pending first tap, so `A<shift>:<shift>:` while
+/// typing a URL cannot accidentally open the dialog.
 pub fn detect_double_shift(ctx: &egui::Context, search: &mut SearchState) -> bool {
     let mut triggered = false;
     ctx.input(|input| {
         for event in &input.events {
-            if let egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } = event {
-                let is_shift = matches!(key, Key::ShiftLeft | Key::ShiftRight);
-                let bare = !modifiers.ctrl && !modifiers.alt && !modifiers.command;
-                if !is_shift || !bare {
-                    continue;
-                }
-                let now = Instant::now();
-                match search.last_shift_press {
-                    Some(prev) if now.duration_since(prev) <= DOUBLE_PRESS_WINDOW => {
-                        triggered = true;
-                        search.last_shift_press = None;
+            match event {
+                egui::Event::Key { key: Key::ShiftLeft | Key::ShiftRight, pressed, repeat: false, modifiers, .. } =>
+                {
+                    let bare = !modifiers.ctrl && !modifiers.alt && !modifiers.command;
+                    if *pressed {
+                        search.shift_down = true;
+                        search.shift_tainted = !bare;
+                    } else if search.shift_down {
+                        search.shift_down = false;
+                        if search.shift_tainted {
+                            search.last_tap = None;
+                            continue;
+                        }
+                        let now = Instant::now();
+                        match search.last_tap {
+                            Some(prev) if now.duration_since(prev) <= DOUBLE_PRESS_WINDOW => {
+                                triggered = true;
+                                search.last_tap = None;
+                            }
+                            _ => search.last_tap = Some(now),
+                        }
                     }
-                    _ => search.last_shift_press = Some(now),
                 }
+                egui::Event::Key { .. } | egui::Event::Text(_) => {
+                    // Any other key or typed character: taints a held Shift
+                    // and cancels a pending first tap.
+                    if search.shift_down {
+                        search.shift_tainted = true;
+                    }
+                    search.last_tap = None;
+                }
+                _ => {}
             }
         }
     });

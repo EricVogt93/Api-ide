@@ -10,7 +10,7 @@ use forge_core::store::{save_request, Workspace};
 use crate::bridge::{Bridge, Cmd, Evt};
 use crate::keymap::{self, ActionId};
 use crate::local;
-use crate::panels::{collections, console, cookies, history, request_editor, test_results};
+use crate::panels::{collections, console, cookies, history, log, problems, request_editor, terminal, test_results};
 use crate::state::{AppState, BottomTool, RunState, StatusMessage};
 use crate::theme::{icons, ThemeKind};
 
@@ -45,6 +45,7 @@ impl ForgeApp {
     /// environment/theme, visible tool windows).
     fn on_workspace_opened(&mut self, ctx: &egui::Context) {
         let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) else { return };
+        self.state.log.info("workspace", format!("Opened workspace {}", root.display()));
         self.state.history_store = history::open_store(&root);
         self.bridge.send(Cmd::LoadCookies { path: cookies::cookies_path(&root) });
         if let Some(snapshot) = local::load(&root) {
@@ -80,6 +81,7 @@ impl ForgeApp {
                 Evt::Run { run_id, event } => self.handle_run_event(run_id, event),
                 Evt::RunFailed { run_id, error } => {
                     self.clear_run(run_id);
+                    self.state.log.error("run", error.clone());
                     self.state.status = Some(StatusMessage::error(error));
                 }
                 Evt::Ws { conn_id, event } => console::handle_ws_event(&mut self.state, conn_id, event),
@@ -107,6 +109,23 @@ impl ForgeApp {
                 if self.state.run_state.run_id == Some(run_id) {
                     self.state.run_state.completed += 1;
                 }
+                match &outcome.result {
+                    Err(e) => self.state.log.error("run", format!("{}: {e}", outcome.name)),
+                    Ok(res) => {
+                        let failed = outcome.assertions.iter().filter(|a| !a.passed).count();
+                        if failed > 0 {
+                            self.state.log.warn(
+                                "run",
+                                format!("{}: {} of {} assertions failed", outcome.name, failed, outcome.assertions.len()),
+                            );
+                        } else {
+                            self.state.log.info(
+                                "run",
+                                format!("{} → {} ({} ms)", outcome.name, res.status, res.timing.total.as_millis()),
+                            );
+                        }
+                    }
+                }
                 if let Some(idx) = self.state.tab_index_for(&outcome.id) {
                     let tab = &mut self.state.tabs[idx];
                     tab.response = Some(*outcome);
@@ -119,10 +138,14 @@ impl ForgeApp {
             RunEvent::RunFinished(summary) => {
                 if self.state.run_state.run_id == Some(run_id) {
                     self.state.run_state.run_id = None;
-                    self.state.status = Some(StatusMessage::info(format!(
-                        "Run finished: {}/{} passed",
-                        summary.passed, summary.total
-                    )));
+                    let text = format!("Run finished: {}/{} passed", summary.passed, summary.total);
+                    if summary.failed > 0 {
+                        self.state.log.error("run", text.clone());
+                        self.state.status = Some(StatusMessage::error(text));
+                    } else {
+                        self.state.log.info("run", text.clone());
+                        self.state.status = Some(StatusMessage::info(text));
+                    }
                 }
             }
             RunEvent::IterationStarted { .. } | RunEvent::RequestStarted { .. } => {}
@@ -141,6 +164,15 @@ impl ForgeApp {
             if tab.run_id == Some(run_id) {
                 tab.run_id = None;
             }
+        }
+    }
+
+    /// Open (or focus) the tab of a request by workspace-relative id.
+    fn open_request_tab(&mut self, rel_id: &str) {
+        if let Some(def) =
+            self.state.workspace.as_ref().and_then(|ws| ws.find_request(rel_id).map(|n| n.def.clone()))
+        {
+            self.state.open_tab(rel_id.to_string(), def);
         }
     }
 
@@ -269,10 +301,13 @@ impl ForgeApp {
         let mut select_idx: Option<usize> = None;
         egui::ScrollArea::horizontal().id_salt("tab-bar-scroll").show(ui, |ui| {
             ui.horizontal(|ui| {
+                let accent = self.state.theme.accent_color();
                 for (i, tab) in self.state.tabs.iter().enumerate() {
                     let is_active = self.state.active_tab == Some(i);
-                    let frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(8, 4)).fill(if is_active {
-                        ui.visuals().selection.bg_fill.gamma_multiply(0.35)
+                    // New-UI tab look: flat labels, the active tab gets a
+                    // subtle fill plus a 2px accent underline.
+                    let frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 6)).fill(if is_active {
+                        ui.visuals().widgets.hovered.bg_fill.gamma_multiply(0.6)
                     } else {
                         egui::Color32::TRANSPARENT
                     });
@@ -288,6 +323,14 @@ impl ForgeApp {
                             });
                         })
                         .response;
+                    if is_active {
+                        let rect = resp.rect;
+                        let underline = egui::Rect::from_min_max(
+                            egui::pos2(rect.left() + 2.0, rect.bottom() - 2.0),
+                            egui::pos2(rect.right() - 2.0, rect.bottom()),
+                        );
+                        ui.painter().rect_filled(underline, 1.0, accent);
+                    }
                     let resp = ui.interact(resp.rect, resp.id.with("tab-click"), egui::Sense::click());
                     if resp.clicked() {
                         select_idx = Some(i);
@@ -310,14 +353,18 @@ impl ForgeApp {
         ui.horizontal(|ui| {
             // Bottom tool-window stripe: click to show/hide; clicking the
             // already-active one hides it (only one tool window at a time).
-            for (tool, icon, label) in [
-                (BottomTool::Run, icons::RUN, "Run"),
-                (BottomTool::History, icons::HISTORY, "History"),
-                (BottomTool::Console, icons::CONSOLE, "Console"),
-                (BottomTool::Cookies, icons::COOKIES, "Cookies"),
+            for (tool, icon) in [
+                (BottomTool::Run, icons::RUN),
+                (BottomTool::Problems, icons::PROBLEMS),
+                (BottomTool::Terminal, icons::TERMINAL),
+                (BottomTool::Log, icons::LOG),
+                (BottomTool::History, icons::HISTORY),
+                (BottomTool::Console, icons::CONSOLE),
+                (BottomTool::Cookies, icons::COOKIES),
             ] {
                 let active = self.state.bottom_tool == Some(tool);
-                if ui.selectable_label(active, icon).on_hover_text(label).clicked() {
+                let text = format!("{icon} {}", tool.label());
+                if ui.selectable_label(active, text).clicked() {
                     self.state.bottom_tool = if active { None } else { Some(tool) };
                 }
             }
@@ -449,6 +496,13 @@ impl eframe::App for ForgeApp {
                     ui,
                     |ui| match tool {
                         BottomTool::Run => test_results::show(ui, &mut self.state, &self.bridge),
+                        BottomTool::Problems => {
+                            if let Some(rel_id) = problems::show(ui, &mut self.state) {
+                                self.open_request_tab(&rel_id);
+                            }
+                        }
+                        BottomTool::Terminal => terminal::show(ui, &mut self.state),
+                        BottomTool::Log => log::show(ui, &mut self.state),
                         BottomTool::History => history::show(ui, &mut self.state),
                         BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
                         BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
