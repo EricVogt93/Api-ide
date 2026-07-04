@@ -17,6 +17,14 @@ pub enum ActionId {
     PrevTab,
     OpenWorkspace,
     ToggleCollections,
+    /// Open the Settings dialog (`dialogs::settings`).
+    OpenSettings,
+    /// Open the curl-import dialog (`dialogs::curl_import`).
+    ImportCurl,
+    /// Open Search Everywhere directly in actions-only mode
+    /// (`dialogs::search`); the all-sections mode is opened by a bare
+    /// double `Shift` press, detected outside this registry.
+    SearchActions,
 }
 
 /// One registered action: an id, a human-readable title (for menus / a
@@ -70,6 +78,21 @@ pub const ACTIONS: &[Action] = &[
         id: ActionId::ToggleCollections,
         title: "Toggle Collections",
         shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::Num1)),
+    },
+    Action {
+        id: ActionId::OpenSettings,
+        title: "Settings...",
+        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::S)),
+    },
+    Action {
+        id: ActionId::ImportCurl,
+        title: "Import curl...",
+        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::V)),
+    },
+    Action {
+        id: ActionId::SearchActions,
+        title: "Search Actions...",
+        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::A)),
     },
 ];
 

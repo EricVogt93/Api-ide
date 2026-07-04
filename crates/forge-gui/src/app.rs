@@ -18,7 +18,6 @@ use crate::theme::{icons, ThemeKind};
 pub struct ForgeApp {
     state: AppState,
     bridge: Bridge,
-    about_open: bool,
 }
 
 impl ForgeApp {
@@ -26,7 +25,7 @@ impl ForgeApp {
     /// command line.
     pub fn new(ctx: egui::Context, initial_workspace: Option<PathBuf>) -> Self {
         let bridge = Bridge::new(ctx.clone());
-        let mut app = Self { state: AppState::new(), bridge, about_open: false };
+        let mut app = Self { state: AppState::new(), bridge };
         if let Some(path) = initial_workspace {
             match Workspace::load(&path) {
                 Ok(ws) => {
@@ -140,50 +139,16 @@ impl ForgeApp {
         }
     }
 
-    fn dispatch_action(&mut self, ctx: &egui::Context, action: ActionId) {
-        match action {
-            ActionId::Save => {
-                if let Some(idx) = self.state.active_tab {
-                    save_tab(&mut self.state, idx);
-                }
-            }
-            ActionId::SaveAll => save_all(&mut self.state),
-            ActionId::Send => request_editor::send_active(&mut self.state, &self.bridge),
-            ActionId::CloseTab => {
-                if let Some(idx) = self.state.active_tab {
-                    self.state.close_tab(idx);
-                }
-            }
-            ActionId::NextTab => self.state.next_tab(),
-            ActionId::PrevTab => self.state.prev_tab(),
-            ActionId::OpenWorkspace => self.open_workspace_dialog(ctx),
-            ActionId::ToggleCollections => self.state.show_collections = !self.state.show_collections,
-        }
+    fn dispatch_action(&mut self, action: ActionId) {
+        crate::dialogs::dispatch_action(&mut self.state, &self.bridge, action);
     }
 
-    fn open_workspace_dialog(&mut self, ctx: &egui::Context) {
-        if let Some(path) = rfd::FileDialog::new().pick_folder() {
-            match Workspace::load(&path) {
-                Ok(ws) => {
-                    self.switch_workspace(ws, ctx);
-                    self.state.status = Some(StatusMessage::info(format!("Opened {}", path.display())));
-                }
-                Err(e) => self.state.status = Some(StatusMessage::error(e.to_string())),
-            }
-        }
+    fn open_workspace_dialog(&mut self) {
+        crate::dialogs::open_workspace(&mut self.state);
     }
 
-    fn new_workspace_dialog(&mut self, ctx: &egui::Context) {
-        if let Some(path) = rfd::FileDialog::new().pick_folder() {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Workspace".to_string());
-            match Workspace::create(&path, &name) {
-                Ok(ws) => {
-                    self.switch_workspace(ws, ctx);
-                    self.state.status = Some(StatusMessage::info(format!("Created workspace at {}", path.display())));
-                }
-                Err(e) => self.state.status = Some(StatusMessage::error(e.to_string())),
-            }
-        }
+    fn new_workspace_dialog(&mut self) {
+        crate::dialogs::new_workspace(&mut self.state);
     }
 
     fn run_workspace(&mut self) {
@@ -214,11 +179,11 @@ impl ForgeApp {
         ui.horizontal(|ui| {
             ui.menu_button("File", |ui| {
                 if ui.add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace)).clicked() {
-                    self.open_workspace_dialog(&ui.ctx().clone());
+                    self.open_workspace_dialog();
                     ui.close();
                 }
                 if ui.button("New Workspace...").clicked() {
-                    self.new_workspace_dialog(&ui.ctx().clone());
+                    self.new_workspace_dialog();
                     ui.close();
                 }
                 ui.separator();
@@ -231,6 +196,20 @@ impl ForgeApp {
                 }
                 if ui.add(Self::action_button(ui.ctx(), ActionId::SaveAll)).clicked() {
                     save_all(&mut self.state);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.add(Self::action_button(ui.ctx(), ActionId::ImportCurl)).clicked() {
+                    self.state.dialogs.curl_import.open();
+                    ui.close();
+                }
+                if ui.button("Import OpenAPI...").clicked() {
+                    self.state.dialogs.openapi_import.open();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.add(Self::action_button(ui.ctx(), ActionId::OpenSettings)).clicked() {
+                    self.state.dialogs.settings.open = true;
                     ui.close();
                 }
                 ui.separator();
@@ -264,10 +243,16 @@ impl ForgeApp {
                         }
                     }
                 });
+                ui.separator();
+                if ui.button("Manage Environments...").clicked() {
+                    let preferred = self.state.active_env.clone();
+                    self.state.dialogs.env_editor.open(preferred);
+                    ui.close();
+                }
             });
             ui.menu_button("Help", |ui| {
                 if ui.button("About Forge").clicked() {
-                    self.about_open = true;
+                    self.state.dialogs.about_open = true;
                     ui.close();
                 }
             });
@@ -391,27 +376,19 @@ impl ForgeApp {
             });
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
     }
-
-    fn about_window(&mut self, ctx: &egui::Context) {
-        if !self.about_open {
-            return;
-        }
-        let mut open = self.about_open;
-        egui::Window::new("About Forge").collapsible(false).resizable(false).open(&mut open).show(ctx, |ui| {
-            ui.label("Forge — an IntelliJ-style API testing IDE.");
-            ui.label(format!("forge-gui {}", env!("CARGO_PKG_VERSION")));
-        });
-        self.about_open = open;
-    }
 }
 
 impl eframe::App for ForgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.drain_bridge_events();
+        if let Some(ws) = self.state.pending_workspace.take() {
+            self.switch_workspace(ws, ui.ctx());
+        }
 
+        crate::dialogs::handle_global_shortcuts(ui.ctx(), &mut self.state);
         if let Some(action) = keymap::dispatch(ui.ctx()) {
             let ctx = ui.ctx().clone();
-            self.dispatch_action(&ctx, action);
+            self.dispatch_action(action);
         }
 
         egui::Panel::top("menu-bar").resizable(false).show(ui, |ui| {
@@ -454,7 +431,7 @@ impl eframe::App for ForgeApp {
 
         if self.state.show_environment {
             egui::Panel::right("right-panel").exact_size(260.0).resizable(true).size_range(180.0..=480.0).show(ui, |ui| {
-                environment_panel(ui, &self.state);
+                environment_panel(ui, &mut self.state);
             });
         }
 
@@ -477,6 +454,10 @@ impl eframe::App for ForgeApp {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
+            if self.state.workspace.is_none() {
+                crate::dialogs::welcome::show(ui, &mut self.state);
+                return;
+            }
             self.tab_bar(ui);
             ui.separator();
             if self.state.active_tab.is_some() {
@@ -488,7 +469,7 @@ impl eframe::App for ForgeApp {
             }
         });
 
-        self.about_window(ui.ctx());
+        crate::dialogs::show(ui.ctx(), &mut self.state, &self.bridge);
         self.toast(ui);
     }
 
@@ -503,8 +484,14 @@ impl eframe::App for ForgeApp {
 }
 
 /// Read-only environment variable list for the right tool window; secret
-/// values are masked.
-fn environment_panel(ui: &mut egui::Ui, state: &AppState) {
+/// values are masked, plus a "Manage..." button opening the environment
+/// editor dialog.
+fn environment_panel(ui: &mut egui::Ui, state: &mut AppState) {
+    if ui.button("Manage...").clicked() {
+        let preferred = state.active_env.clone();
+        state.dialogs.env_editor.open(preferred);
+    }
+    ui.separator();
     let Some(workspace) = &state.workspace else {
         ui.add_space(8.0);
         ui.weak("No workspace open.");
@@ -539,7 +526,7 @@ fn environment_panel(ui: &mut egui::Ui, state: &AppState) {
     });
 }
 
-fn save_tab(state: &mut AppState, idx: usize) {
+pub(crate) fn save_tab(state: &mut AppState, idx: usize) {
     let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else {
         state.status = Some(StatusMessage::error("No workspace open"));
         return;
@@ -555,7 +542,7 @@ fn save_tab(state: &mut AppState, idx: usize) {
     }
 }
 
-fn save_all(state: &mut AppState) {
+pub(crate) fn save_all(state: &mut AppState) {
     for idx in 0..state.tabs.len() {
         save_tab(state, idx);
     }

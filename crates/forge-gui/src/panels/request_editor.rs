@@ -29,6 +29,8 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     let mut send_clicked = false;
     let mut stop_clicked = false;
 
+    let mut export_def: Option<RequestDef> = None;
+
     {
         let AppState { workspace, tabs, active_tab, active_env, theme, .. } = state;
         let Some(idx) = *active_tab else {
@@ -90,6 +92,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                     } else if ui.button(format!("{} Send", crate::theme::icons::PLAY)).clicked() {
                         send_clicked = true;
                     }
+                    if ui.button("Export code...").clicked() {
+                        export_def = Some(tab.def.clone());
+                    }
                 });
 
                 ui.add_space(4.0);
@@ -140,6 +145,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         });
     }
 
+    if let Some(def) = export_def {
+        state.dialogs.snippet_export.open(def);
+    }
     if send_clicked {
         send_active(state, bridge);
     }

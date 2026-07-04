@@ -10,6 +10,7 @@ use forge_core::model::RequestDef;
 use forge_core::runner::{RequestOutcome, RunOptions, RunScope};
 use forge_core::store::Workspace;
 
+use crate::dialogs::DialogManager;
 use crate::panels::collections::CollectionsUiState;
 use crate::panels::console::ConsoleState;
 use crate::panels::cookies::CookiesUiState;
@@ -162,6 +163,16 @@ pub struct AppState {
     pub history_ui: HistoryUiState,
     pub console: ConsoleState,
     pub cookies_ui: CookiesUiState,
+    /// Font size (px) of the monospace text style, live-adjustable from the
+    /// Settings dialog's Editor tab.
+    pub editor_font_size: f32,
+    /// State of every dialog beyond the simple modals inlined in
+    /// `panels::collections` — see `crate::dialogs`.
+    pub dialogs: DialogManager,
+    /// A workspace opened by a dialog/welcome action, waiting for
+    /// `ForgeApp` to run the full switch flow at the top of the next frame
+    /// (history store, cookie load, UI-state restore).
+    pub pending_workspace: Option<Workspace>,
     next_run_id: u64,
 }
 
@@ -186,6 +197,9 @@ impl Default for AppState {
             history_ui: HistoryUiState::default(),
             console: ConsoleState::default(),
             cookies_ui: CookiesUiState::default(),
+            editor_font_size: 13.0,
+            dialogs: DialogManager::default(),
+            pending_workspace: None,
             next_run_id: 0,
         }
     }

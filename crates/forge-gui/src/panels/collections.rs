@@ -86,6 +86,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     let mut run_scope: Option<RunScope> = None;
     let mut new_pending: Option<PendingAction> = None;
     let mut duplicate: Option<PathBuf> = None;
+    let mut export_code: Option<String> = None;
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         for row in &rows {
@@ -159,6 +160,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                                 copy_curl = Some(row.rel_id.clone());
                                 ui.close();
                             }
+                            if ui.button("Export code...").clicked() {
+                                export_code = Some(row.rel_id.clone());
+                                ui.close();
+                            }
                             if ui.button("Run Request").clicked() {
                                 run_scope = Some(RunScope::Request(row.rel_id.clone()));
                                 ui.close();
@@ -213,6 +218,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                 Ok(()) => state.status = Some(StatusMessage::info("Copied curl command to clipboard")),
                 Err(e) => state.status = Some(StatusMessage::error(format!("clipboard error: {e}"))),
             }
+        }
+    }
+
+    if let Some(rel_id) = export_code {
+        let def = state.workspace.as_ref().and_then(|ws| ws.find_request(&rel_id).map(|node| node.def.clone()));
+        if let Some(def) = def {
+            state.dialogs.snippet_export.open(def);
         }
     }
 
