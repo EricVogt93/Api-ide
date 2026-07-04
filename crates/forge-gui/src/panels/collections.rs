@@ -179,15 +179,20 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                 }
             });
         }
-    });
 
-    // Root-level "New Collection" via a context menu on the empty area
-    // below the tree.
-    let empty_area = ui.interact(ui.min_rect(), ui.id().with("collections-empty"), egui::Sense::click());
-    empty_area.context_menu(|ui| {
-        if ui.button("New Collection").clicked() {
-            new_pending = Some(PendingAction::NewCollection);
-            ui.close();
+        // Root-level "New Collection" via a context menu on the empty area
+        // below the tree. Only the leftover space may take part in hit
+        // testing: an interact over `min_rect` would sit on top of every
+        // row and swallow their clicks.
+        let empty_rect = ui.available_rect_before_wrap();
+        if empty_rect.height() > 0.0 {
+            let empty_area = ui.interact(empty_rect, ui.id().with("collections-empty"), egui::Sense::click());
+            empty_area.context_menu(|ui| {
+                if ui.button("New Collection").clicked() {
+                    new_pending = Some(PendingAction::NewCollection);
+                    ui.close();
+                }
+            });
         }
     });
 
