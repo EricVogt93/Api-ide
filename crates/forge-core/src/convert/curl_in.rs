@@ -25,8 +25,10 @@ pub enum CurlParseError {
 /// this parser or not. Used to split attached forms (`-XPOST`) and to
 /// decide, for flags we don't otherwise implement, whether to also skip
 /// their value token.
-const VALUE_SHORT_FLAGS: &[char] =
-    &['A', 'b', 'c', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'o', 'r', 'T', 'u', 'U', 'w', 'x', 'X', 'C', 't'];
+const VALUE_SHORT_FLAGS: &[char] = &[
+    'A', 'b', 'c', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'o', 'r', 'T', 'u', 'U', 'w', 'x', 'X', 'C', 't', 'z', 'Y',
+    'y', 'P', 'Q',
+];
 
 /// Long curl flags (beyond the ones this parser implements) that are known
 /// to take a value. Used purely as a heuristic so an unrecognized flag's
@@ -61,6 +63,12 @@ const VALUE_LONG_FLAGS: &[&str] = &[
     "--telnet-option",
     "--form-string",
     "--http1.0",
+    "--proxy-cacert",
+    "--time-cond",
+    "--ciphers",
+    "--keepalive-time",
+    "--local-port",
+    "--max-filesize",
 ];
 
 /// Split a curl short-option cluster / attached-value token
@@ -141,6 +149,18 @@ fn urlencode_data_directive(raw: &str) -> String {
     percent_encode_form(raw)
 }
 
+/// If a raw `-d`/`--data*`/`--data-urlencode` directive references an
+/// on-disk file (curl's `@file` / `name=@file` convention), return a note
+/// explaining that the file's contents were not imported — otherwise the
+/// literal `@file` text would silently end up embedded in the body.
+fn data_file_note(raw: &str) -> Option<String> {
+    let file = match raw.strip_prefix('@') {
+        Some(f) => f,
+        None => raw.split_once('=')?.1.strip_prefix('@')?,
+    };
+    Some(format!("body references file @{file}; file contents were not imported"))
+}
+
 /// Strip scheme/query/fragment down to `host/path`, tolerating
 /// `{{variable}}` templates that `url::Url` would reject.
 fn host_and_path(url: &str) -> String {
@@ -169,7 +189,7 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
     let mut explicit_method: Option<Method> = None;
     let mut head_flag = false;
     let mut get_flag = false;
-    let mut positional_url: Option<String> = None;
+    let mut positional_urls: Vec<String> = Vec::new();
     let mut headers: Vec<KeyValue> = Vec::new();
     let mut data_segments: Vec<String> = Vec::new();
     let mut form_parts: Vec<MultipartPart> = Vec::new();
@@ -199,12 +219,25 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
                 let v = take_value(&mut iter, &tok)?;
                 headers.push(parse_header(&v));
             }
-            "-d" | "--data" | "--data-raw" | "--data-ascii" | "--data-binary" => {
+            "-d" | "--data" | "--data-ascii" | "--data-binary" => {
+                let v = take_value(&mut iter, &tok)?;
+                if let Some(note) = data_file_note(&v) {
+                    notes.push(note);
+                }
+                data_segments.push(v);
+            }
+            "--data-raw" => {
+                // `--data-raw` takes the value as literal text; unlike
+                // `-d`/`--data`, curl does not resolve a leading `@` to a
+                // file for it, so no file-import note is warranted here.
                 let v = take_value(&mut iter, &tok)?;
                 data_segments.push(v);
             }
             "--data-urlencode" => {
                 let v = take_value(&mut iter, &tok)?;
+                if let Some(note) = data_file_note(&v) {
+                    notes.push(note);
+                }
                 data_segments.push(urlencode_data_directive(&v));
             }
             "-F" | "--form" => {
@@ -239,7 +272,7 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
             "-G" | "--get" => get_flag = true,
             "--url" => {
                 let v = take_value(&mut iter, &tok)?;
-                positional_url.get_or_insert(v);
+                positional_urls.push(v);
             }
             "-o" | "--output" | "-w" | "--write-out" => {
                 iter.next();
@@ -259,13 +292,21 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
                         iter.next();
                     }
                 } else {
-                    positional_url.get_or_insert(other.to_string());
+                    positional_urls.push(other.to_string());
                 }
             }
         }
     }
 
-    let mut url = positional_url.ok_or(CurlParseError::MissingUrl)?;
+    // Prefer a token that looks like an absolute URL (has a scheme); this
+    // guards against a value we failed to recognize as belonging to some
+    // flag being mistaken for the URL when a real URL is also present.
+    let mut url = positional_urls
+        .iter()
+        .find(|u| u.contains("://"))
+        .cloned()
+        .or_else(|| positional_urls.into_iter().next())
+        .ok_or(CurlParseError::MissingUrl)?;
     if !url.contains("://") {
         url = format!("https://{url}");
     }
@@ -498,5 +539,43 @@ mod tests {
     fn missing_url_errors() {
         let err = parse_curl("curl -X GET").unwrap_err();
         assert_eq!(err, CurlParseError::MissingUrl);
+    }
+
+    #[test]
+    fn unknown_value_flag_with_dashdash_prefix_does_not_swallow_url() {
+        // --proxy-cacert wasn't in VALUE_LONG_FLAGS before; its value token
+        // (a path) used to be mistaken for the positional URL.
+        let def = parse_curl("curl --proxy-cacert /etc/ssl/cert.pem https://api.example.com/data").unwrap();
+        assert_eq!(def.url, "https://api.example.com/data");
+    }
+
+    #[test]
+    fn data_at_file_reference_emits_note() {
+        let def = parse_curl("curl https://example.com -d @payload.json").unwrap();
+        assert!(
+            def.description.contains("body references file @payload.json; file contents were not imported"),
+            "unexpected description: {}",
+            def.description
+        );
+        match &def.body {
+            BodyDef::Raw { text, .. } => assert_eq!(text, "@payload.json"),
+            other => panic!("expected Raw body, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn data_urlencode_named_at_file_reference_emits_note() {
+        let def = parse_curl("curl https://example.com --data-urlencode field=@payload.json").unwrap();
+        assert!(
+            def.description.contains("body references file @payload.json; file contents were not imported"),
+            "unexpected description: {}",
+            def.description
+        );
+    }
+
+    #[test]
+    fn data_raw_at_prefix_is_not_treated_as_file_reference() {
+        let def = parse_curl("curl https://example.com --data-raw @not-a-file").unwrap();
+        assert!(def.description.is_empty());
     }
 }

@@ -260,6 +260,11 @@ fn bridge_main(
                     save_cookies(&engine, &cookie_path);
                 }
                 Cmd::LoadCookies { path } => {
+                    // Always clear first, even if the file is missing or
+                    // fails to parse: otherwise cookies from a previously
+                    // open workspace leak into this one and get persisted
+                    // into *its* cookies.json on the next save.
+                    engine.cookies().clear();
                     if let Ok(data) = std::fs::read_to_string(&path) {
                         restore_cookies(&engine, &data);
                     }
@@ -312,5 +317,71 @@ fn restore_cookies(engine: &HttpEngine, json: &str) {
             set_cookie.push_str(&format!("; Expires={}", expires.to_rfc2822().replace("+0000", "GMT")));
         }
         engine.cookies().store(&url, &set_cookie);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    /// Poll `bridge` until an `Evt::Cookies` arrives (or panic after
+    /// `timeout`). The bridge thread runs its own async runtime, so replies
+    /// aren't necessarily available the instant a command is sent.
+    fn recv_cookies(bridge: &Bridge, timeout: Duration) -> Vec<StoredCookie> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(Evt::Cookies(rows)) = bridge.try_recv() {
+                return rows;
+            }
+            if Instant::now() > deadline {
+                panic!("timed out waiting for Evt::Cookies");
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// `Cmd::LoadCookies` is sent every time the GUI switches workspaces
+    /// (see `ForgeApp::on_workspace_opened`). It must clear the previous
+    /// workspace's cookies before restoring the new one's — even when the
+    /// new workspace has no `cookies.json` yet — otherwise cookies leak
+    /// across workspaces and get persisted into the wrong file.
+    #[test]
+    fn load_cookies_clears_previous_workspace_jar_first() {
+        let dir = std::env::temp_dir().join(format!("forge-gui-bridge-test-{}-{}", std::process::id(), line!()));
+        let _ = std::fs::create_dir_all(&dir);
+
+        let old_cookie = StoredCookie {
+            domain: "old.example.com".to_string(),
+            path: "/".to_string(),
+            name: "session".to_string(),
+            value: "old-workspace-value".to_string(),
+            expires: None,
+            secure: false,
+            http_only: false,
+        };
+        let old_path = dir.join("old_cookies.json");
+        std::fs::write(&old_path, serde_json::to_string(&vec![old_cookie]).expect("serialize")).expect("write");
+
+        // The "new" workspace has no cookies.json of its own yet.
+        let new_path = dir.join("new_cookies.json");
+
+        let bridge = Bridge::new(egui::Context::default());
+
+        // `Cmd::LoadCookies` itself replies with an `Evt::Cookies` snapshot
+        // once it's done, so there's no need for a separate `ListCookies`
+        // round-trip (which would race against — and double up with — that
+        // reply, since the bridge processes commands strictly in order).
+        bridge.send(Cmd::LoadCookies { path: old_path });
+        let rows = recv_cookies(&bridge, Duration::from_secs(5));
+        assert_eq!(rows.len(), 1, "expected the old workspace's cookie to have loaded");
+
+        bridge.send(Cmd::LoadCookies { path: new_path });
+        let rows = recv_cookies(&bridge, Duration::from_secs(5));
+        assert!(
+            rows.is_empty(),
+            "switching to a workspace with no cookies.json must clear cookies left over from the previous workspace, got {rows:?}"
+        );
     }
 }

@@ -281,6 +281,96 @@ async fn json_data_driven_iterations_parametrize_path() {
     assert_eq!(summary.passed, 2);
 }
 
+#[tokio::test]
+async fn runtime_vars_do_not_leak_across_iterations() {
+    // Row 1 extracts `token` from the response; row 2's extraction fails
+    // (non-JSON body). A second request in the same iteration reads back
+    // `{{token}}` — it must only see row 1's value during row 1, and must
+    // fail to resolve (not silently reuse row 1's stale value) during row 2.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items/1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"token":"row1-token"}"#))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items/2"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET")).and(path("/use")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Items").expect("create collection");
+
+    let mut extract_def = RequestDef::new("Extract Token", Method::Get, "{{baseUrl}}/items/:id");
+    extract_def.params.push(Param { kv: KeyValue::new("id", "{{id}}"), kind: ParamKind::Path });
+    extract_def.extractors.push(Extractor {
+        source: ExtractorSource::JsonPath { expr: "$.token".to_string() },
+        var: "token".to_string(),
+        scope: ExtractScope::Runtime,
+        enabled: true,
+    });
+    create_request(&col_dir, &extract_def).expect("create extract request");
+
+    let mut use_def = RequestDef::new("Use Token", Method::Get, "{{baseUrl}}/use");
+    use_def.headers.push(KeyValue::new("X-Token", "{{token}}"));
+    create_request(&col_dir, &use_def).expect("create use request");
+
+    let data_path = root.join("data.json");
+    std::fs::write(&data_path, r#"[{"id":"1"},{"id":"2"}]"#).expect("write data file");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: Some(DataSource::JsonFile(data_path)),
+        bail: false,
+        delay_ms: 0,
+    };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/items".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+
+    let events = drain(rx).await;
+    let mut outcomes = Vec::new();
+    for ev in &events {
+        if let RunEvent::RequestFinished(outcome) = ev {
+            outcomes.push((**outcome).clone());
+        }
+    }
+    assert_eq!(outcomes.len(), 4);
+    assert_eq!(summary.total, 4);
+
+    // Iteration 0: extraction succeeds, and "Use Token" resolves fine.
+    assert_eq!(outcomes[0].name, "Extract Token");
+    assert_eq!(outcomes[0].extracted, vec![("token".to_string(), "row1-token".to_string())]);
+    assert_eq!(outcomes[1].name, "Use Token");
+    assert!(outcomes[1].result.is_ok(), "{:?}", outcomes[1].result);
+
+    // Iteration 1: extraction fails (non-JSON body), so `token` must not
+    // still be set from iteration 0 — "Use Token" fails to resolve.
+    assert_eq!(outcomes[2].name, "Extract Token");
+    assert!(outcomes[2].extracted.is_empty());
+    assert_eq!(outcomes[3].name, "Use Token");
+    assert!(
+        outcomes[3].result.is_err(),
+        "expected row 2's Use Token to fail to resolve {{token}}, got {:?}",
+        outcomes[3].result
+    );
+}
+
 // ---------------------------------------------------------------------
 // bail / skip_in_runs
 // ---------------------------------------------------------------------
@@ -331,6 +421,57 @@ async fn bail_stops_after_first_failure() {
     assert_eq!(summary.skipped, 1);
 
     server.verify().await;
+}
+
+#[tokio::test]
+async fn bail_suppresses_iteration_started_for_fully_skipped_iterations() {
+    // With `bail` and a data-driven run, once iteration 0 fails, every
+    // request in iteration 1 is skipped without executing. `IterationStarted`
+    // should not be emitted for an iteration that will be skipped entirely.
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/a")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+
+    let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
+    a.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    create_request(&col_dir, &a).expect("create a");
+
+    let data_path = root.join("data.json");
+    std::fs::write(&data_path, r#"[{}, {}]"#).expect("write data file");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: Some(DataSource::JsonFile(data_path)),
+        bail: true,
+        delay_ms: 0,
+    };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+
+    assert_eq!(summary.total, 2);
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.skipped, 1);
+
+    let events = drain(rx).await;
+    let iteration_started_count =
+        events.iter().filter(|ev| matches!(ev, RunEvent::IterationStarted { .. })).count();
+    assert_eq!(iteration_started_count, 1, "iteration 1 is fully skipped and should not emit IterationStarted");
 }
 
 #[tokio::test]
@@ -457,6 +598,26 @@ async fn api_key_query_placement() {
 }
 
 #[tokio::test]
+async fn explicit_query_param_wins_over_api_key_query_auth() {
+    let (_dir, ws) = dummy_workspace();
+    let mut def = RequestDef::new("r", Method::Get, "https://example.com/search");
+    def.params.push(Param { kv: KeyValue::new("api_key", "user"), kind: ParamKind::Query });
+    def.auth = AuthConfig::ApiKey {
+        key: "api_key".to_string(),
+        value: "auth-value".to_string(),
+        placement: ApiKeyPlacement::Query,
+    };
+    let engine = HttpEngine::new();
+    let scopes = VarScopes::new();
+    let auth_chain: AuthChain = vec![];
+
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let url = url::Url::parse(&resolved.url).expect("valid url");
+    let values: Vec<_> = url.query_pairs().filter(|(k, _)| k == "api_key").map(|(_, v)| v.into_owned()).collect();
+    assert_eq!(values, vec!["user".to_string()]);
+}
+
+#[tokio::test]
 async fn oauth2_client_credentials_fetches_and_sets_bearer() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -577,6 +738,25 @@ async fn missing_scheme_defaults_to_https() {
 
     let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
     assert!(resolved.url.starts_with("https://example.com/ping"), "{}", resolved.url);
+}
+
+#[tokio::test]
+async fn scheme_less_url_with_scheme_looking_query_still_gets_https_prefix() {
+    // The query string contains "://" but the URL itself has no scheme;
+    // a naive `.contains("://")` check would wrongly treat this as already
+    // having a scheme and leave it unprefixed (which then fails to parse).
+    let (_dir, ws) = dummy_workspace();
+    let def = RequestDef::new("r", Method::Get, "api.example.com/redirect?next=https://evil.com");
+    let engine = HttpEngine::new();
+    let scopes = VarScopes::new();
+    let auth_chain: AuthChain = vec![];
+
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    assert!(
+        resolved.url.starts_with("https://api.example.com/redirect"),
+        "{}",
+        resolved.url
+    );
 }
 
 // ---------------------------------------------------------------------

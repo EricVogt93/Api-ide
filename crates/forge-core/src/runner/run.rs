@@ -60,14 +60,20 @@ pub async fn run(
     let _ = events.send(RunEvent::RunStarted { total, iterations: iteration_count });
 
     let script_engine = ScriptEngine::new();
-    let mut runtime_vars: BTreeMap<String, String> = BTreeMap::new();
     let mut passed = 0usize;
     let mut failed = 0usize;
     let mut skipped = 0usize;
     let mut stop_remaining = false;
 
     for (iter_idx, row) in iterations.iter().enumerate() {
-        let _ = events.send(RunEvent::IterationStarted { iteration: iter_idx });
+        // Fresh per iteration: chaining (extractors/scripts feeding later
+        // requests) is an intra-iteration concept, so a value extracted in
+        // row 1 must not leak into row 2.
+        let mut runtime_vars: BTreeMap<String, String> = BTreeMap::new();
+
+        if !stop_remaining && !cancel.is_cancelled() {
+            let _ = events.send(RunEvent::IterationStarted { iteration: iter_idx });
+        }
 
         for planned_req in &planned {
             let def = &planned_req.node.def;
@@ -229,6 +235,16 @@ async fn execute_one(
     }
     for err in &extract_report.errors {
         script_log.push(format!("extract: {err}"));
+    }
+    // Drop any stale value left over from a previous iteration for every
+    // enabled extractor that failed this time, so a failed extraction never
+    // silently reuses an older (possibly no-longer-valid) value.
+    let succeeded: std::collections::HashSet<&str> =
+        extract_report.values.iter().map(|(k, _)| k.as_str()).collect();
+    for ext in &def.extractors {
+        if ext.enabled && !succeeded.contains(ext.var.as_str()) {
+            runtime_vars.remove(&ext.var);
+        }
     }
 
     let mut script_error = None;

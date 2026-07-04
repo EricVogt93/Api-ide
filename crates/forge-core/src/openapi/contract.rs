@@ -124,19 +124,36 @@ pub fn scrub_schema(schema: Value) -> Value {
                 }
             }
             if nullable {
-                let new_type = match out.remove("type") {
-                    Some(Value::String(s)) => Value::Array(vec![Value::String(s), Value::String("null".into())]),
+                match out.remove("type") {
+                    Some(Value::String(s)) => {
+                        out.insert(
+                            "type".to_string(),
+                            Value::Array(vec![Value::String(s), Value::String("null".into())]),
+                        );
+                        Value::Object(out)
+                    }
                     Some(Value::Array(mut arr)) => {
                         if !arr.iter().any(|v| v.as_str() == Some("null")) {
                             arr.push(Value::String("null".into()));
                         }
-                        Value::Array(arr)
+                        out.insert("type".to_string(), Value::Array(arr));
+                        Value::Object(out)
                     }
-                    _ => Value::String("null".into()),
-                };
-                out.insert("type".to_string(), new_type);
+                    other_type => {
+                        // No usable `type` to merge `null` into (e.g. a bare
+                        // `allOf`/`$ref` composition) — injecting
+                        // `type: "null"` here would make the schema only
+                        // accept literal null. Wrap it as an `anyOf` instead
+                        // so the original (non-null) shape still validates.
+                        if let Some(t) = other_type {
+                            out.insert("type".to_string(), t);
+                        }
+                        serde_json::json!({ "anyOf": [Value::Object(out), {"type": "null"}] })
+                    }
+                }
+            } else {
+                Value::Object(out)
             }
-            Value::Object(out)
         }
         Value::Array(arr) => Value::Array(arr.into_iter().map(scrub_schema).collect()),
         other => other,
@@ -267,6 +284,28 @@ mod tests {
             scrubbed["properties"]["list"]["items"]["type"],
             serde_json::json!(["integer", "null"])
         );
+    }
+
+    #[test]
+    fn scrub_schema_nullable_without_type_wraps_in_any_of() {
+        // `allOf` + `nullable` with no sibling `type` — the previous
+        // fallback injected `type: "null"`, which rejected every
+        // non-null (but otherwise conforming) body.
+        let schema = serde_json::json!({
+            "allOf": [
+                {"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}
+            ],
+            "nullable": true
+        });
+        let scrubbed = scrub_schema(schema);
+        assert!(scrubbed.get("nullable").is_none());
+
+        let good = serde_json::json!({"id": 1});
+        assert!(jsonschema::is_valid(&scrubbed, &good), "expected non-null conforming body to validate");
+        assert!(jsonschema::is_valid(&scrubbed, &Value::Null), "expected null to still validate");
+
+        let bad = serde_json::json!({"id": "not-a-number"});
+        assert!(!jsonschema::is_valid(&scrubbed, &bad));
     }
 
     #[test]

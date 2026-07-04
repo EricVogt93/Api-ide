@@ -361,6 +361,8 @@ fn apply_pending(state: &mut AppState, pending: PendingAction) {
         Ok(None)
     })();
 
+    let succeeded = result.is_ok();
+
     match result {
         Ok(Some((old_rel, new_rel, new_name))) => {
             if let Some(tab) = state.tabs.iter_mut().find(|t| t.rel_id == old_rel) {
@@ -372,7 +374,40 @@ fn apply_pending(state: &mut AppState, pending: PendingAction) {
         Err(e) => state.status = Some(StatusMessage::error(e)),
     }
 
+    // Deleting a request/folder doesn't go through the rename tuple above
+    // (there's no "new" location), so close any tab(s) for the deleted
+    // path directly here.
+    if succeeded {
+        if let Some(root) = &root {
+            match &pending {
+                PendingAction::DeleteRequest(file, _) => {
+                    let rel = rel_id_of(root, file);
+                    close_tabs_matching(state, |r| r == rel);
+                }
+                PendingAction::DeleteDir(dir, _) => {
+                    let prefix = format!("{}/", rel_id_of(root, dir));
+                    close_tabs_matching(state, |r| r.starts_with(&prefix));
+                }
+                _ => {}
+            }
+        }
+    }
+
     reload_workspace(state);
+}
+
+/// Close every open tab whose `rel_id` satisfies `predicate` (used to close
+/// tabs for a request/folder that was just deleted), keeping `active_tab`
+/// consistent for each removal. Closing from the highest index down means
+/// earlier indices in `idxs` are never invalidated by an earlier removal —
+/// same invariant `AppState::close_tab` relies on for a single index.
+fn close_tabs_matching(state: &mut AppState, predicate: impl Fn(&str) -> bool) {
+    let mut idxs: Vec<usize> =
+        state.tabs.iter().enumerate().filter(|(_, t)| predicate(&t.rel_id)).map(|(i, _)| i).collect();
+    idxs.sort_unstable_by(|a, b| b.cmp(a));
+    for idx in idxs {
+        state.close_tab(idx);
+    }
 }
 
 /// Reload the workspace from disk after a mutating operation, keeping open
@@ -422,5 +457,73 @@ fn flatten_children(children: &[TreeNode], root: &Path, depth: usize, collapsed:
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_core::store::create_folder;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("forge-gui-collections-test-{}-{}-{}", std::process::id(), tag, line!()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn deleting_a_request_closes_its_open_tab() {
+        let dir = temp_dir("del-req");
+        Workspace::create(&dir, "WS").expect("create workspace");
+        let col_dir = create_collection(&dir, "Coll").expect("create collection");
+        let file =
+            create_request(&col_dir, &RequestDef::new("A", Method::Get, "https://a.example.com")).expect("create a");
+
+        let workspace = Workspace::load(&dir).expect("load workspace");
+        let rel = workspace.rel_id(&file);
+
+        let mut state = AppState::new();
+        state.workspace = Some(workspace);
+        state.open_tab(rel.clone(), RequestDef::new("A", Method::Get, "https://a.example.com"));
+        assert_eq!(state.tabs.len(), 1);
+
+        apply_pending(&mut state, PendingAction::DeleteRequest(file, "A".to_string()));
+
+        assert!(state.tabs.is_empty(), "the tab for the deleted request should have been closed");
+        assert_eq!(state.active_tab, None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_a_folder_closes_every_tab_under_it_but_not_siblings() {
+        let dir = temp_dir("del-folder");
+        Workspace::create(&dir, "WS").expect("create workspace");
+        let col_dir = create_collection(&dir, "Coll").expect("create collection");
+        let folder_dir = create_folder(&col_dir, "Sub").expect("create folder");
+        let file_in = create_request(&folder_dir, &RequestDef::new("Inside", Method::Get, "https://in.example.com"))
+            .expect("create inside");
+        let file_out = create_request(&col_dir, &RequestDef::new("Outside", Method::Get, "https://out.example.com"))
+            .expect("create outside");
+
+        let workspace = Workspace::load(&dir).expect("load workspace");
+        let rel_in = workspace.rel_id(&file_in);
+        let rel_out = workspace.rel_id(&file_out);
+
+        let mut state = AppState::new();
+        state.workspace = Some(workspace);
+        state.open_tab(rel_in.clone(), RequestDef::new("Inside", Method::Get, "https://in.example.com"));
+        state.open_tab(rel_out.clone(), RequestDef::new("Outside", Method::Get, "https://out.example.com"));
+        state.active_tab = Some(1);
+        assert_eq!(state.tabs.len(), 2);
+
+        apply_pending(&mut state, PendingAction::DeleteDir(folder_dir, "Sub".to_string()));
+
+        assert_eq!(state.tabs.len(), 1, "only the tab under the deleted folder should have been closed");
+        assert_eq!(state.tabs[0].rel_id, rel_out);
+        assert_eq!(state.active_tab, Some(0));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

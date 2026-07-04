@@ -282,6 +282,7 @@ async fn strips_authorization_on_cross_origin_redirect() {
 
     let mut req = get(format!("{}/start", origin.uri()));
     req.headers.push(("Authorization".to_string(), "Bearer secret-token".to_string()));
+    req.headers.push(("Cookie".to_string(), "session=explicit-cookie".to_string()));
 
     let engine = HttpEngine::new();
     let result = engine.execute(req, CancellationToken::new()).await.expect("ok");
@@ -290,6 +291,7 @@ async fn strips_authorization_on_cross_origin_redirect() {
     let received = target.received_requests().await.expect("recording enabled");
     assert_eq!(received.len(), 1);
     assert!(received[0].headers.get("authorization").is_none());
+    assert!(received[0].headers.get("cookie").is_none());
 }
 
 #[tokio::test]

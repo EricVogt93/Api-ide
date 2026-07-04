@@ -194,7 +194,13 @@ impl HttpEngine {
                     };
 
                     if origin_of(&current_url) != origin_of(&next_url) {
-                        current_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("authorization"));
+                        // Cookie-jar cookies are already scoped per-hop by
+                        // the jar itself; an explicit user-set `Cookie`
+                        // header is not, so it must be stripped here too —
+                        // same reasoning as `Authorization`.
+                        current_headers.retain(|(k, _)| {
+                            !k.eq_ignore_ascii_case("authorization") && !k.eq_ignore_ascii_case("cookie")
+                        });
                     }
 
                     current_url = next_url;

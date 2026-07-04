@@ -123,7 +123,16 @@ pub async fn resolve_request(
         let v = interpolate(&p.kv.value, scopes)?;
         query_additions.push((p.kv.key.clone(), v));
     }
-    query_additions.extend(auth_query);
+    for (k, v) in auth_query {
+        // "Explicit wins": don't clobber a query param the user already
+        // defined (either as an explicit `Param` row or already present in
+        // the URL's own query string) with ApiKey-in-query auth.
+        let already_present = query_additions.iter().any(|(qk, _)| *qk == k)
+            || url.query_pairs().any(|(qk, _)| qk == k.as_str());
+        if !already_present {
+            query_additions.push((k, v));
+        }
+    }
     if !query_additions.is_empty() {
         let mut qp = url.query_pairs_mut();
         for (k, v) in &query_additions {
@@ -260,11 +269,30 @@ fn substitute_path_params(
 
 /// Prepend `https://` when `url` has no scheme.
 fn ensure_scheme(url: &str) -> String {
-    if url.contains("://") {
+    if has_scheme(url) {
         url.to_string()
     } else {
         format!("https://{url}")
     }
+}
+
+/// Whether `url` starts with a valid URI scheme (`scheme://...`). Unlike a
+/// bare `url.contains("://")` check, this only looks at the start of the
+/// string, so a scheme-less URL whose *query string* happens to contain
+/// `"://"` (e.g. `api.example.com/redirect?next=https://evil.com`) is
+/// correctly treated as having no scheme.
+fn has_scheme(url: &str) -> bool {
+    let Some(idx) = url.find("://") else { return false };
+    if idx == 0 {
+        return false;
+    }
+    let scheme = &url[..idx];
+    let mut chars = scheme.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
 }
 
 fn raw_content_type(language: RawLanguage) -> &'static str {

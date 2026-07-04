@@ -85,9 +85,17 @@ pub fn apply(state: &mut AppState, snapshot: UiState) {
             state.open_tab(rel_id.clone(), def);
         }
     }
-    if snapshot.active_tab < state.tabs.len() {
-        state.active_tab = Some(snapshot.active_tab);
-    }
+    // `snapshot.active_tab` is an index into `snapshot.open_tabs`, but any
+    // request that no longer exists was silently skipped above, so
+    // `state.tabs` can be shorter (and differently ordered relative to
+    // gaps) than `snapshot.open_tabs`. Resolve the *rel_id* the snapshot
+    // meant to focus, then find wherever that rel_id landed in the
+    // restored tabs, instead of reusing the original index.
+    state.active_tab = snapshot
+        .open_tabs
+        .get(snapshot.active_tab)
+        .and_then(|rel_id| state.tab_index_for(rel_id))
+        .or_else(|| if state.tabs.is_empty() { None } else { Some(state.tabs.len() - 1) });
     state.active_env = snapshot.active_env;
     if let Some(kind) = ThemeKind::ALL.into_iter().find(|k| k.label() == snapshot.theme) {
         state.theme = kind;
@@ -142,6 +150,89 @@ mod tests {
         let loaded = load(&dir).expect("just saved");
         assert_eq!(loaded.theme, "Light");
         assert!(!loaded.show_environment);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn workspace_with_a_and_c(dir: &Path) -> (forge_core::store::Workspace, String, String) {
+        use forge_core::model::{Method, RequestDef};
+        use forge_core::store::{create_collection, create_request, Workspace};
+
+        let _ = std::fs::remove_dir_all(dir);
+        Workspace::create(dir, "WS").expect("create workspace");
+        let col_dir = create_collection(dir, "Coll").expect("create collection");
+        let file_a =
+            create_request(&col_dir, &RequestDef::new("A", Method::Get, "https://a.example.com")).expect("create a");
+        let file_c =
+            create_request(&col_dir, &RequestDef::new("C", Method::Get, "https://c.example.com")).expect("create c");
+
+        let workspace = Workspace::load(dir).expect("load workspace");
+        let rel_a = workspace.rel_id(&file_a);
+        let rel_c = workspace.rel_id(&file_c);
+        (workspace, rel_a, rel_c)
+    }
+
+    /// A snapshot's `active_tab` is an index into `open_tabs`, but any
+    /// request that no longer exists on disk is silently skipped while
+    /// reopening tabs — so `state.tabs` can end up shorter, with every tab
+    /// after the missing one shifted down by one. Reusing the original
+    /// index would then focus the *next* tab over instead of the one the
+    /// snapshot actually meant.
+    #[test]
+    fn active_tab_resolves_by_rel_id_not_by_stale_index() {
+        let dir = std::env::temp_dir().join(format!("forge-gui-local-test-{}-{}", std::process::id(), line!()));
+        let (workspace, rel_a, rel_c) = workspace_with_a_and_c(&dir);
+        let missing_rel_b = "collections/coll/b.request.json".to_string(); // never created
+
+        let mut state = AppState::new();
+        state.workspace = Some(workspace);
+        let snapshot = UiState {
+            open_tabs: vec![missing_rel_b, rel_a.clone(), rel_c],
+            active_tab: 1, // meant to focus `rel_a`
+            active_env: None,
+            theme: String::new(),
+            show_collections: true,
+            show_environment: true,
+            bottom_panel_selected: None,
+        };
+
+        apply(&mut state, snapshot);
+
+        // Only A and C got reopened, in that order (B was skipped), so A is
+        // now at index 0 — not 1 like the stale snapshot index would imply.
+        assert_eq!(state.tabs.len(), 2);
+        assert_eq!(state.active_tab, Some(0));
+        assert_eq!(state.tabs[state.active_tab.unwrap()].rel_id, rel_a);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// When the snapshot's intended active tab is itself the one that no
+    /// longer exists, fall back sensibly (the last reopened tab) rather
+    /// than leaving `active_tab` pointing nowhere or out of range.
+    #[test]
+    fn active_tab_falls_back_to_last_tab_when_intended_tab_is_missing() {
+        let dir = std::env::temp_dir().join(format!("forge-gui-local-test-{}-{}", std::process::id(), line!()));
+        let (workspace, rel_a, rel_c) = workspace_with_a_and_c(&dir);
+        let missing_rel_b = "collections/coll/b.request.json".to_string();
+
+        let mut state = AppState::new();
+        state.workspace = Some(workspace);
+        let snapshot = UiState {
+            open_tabs: vec![rel_a, missing_rel_b, rel_c.clone()],
+            active_tab: 1, // meant to focus the now-missing request
+            active_env: None,
+            theme: String::new(),
+            show_collections: true,
+            show_environment: true,
+            bottom_panel_selected: None,
+        };
+
+        apply(&mut state, snapshot);
+
+        assert_eq!(state.tabs.len(), 2);
+        assert_eq!(state.active_tab, Some(1));
+        assert_eq!(state.tabs[1].rel_id, rel_c);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

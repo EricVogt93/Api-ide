@@ -17,7 +17,8 @@ use forge_core::store::{TreeNode, Workspace};
 use forge_core::vars::{spans, VarScopes};
 
 use crate::bridge::{Bridge, Cmd};
-use crate::state::{AppState, RequestSubTab, RunState, StatusMessage};
+use crate::state::{AppState, RequestSubTab, RunState, StatusMessage, Tab};
+use crate::theme::ThemeKind;
 use crate::widgets::code_editor::{code_editor, Lang};
 use crate::widgets::kv_table::kv_table;
 use crate::widgets::method_badge::method_color;
@@ -44,104 +45,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
             .unwrap_or_default();
         let theme = *theme;
 
-        let total_height = ui.available_height();
-        let top_height = (total_height * tab.split_ratio).clamp(120.0, (total_height - 80.0).max(120.0));
-
-        ui.allocate_ui(egui::vec2(ui.available_width(), top_height), |ui| {
-            egui::ScrollArea::vertical().id_salt("request-editor-scroll").show(ui, |ui| {
-                let dark = theme.editor_bg().r() < 128;
-
-                ui.horizontal(|ui| {
-                    let mut method = tab.def.method;
-                    egui::ComboBox::from_id_salt("method-combo")
-                        .selected_text(RichText::new(method.as_str()).color(method_color(method)).strong())
-                        .width(85.0)
-                        .show_ui(ui, |ui| {
-                            for m in Method::ALL {
-                                ui.selectable_value(&mut method, m, m.as_str());
-                            }
-                        });
-                    if method != tab.def.method {
-                        tab.def.method = method;
-                        tab.dirty = true;
-                    }
-
-                    let button_w = 64.0;
-                    let url_width = (ui.available_width() - button_w - 8.0).max(100.0);
-                    let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, wrap_width: f32| {
-                        let mut job = url_layout_job(buf.as_str(), &scopes, dark);
-                        job.wrap.max_width = wrap_width;
-                        ui.fonts_mut(|f| f.layout_job(job))
-                    };
-                    let resp = ui.add(
-                        TextEdit::singleline(&mut tab.def.url)
-                            .id_salt("url-bar")
-                            .desired_width(url_width)
-                            .font(egui::FontSelection::from(FontId::monospace(13.0)))
-                            .layouter(&mut layouter),
-                    );
-                    if resp.changed() {
-                        tab.dirty = true;
-                    }
-
-                    if tab.run_id.is_some() {
-                        ui.spinner();
-                        if ui.button(format!("{} Stop", crate::theme::icons::STOP)).clicked() {
-                            stop_clicked = true;
-                        }
-                    } else if ui.button(format!("{} Send", crate::theme::icons::PLAY)).clicked() {
-                        send_clicked = true;
-                    }
-                    if ui.button("Export code...").clicked() {
-                        export_def = Some(tab.def.clone());
-                    }
-                });
-
-                ui.add_space(4.0);
-                let tabs_list: &[(RequestSubTab, &str)] = &[
-                    (RequestSubTab::Params, "Params"),
-                    (RequestSubTab::Headers, "Headers"),
-                    (RequestSubTab::Auth, "Auth"),
-                    (RequestSubTab::Body, "Body"),
-                    (RequestSubTab::Assertions, "Assertions"),
-                    (RequestSubTab::Extract, "Extract"),
-                    (RequestSubTab::Scripts, "Scripts"),
-                    (RequestSubTab::Settings, "Settings"),
-                ];
-                underline_tabs(ui, tabs_list, &mut tab.sub_tab);
-                ui.add_space(4.0);
-
-                let changed = match tab.sub_tab {
-                    RequestSubTab::Params => params_tab(ui, &mut tab.def.params),
-                    RequestSubTab::Headers => kv_table(ui, "req-headers", &mut tab.def.headers, true),
-                    RequestSubTab::Auth => auth_tab(ui, &mut tab.def.auth),
-                    RequestSubTab::Body => body_tab(ui, &mut tab.def.body, &scopes),
-                    RequestSubTab::Assertions => assertions_tab(ui, &mut tab.def, tab.response.as_ref()),
-                    RequestSubTab::Extract => extract_tab(ui, &mut tab.def.extractors),
-                    RequestSubTab::Scripts => scripts_tab(ui, &mut tab.def, &scopes),
-                    RequestSubTab::Settings => settings_tab(ui, &mut tab.def.settings),
-                };
-                if changed {
-                    tab.dirty = true;
-                }
-            });
-        });
-
-        let splitter = ui.allocate_response(egui::vec2(ui.available_width(), 6.0), egui::Sense::drag());
-        ui.painter().hline(
-            splitter.rect.x_range(),
-            splitter.rect.center().y,
-            ui.visuals().widgets.noninteractive.bg_stroke,
-        );
-        if splitter.dragged() && total_height > 1.0 {
-            tab.split_ratio = ((top_height + splitter.drag_delta().y) / total_height).clamp(0.15, 0.85);
-        }
-        if splitter.hovered() || splitter.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-        }
-
-        ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height()), |ui| {
-            response_view(ui, tab.response.as_ref(), &mut tab.response_state, theme);
+        // Scope every editor widget id (url bar, method combo, code editors,
+        // kv tables, ...) below to this tab's `rel_id`, so egui's per-widget
+        // state (in particular `TextEdit` undo history) can't leak across
+        // tabs: without this, switching tabs and immediately pressing
+        // Ctrl+Z could paste the previously active tab's text into this one.
+        ui.push_id(egui::Id::new(&tab.rel_id), |ui| {
+            render_tab(ui, tab, &scopes, theme, &mut send_clicked, &mut stop_clicked, &mut export_def);
         });
     }
 
@@ -156,6 +66,120 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
             bridge.send(Cmd::Cancel { run_id });
         }
     }
+}
+
+/// Render one tab's method/URL bar, sub-tab strip, splitter and response
+/// viewer. Callers are expected to have already scoped widget ids to the
+/// tab (see the `ui.push_id` in [`show`]).
+#[allow(clippy::too_many_arguments)]
+fn render_tab(
+    ui: &mut Ui,
+    tab: &mut Tab,
+    scopes: &VarScopes,
+    theme: ThemeKind,
+    send_clicked: &mut bool,
+    stop_clicked: &mut bool,
+    export_def: &mut Option<RequestDef>,
+) {
+    let total_height = ui.available_height();
+    let top_height = (total_height * tab.split_ratio).clamp(120.0, (total_height - 80.0).max(120.0));
+
+    ui.allocate_ui(egui::vec2(ui.available_width(), top_height), |ui| {
+        egui::ScrollArea::vertical().id_salt("request-editor-scroll").show(ui, |ui| {
+            let dark = theme.editor_bg().r() < 128;
+
+            ui.horizontal(|ui| {
+                let mut method = tab.def.method;
+                egui::ComboBox::from_id_salt("method-combo")
+                    .selected_text(RichText::new(method.as_str()).color(method_color(method)).strong())
+                    .width(85.0)
+                    .show_ui(ui, |ui| {
+                        for m in Method::ALL {
+                            ui.selectable_value(&mut method, m, m.as_str());
+                        }
+                    });
+                if method != tab.def.method {
+                    tab.def.method = method;
+                    tab.dirty = true;
+                }
+
+                let button_w = 64.0;
+                let url_width = (ui.available_width() - button_w - 8.0).max(100.0);
+                let mut layouter = |ui: &Ui, buf: &dyn TextBuffer, wrap_width: f32| {
+                    let mut job = url_layout_job(buf.as_str(), scopes, dark);
+                    job.wrap.max_width = wrap_width;
+                    ui.fonts_mut(|f| f.layout_job(job))
+                };
+                let resp = ui.add(
+                    TextEdit::singleline(&mut tab.def.url)
+                        .id_salt("url-bar")
+                        .desired_width(url_width)
+                        .font(egui::FontSelection::from(FontId::monospace(13.0)))
+                        .layouter(&mut layouter),
+                );
+                if resp.changed() {
+                    tab.dirty = true;
+                }
+
+                if tab.run_id.is_some() {
+                    ui.spinner();
+                    if ui.button(format!("{} Stop", crate::theme::icons::STOP)).clicked() {
+                        *stop_clicked = true;
+                    }
+                } else if ui.button(format!("{} Send", crate::theme::icons::PLAY)).clicked() {
+                    *send_clicked = true;
+                }
+                if ui.button("Export code...").clicked() {
+                    *export_def = Some(tab.def.clone());
+                }
+            });
+
+            ui.add_space(4.0);
+            let tabs_list: &[(RequestSubTab, &str)] = &[
+                (RequestSubTab::Params, "Params"),
+                (RequestSubTab::Headers, "Headers"),
+                (RequestSubTab::Auth, "Auth"),
+                (RequestSubTab::Body, "Body"),
+                (RequestSubTab::Assertions, "Assertions"),
+                (RequestSubTab::Extract, "Extract"),
+                (RequestSubTab::Scripts, "Scripts"),
+                (RequestSubTab::Settings, "Settings"),
+            ];
+            underline_tabs(ui, tabs_list, &mut tab.sub_tab);
+            ui.add_space(4.0);
+
+            let changed = match tab.sub_tab {
+                RequestSubTab::Params => params_tab(ui, &mut tab.def.params),
+                RequestSubTab::Headers => kv_table(ui, "req-headers", &mut tab.def.headers, true),
+                RequestSubTab::Auth => auth_tab(ui, &mut tab.def.auth),
+                RequestSubTab::Body => body_tab(ui, &mut tab.def.body, scopes),
+                RequestSubTab::Assertions => assertions_tab(ui, &mut tab.def, tab.response.as_ref()),
+                RequestSubTab::Extract => extract_tab(ui, &mut tab.def.extractors),
+                RequestSubTab::Scripts => scripts_tab(ui, &mut tab.def, scopes),
+                RequestSubTab::Settings => settings_tab(ui, &mut tab.def.settings),
+            };
+            if changed {
+                tab.dirty = true;
+            }
+        });
+    });
+
+    let splitter = ui.allocate_response(egui::vec2(ui.available_width(), 6.0), egui::Sense::drag());
+    ui.painter().hline(
+        splitter.rect.x_range(),
+        splitter.rect.center().y,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
+    if splitter.dragged() && total_height > 1.0 {
+        tab.split_ratio = ((top_height + splitter.drag_delta().y) / total_height).clamp(0.15, 0.85);
+    }
+    if splitter.hovered() || splitter.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+
+    ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height()), |ui| {
+        response_view(ui, tab.response.as_ref(), &mut tab.response_state, theme);
+    });
 }
 
 pub fn send_active(state: &mut AppState, bridge: &Bridge) {

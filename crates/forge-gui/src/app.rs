@@ -31,6 +31,7 @@ impl ForgeApp {
                 Ok(ws) => {
                     app.state.workspace = Some(ws);
                     app.on_workspace_opened(&ctx);
+                    crate::dialogs::welcome::remember_recent(&path);
                 }
                 Err(e) => app.state.status = Some(StatusMessage::error(format!("{}: {e}", path.display()))),
             }
@@ -103,7 +104,9 @@ impl ForgeApp {
                 }
             }
             RunEvent::RequestFinished(outcome) => {
-                self.state.run_state.completed += 1;
+                if self.state.run_state.run_id == Some(run_id) {
+                    self.state.run_state.completed += 1;
+                }
                 if let Some(idx) = self.state.tab_index_for(&outcome.id) {
                     let tab = &mut self.state.tabs[idx];
                     tab.response = Some(*outcome);
@@ -116,9 +119,11 @@ impl ForgeApp {
             RunEvent::RunFinished(summary) => {
                 if self.state.run_state.run_id == Some(run_id) {
                     self.state.run_state.run_id = None;
+                    self.state.status = Some(StatusMessage::info(format!(
+                        "Run finished: {}/{} passed",
+                        summary.passed, summary.total
+                    )));
                 }
-                self.state.status =
-                    Some(StatusMessage::info(format!("Run finished: {}/{} passed", summary.passed, summary.total)));
             }
             RunEvent::IterationStarted { .. } | RunEvent::RequestStarted { .. } => {}
         }
@@ -544,5 +549,55 @@ pub(crate) fn save_tab(state: &mut AppState, idx: usize) {
 pub(crate) fn save_all(state: &mut AppState) {
     for idx in 0..state.tabs.len() {
         save_tab(state, idx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_core::runner::RunSummary;
+
+    fn dummy_outcome(id: &str) -> RequestOutcome {
+        RequestOutcome {
+            id: id.to_string(),
+            name: "Req".to_string(),
+            iteration: 0,
+            result: Err("boom".to_string()),
+            assertions: Vec::new(),
+            script_log: Vec::new(),
+            script_error: None,
+            extracted: Vec::new(),
+        }
+    }
+
+    /// A late `RequestFinished`/`RunFinished` from an *older* run (whose
+    /// `run_id` no longer matches `run_state.run_id`) must not corrupt the
+    /// progress or status toast of the current run.
+    #[test]
+    fn stale_run_events_do_not_corrupt_current_run_state() {
+        let mut app = ForgeApp::new(egui::Context::default(), None);
+        app.state.run_state = RunState { run_id: Some(2), total: 5, completed: 1 };
+
+        app.handle_run_event(1, RunEvent::RequestFinished(Box::new(dummy_outcome("req-a"))));
+        assert_eq!(
+            app.state.run_state.completed, 1,
+            "a RequestFinished from a stale run_id must not bump the current run's completed count"
+        );
+
+        let summary = RunSummary { total: 1, passed: 1, failed: 0, skipped: 0, duration_ms: 5 };
+        app.handle_run_event(1, RunEvent::RunFinished(summary));
+        assert_eq!(
+            app.state.run_state.run_id,
+            Some(2),
+            "a RunFinished from a stale run_id must not clear the current run's run_id"
+        );
+        assert!(
+            app.state.status.is_none(),
+            "a RunFinished from a stale run_id must not post a status toast for the current run"
+        );
+
+        // The current run's own events still apply normally.
+        app.handle_run_event(2, RunEvent::RequestFinished(Box::new(dummy_outcome("req-b"))));
+        assert_eq!(app.state.run_state.completed, 2);
     }
 }
