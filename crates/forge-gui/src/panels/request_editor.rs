@@ -157,15 +157,14 @@ pub fn send_active(state: &mut AppState, bridge: &Bridge) {
         return;
     };
     let rel_id = state.tabs[idx].rel_id.clone();
+    let scope = RunScope::Request(rel_id);
+    let options = RunOptions { environment: state.active_env.clone(), ..Default::default() };
+    state.last_run = Some((scope.clone(), options.clone()));
     let run_id = state.alloc_run_id();
     state.tabs[idx].run_id = Some(run_id);
     state.run_state = RunState { run_id: Some(run_id), total: 1, completed: 0 };
-    bridge.send(Cmd::Run {
-        run_id,
-        workspace: Box::new(workspace),
-        scope: RunScope::Request(rel_id),
-        options: RunOptions { environment: state.active_env.clone(), ..Default::default() },
-    });
+    state.run_log.start(run_id);
+    bridge.send(Cmd::Run { run_id, workspace: Box::new(workspace), scope, options });
 }
 
 /// Build a best-effort variable scope for editor highlighting: the active

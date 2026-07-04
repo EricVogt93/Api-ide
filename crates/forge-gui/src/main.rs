@@ -3,6 +3,7 @@
 mod app;
 mod bridge;
 mod keymap;
+mod local;
 mod panels;
 mod state;
 mod theme;

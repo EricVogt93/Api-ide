@@ -7,9 +7,11 @@
 //! called after every event so the UI wakes up promptly even when idle.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use forge_core::exec::HttpEngine;
+use forge_core::exec::{HttpEngine, StoredCookie};
+use forge_core::protocols::{sse, websocket, SseEvent, WsEvent, WsOutgoing};
 use forge_core::runner::{self, CancellationToken, RunEvent, RunOptions, RunScope};
 use forge_core::store::Workspace;
 
@@ -17,6 +19,26 @@ use forge_core::store::Workspace;
 pub enum Cmd {
     Run { run_id: u64, workspace: Box<Workspace>, scope: RunScope, options: RunOptions },
     Cancel { run_id: u64 },
+    /// Open a WebSocket connection, forwarding events back as `Evt::Ws`.
+    WsConnect { conn_id: u64, url: String, headers: Vec<(String, String)> },
+    /// Send a text message over an open WebSocket connection.
+    WsSend { conn_id: u64, msg: String },
+    /// Request a clean close of a WebSocket connection.
+    WsClose { conn_id: u64 },
+    /// Subscribe to an SSE stream, forwarding events back as `Evt::Sse`.
+    SseSubscribe { conn_id: u64, url: String, headers: Vec<(String, String)> },
+    /// Stop consuming an SSE stream.
+    SseClose { conn_id: u64 },
+    /// Ask for a snapshot of the shared `HttpEngine`'s cookie jar.
+    ListCookies,
+    /// Remove one cookie from the shared jar.
+    RemoveCookie { domain: String, name: String },
+    /// Clear the whole shared cookie jar.
+    ClearCookies,
+    /// Load persisted cookies from `path` into the shared jar (best-effort;
+    /// a missing or unreadable file is a no-op) and remember `path` so the
+    /// jar is saved back there after every run and on shutdown.
+    LoadCookies { path: PathBuf },
     Shutdown,
 }
 
@@ -25,6 +47,13 @@ pub enum Evt {
     Run { run_id: u64, event: RunEvent },
     /// The run could not even start (bad scope, missing environment, ...).
     RunFailed { run_id: u64, error: String },
+    /// Something happened on a WebSocket connection.
+    Ws { conn_id: u64, event: WsEvent },
+    /// Something happened on an SSE subscription.
+    Sse { conn_id: u64, event: SseEvent },
+    /// A fresh snapshot of the shared cookie jar (in reply to
+    /// `Cmd::ListCookies`, or after any mutating cookie command).
+    Cookies(Vec<StoredCookie>),
 }
 
 /// Handle to the background bridge thread.
@@ -90,6 +119,16 @@ fn bridge_main(
     rt.block_on(async move {
         let engine = Arc::new(HttpEngine::new());
         let cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> = Arc::new(Mutex::new(HashMap::new()));
+        // Outgoing-message senders for live WebSocket connections, keyed by
+        // `conn_id` — the connection's own background task owns the
+        // `WsSession`; this is just how `Cmd::WsSend`/`WsClose` reach it.
+        let ws_conns: Arc<Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<WsOutgoing>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        // Cancellation tokens for live SSE subscriptions, keyed by `conn_id`.
+        let sse_cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> = Arc::new(Mutex::new(HashMap::new()));
+        // Where to persist the cookie jar (set by `Cmd::LoadCookies`), saved
+        // back after every run and on shutdown.
+        let cookie_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
 
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
@@ -98,6 +137,7 @@ fn bridge_main(
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     let cancels = cancels.clone();
+                    let cookie_path = cookie_path.clone();
                     let cancel = CancellationToken::new();
                     cancels.lock().unwrap_or_else(|p| p.into_inner()).insert(run_id, cancel.clone());
 
@@ -121,6 +161,7 @@ fn bridge_main(
                         let _ = forward.await;
 
                         cancels.lock().unwrap_or_else(|p| p.into_inner()).remove(&run_id);
+                        save_cookies(&engine, &cookie_path);
                     });
                 }
                 Cmd::Cancel { run_id } => {
@@ -128,8 +169,148 @@ fn bridge_main(
                         token.cancel();
                     }
                 }
-                Cmd::Shutdown => break,
+                Cmd::WsConnect { conn_id, url, headers } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    let ws_conns = ws_conns.clone();
+                    tokio::spawn(async move {
+                        match websocket::connect(&url, &headers).await {
+                            Ok(mut session) => {
+                                ws_conns.lock().unwrap_or_else(|p| p.into_inner()).insert(conn_id, session.outgoing.clone());
+                                while let Some(event) = session.events.recv().await {
+                                    let is_closed = matches!(event, WsEvent::Closed { .. });
+                                    let _ = evt_tx.send(Evt::Ws { conn_id, event });
+                                    ctx.request_repaint();
+                                    if is_closed {
+                                        break;
+                                    }
+                                }
+                                ws_conns.lock().unwrap_or_else(|p| p.into_inner()).remove(&conn_id);
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(Evt::Ws { conn_id, event: WsEvent::Error(e.to_string()) });
+                                ctx.request_repaint();
+                            }
+                        }
+                    });
+                }
+                Cmd::WsSend { conn_id, msg } => {
+                    if let Some(tx) = ws_conns.lock().unwrap_or_else(|p| p.into_inner()).get(&conn_id) {
+                        let _ = tx.send(WsOutgoing::Text(msg));
+                    }
+                }
+                Cmd::WsClose { conn_id } => {
+                    if let Some(tx) = ws_conns.lock().unwrap_or_else(|p| p.into_inner()).get(&conn_id) {
+                        let _ = tx.send(WsOutgoing::Close);
+                    }
+                }
+                Cmd::SseSubscribe { conn_id, url, headers } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    let sse_cancels = sse_cancels.clone();
+                    let cancel = CancellationToken::new();
+                    sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).insert(conn_id, cancel.clone());
+                    tokio::spawn(async move {
+                        match sse::subscribe(&url, &headers).await {
+                            Ok(mut session) => loop {
+                                tokio::select! {
+                                    _ = cancel.cancelled() => break,
+                                    item = session.events.recv() => {
+                                        match item {
+                                            Some(event) => {
+                                                let is_closed = matches!(event, SseEvent::Closed);
+                                                let _ = evt_tx.send(Evt::Sse { conn_id, event });
+                                                ctx.request_repaint();
+                                                if is_closed {
+                                                    break;
+                                                }
+                                            }
+                                            None => break,
+                                        }
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                let _ = evt_tx.send(Evt::Sse { conn_id, event: SseEvent::Error(e.to_string()) });
+                                ctx.request_repaint();
+                            }
+                        }
+                        sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).remove(&conn_id);
+                    });
+                }
+                Cmd::SseClose { conn_id } => {
+                    if let Some(token) = sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).remove(&conn_id) {
+                        token.cancel();
+                    }
+                }
+                Cmd::ListCookies => {
+                    let _ = evt_tx.send(Evt::Cookies(engine.cookies().all()));
+                    ctx.request_repaint();
+                }
+                Cmd::RemoveCookie { domain, name } => {
+                    engine.cookies().remove(&domain, &name);
+                    let _ = evt_tx.send(Evt::Cookies(engine.cookies().all()));
+                    ctx.request_repaint();
+                    save_cookies(&engine, &cookie_path);
+                }
+                Cmd::ClearCookies => {
+                    engine.cookies().clear();
+                    let _ = evt_tx.send(Evt::Cookies(engine.cookies().all()));
+                    ctx.request_repaint();
+                    save_cookies(&engine, &cookie_path);
+                }
+                Cmd::LoadCookies { path } => {
+                    if let Ok(data) = std::fs::read_to_string(&path) {
+                        restore_cookies(&engine, &data);
+                    }
+                    *cookie_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(path);
+                    let _ = evt_tx.send(Evt::Cookies(engine.cookies().all()));
+                    ctx.request_repaint();
+                }
+                Cmd::Shutdown => {
+                    save_cookies(&engine, &cookie_path);
+                    break;
+                }
             }
         }
     });
+}
+
+/// Persist the shared cookie jar to whichever path `Cmd::LoadCookies` last
+/// set, if any. Best-effort — a write failure here shouldn't crash the
+/// bridge thread.
+fn save_cookies(engine: &HttpEngine, cookie_path: &Mutex<Option<PathBuf>>) {
+    let Some(path) = cookie_path.lock().unwrap_or_else(|p| p.into_inner()).clone() else { return };
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::write(path, engine.cookies().to_json());
+}
+
+/// Restore cookies from a JSON array of `StoredCookie` (as produced by
+/// `CookieJar::to_json`) into `engine`'s live jar.
+///
+/// `CookieJar` exposes no bulk-load setter — only `store(&Url,
+/// "Set-Cookie"-style str)` — so each entry is replayed as a synthetic
+/// `Set-Cookie` header against a URL built from its own domain. This loses
+/// host-only-vs-domain-cookie distinction (same caveat `CookieJar::from_json`
+/// already documents) but otherwise round-trips faithfully.
+fn restore_cookies(engine: &HttpEngine, json: &str) {
+    let Ok(cookies) = serde_json::from_str::<Vec<StoredCookie>>(json) else { return };
+    for c in cookies {
+        let Ok(url) = url::Url::parse(&format!("https://{}/", c.domain)) else { continue };
+        let mut set_cookie = format!("{}={}; Domain={}; Path={}", c.name, c.value, c.domain, c.path);
+        if c.secure {
+            set_cookie.push_str("; Secure");
+        }
+        if c.http_only {
+            set_cookie.push_str("; HttpOnly");
+        }
+        if let Some(expires) = c.expires {
+            set_cookie.push_str(&format!("; Expires={}", expires.to_rfc2822().replace("+0000", "GMT")));
+        }
+        engine.cookies().store(&url, &set_cookie);
+    }
 }

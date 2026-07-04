@@ -5,11 +5,16 @@
 
 use std::time::Instant;
 
+use forge_core::history::HistoryStore;
 use forge_core::model::RequestDef;
-use forge_core::runner::RequestOutcome;
+use forge_core::runner::{RequestOutcome, RunOptions, RunScope};
 use forge_core::store::Workspace;
 
 use crate::panels::collections::CollectionsUiState;
+use crate::panels::console::ConsoleState;
+use crate::panels::cookies::CookiesUiState;
+use crate::panels::history::HistoryUiState;
+use crate::panels::test_results::RunLog;
 use crate::theme::ThemeKind;
 use crate::widgets::response_view::ResponseViewState;
 
@@ -106,6 +111,29 @@ impl RunState {
     }
 }
 
+/// Which bottom tool window (if any) is currently visible — exactly one
+/// shows at a time, IntelliJ style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BottomTool {
+    Run,
+    History,
+    Console,
+    Cookies,
+}
+
+impl BottomTool {
+    pub const ALL: [BottomTool; 4] = [BottomTool::Run, BottomTool::History, BottomTool::Console, BottomTool::Cookies];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            BottomTool::Run => "Run",
+            BottomTool::History => "History",
+            BottomTool::Console => "Console",
+            BottomTool::Cookies => "Cookies",
+        }
+    }
+}
+
 /// Top-level application state.
 pub struct AppState {
     pub workspace: Option<Workspace>,
@@ -119,6 +147,21 @@ pub struct AppState {
     pub run_state: RunState,
     pub status: Option<StatusMessage>,
     pub collections: CollectionsUiState,
+    /// Which bottom tool window is visible, if any.
+    pub bottom_tool: Option<BottomTool>,
+    /// Tree model for the Run tool window, fed from the bridge's run
+    /// events (see `app.rs::handle_run_event`).
+    pub run_log: RunLog,
+    /// Scope + options of the most recently started run, so the Run tool
+    /// window's "re-run" button can repeat it without needing a workspace
+    /// tree/tab context.
+    pub last_run: Option<(RunScope, RunOptions)>,
+    /// Execution history, opened lazily per workspace at
+    /// `<workspace>/.forge-local/history.sqlite`.
+    pub history_store: Option<HistoryStore>,
+    pub history_ui: HistoryUiState,
+    pub console: ConsoleState,
+    pub cookies_ui: CookiesUiState,
     next_run_id: u64,
 }
 
@@ -136,6 +179,13 @@ impl Default for AppState {
             run_state: RunState::default(),
             status: None,
             collections: CollectionsUiState::default(),
+            bottom_tool: None,
+            run_log: RunLog::default(),
+            last_run: None,
+            history_store: None,
+            history_ui: HistoryUiState::default(),
+            console: ConsoleState::default(),
+            cookies_ui: CookiesUiState::default(),
             next_run_id: 0,
         }
     }

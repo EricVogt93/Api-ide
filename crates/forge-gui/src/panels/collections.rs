@@ -219,14 +219,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     if let Some(scope) = run_scope {
         let cloned = state.workspace.as_ref().cloned();
         if let Some(ws) = cloned {
+            let options = RunOptions { environment: state.active_env.clone(), ..Default::default() };
+            state.last_run = Some((scope.clone(), options.clone()));
             let run_id = state.alloc_run_id();
             state.run_state = RunState { run_id: Some(run_id), total: 0, completed: 0 };
-            bridge.send(Cmd::Run {
-                run_id,
-                workspace: Box::new(ws),
-                scope,
-                options: RunOptions { environment: state.active_env.clone(), ..Default::default() },
-            });
+            state.run_log.start(run_id);
+            bridge.send(Cmd::Run { run_id, workspace: Box::new(ws), scope, options });
         }
     }
 

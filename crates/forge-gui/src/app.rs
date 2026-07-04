@@ -4,13 +4,14 @@
 
 use std::path::PathBuf;
 
-use forge_core::runner::{RunEvent, RunOptions, RunScope};
+use forge_core::runner::{RequestOutcome, RunEvent, RunOptions, RunScope};
 use forge_core::store::{save_request, Workspace};
 
 use crate::bridge::{Bridge, Cmd, Evt};
 use crate::keymap::{self, ActionId};
-use crate::panels::{collections, request_editor};
-use crate::state::{AppState, RunState, StatusMessage};
+use crate::local;
+use crate::panels::{collections, console, cookies, history, request_editor, test_results};
+use crate::state::{AppState, BottomTool, RunState, StatusMessage};
 use crate::theme::{icons, ThemeKind};
 
 /// The Forge IDE application.
@@ -24,15 +25,53 @@ impl ForgeApp {
     /// Construct the app, optionally loading a workspace given on the
     /// command line.
     pub fn new(ctx: egui::Context, initial_workspace: Option<PathBuf>) -> Self {
-        let bridge = Bridge::new(ctx);
-        let mut state = AppState::new();
+        let bridge = Bridge::new(ctx.clone());
+        let mut app = Self { state: AppState::new(), bridge, about_open: false };
         if let Some(path) = initial_workspace {
             match Workspace::load(&path) {
-                Ok(ws) => state.workspace = Some(ws),
-                Err(e) => state.status = Some(StatusMessage::error(format!("{}: {e}", path.display()))),
+                Ok(ws) => {
+                    app.state.workspace = Some(ws);
+                    app.on_workspace_opened(&ctx);
+                }
+                Err(e) => app.state.status = Some(StatusMessage::error(format!("{}: {e}", path.display()))),
             }
         }
-        Self { state, bridge, about_open: false }
+        app
+    }
+
+    /// Side effects that belong to "a workspace just became `self.state.workspace`":
+    /// open its history store, ask the bridge to load its persisted cookie
+    /// jar, and restore the last saved UI snapshot (open tabs, active
+    /// environment/theme, visible tool windows).
+    fn on_workspace_opened(&mut self, ctx: &egui::Context) {
+        let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) else { return };
+        self.state.history_store = history::open_store(&root);
+        self.bridge.send(Cmd::LoadCookies { path: cookies::cookies_path(&root) });
+        if let Some(snapshot) = local::load(&root) {
+            local::apply(&mut self.state, snapshot);
+            self.state.theme.apply(ctx);
+        }
+    }
+
+    /// Save the outgoing workspace's UI snapshot (if any was open), then
+    /// switch to `ws` and run [`Self::on_workspace_opened`] for it.
+    fn switch_workspace(&mut self, ws: Workspace, ctx: &egui::Context) {
+        if let Some(old_root) = self.state.workspace.as_ref().map(|w| w.root.clone()) {
+            local::save(&old_root, &self.state);
+        }
+        self.state.workspace = Some(ws);
+        self.state.tabs.clear();
+        self.state.active_tab = None;
+        self.state.history_store = None;
+        self.on_workspace_opened(ctx);
+    }
+
+    /// Record one finished request execution to the workspace's history
+    /// store, if it has one open.
+    fn record_history(&self, outcome: &RequestOutcome) {
+        let Some(store) = self.state.history_store.as_ref() else { return };
+        let entry = history::new_entry_from_outcome(self.state.workspace.as_ref(), outcome, self.state.active_env.clone());
+        let _ = store.record(entry);
     }
 
     fn drain_bridge_events(&mut self) {
@@ -43,11 +82,21 @@ impl ForgeApp {
                     self.clear_run(run_id);
                     self.state.status = Some(StatusMessage::error(error));
                 }
+                Evt::Ws { conn_id, event } => console::handle_ws_event(&mut self.state, conn_id, event),
+                Evt::Sse { conn_id, event } => console::handle_sse_event(&mut self.state, conn_id, event),
+                Evt::Cookies(cookies) => self.state.cookies_ui.rows = cookies,
             }
         }
     }
 
     fn handle_run_event(&mut self, run_id: u64, event: RunEvent) {
+        if matches!(event, RunEvent::RunStarted { .. }) {
+            self.state.run_log.start(run_id);
+        }
+        self.state.run_log.apply(run_id, &event);
+        if let RunEvent::RequestFinished(outcome) = &event {
+            self.record_history(outcome);
+        }
         match event {
             RunEvent::RunStarted { total, .. } => {
                 if self.state.run_state.run_id == Some(run_id) {
@@ -80,6 +129,10 @@ impl ForgeApp {
         if self.state.run_state.run_id == Some(run_id) {
             self.state.run_state.run_id = None;
         }
+        if self.state.run_log.run_id == Some(run_id) {
+            self.state.run_log.run_id = None;
+            self.state.run_log.mark_stopped();
+        }
         for tab in &mut self.state.tabs {
             if tab.run_id == Some(run_id) {
                 tab.run_id = None;
@@ -87,7 +140,7 @@ impl ForgeApp {
         }
     }
 
-    fn dispatch_action(&mut self, action: ActionId) {
+    fn dispatch_action(&mut self, ctx: &egui::Context, action: ActionId) {
         match action {
             ActionId::Save => {
                 if let Some(idx) = self.state.active_tab {
@@ -103,18 +156,16 @@ impl ForgeApp {
             }
             ActionId::NextTab => self.state.next_tab(),
             ActionId::PrevTab => self.state.prev_tab(),
-            ActionId::OpenWorkspace => self.open_workspace_dialog(),
+            ActionId::OpenWorkspace => self.open_workspace_dialog(ctx),
             ActionId::ToggleCollections => self.state.show_collections = !self.state.show_collections,
         }
     }
 
-    fn open_workspace_dialog(&mut self) {
+    fn open_workspace_dialog(&mut self, ctx: &egui::Context) {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
             match Workspace::load(&path) {
                 Ok(ws) => {
-                    self.state.workspace = Some(ws);
-                    self.state.tabs.clear();
-                    self.state.active_tab = None;
+                    self.switch_workspace(ws, ctx);
                     self.state.status = Some(StatusMessage::info(format!("Opened {}", path.display())));
                 }
                 Err(e) => self.state.status = Some(StatusMessage::error(e.to_string())),
@@ -122,14 +173,12 @@ impl ForgeApp {
         }
     }
 
-    fn new_workspace_dialog(&mut self) {
+    fn new_workspace_dialog(&mut self, ctx: &egui::Context) {
         if let Some(path) = rfd::FileDialog::new().pick_folder() {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Workspace".to_string());
             match Workspace::create(&path, &name) {
                 Ok(ws) => {
-                    self.state.workspace = Some(ws);
-                    self.state.tabs.clear();
-                    self.state.active_tab = None;
+                    self.switch_workspace(ws, ctx);
                     self.state.status = Some(StatusMessage::info(format!("Created workspace at {}", path.display())));
                 }
                 Err(e) => self.state.status = Some(StatusMessage::error(e.to_string())),
@@ -142,14 +191,12 @@ impl ForgeApp {
             self.state.status = Some(StatusMessage::error("No workspace open"));
             return;
         };
+        let options = RunOptions { environment: self.state.active_env.clone(), ..Default::default() };
+        self.state.last_run = Some((RunScope::Workspace, options.clone()));
         let run_id = self.state.alloc_run_id();
         self.state.run_state = RunState { run_id: Some(run_id), total: 0, completed: 0 };
-        self.bridge.send(Cmd::Run {
-            run_id,
-            workspace: Box::new(ws),
-            scope: RunScope::Workspace,
-            options: RunOptions { environment: self.state.active_env.clone(), ..Default::default() },
-        });
+        self.state.run_log.start(run_id);
+        self.bridge.send(Cmd::Run { run_id, workspace: Box::new(ws), scope: RunScope::Workspace, options });
     }
 
     /// Build a menu-item button labelled with an [`ActionId`]'s registered
@@ -167,11 +214,11 @@ impl ForgeApp {
         ui.horizontal(|ui| {
             ui.menu_button("File", |ui| {
                 if ui.add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace)).clicked() {
-                    self.open_workspace_dialog();
+                    self.open_workspace_dialog(&ui.ctx().clone());
                     ui.close();
                 }
                 if ui.button("New Workspace...").clicked() {
-                    self.new_workspace_dialog();
+                    self.new_workspace_dialog(&ui.ctx().clone());
                     ui.close();
                 }
                 ui.separator();
@@ -271,11 +318,19 @@ impl ForgeApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // Bottom tool-window stripe (disabled placeholders; wave C).
-            ui.add_enabled(false, egui::Button::new(icons::RUN)).on_disabled_hover_text("Run (wave C)");
-            ui.add_enabled(false, egui::Button::new(icons::HISTORY)).on_disabled_hover_text("History (wave C)");
-            ui.add_enabled(false, egui::Button::new(icons::CONSOLE)).on_disabled_hover_text("Console (wave C)");
-            ui.add_enabled(false, egui::Button::new(icons::COOKIES)).on_disabled_hover_text("Cookies (wave C)");
+            // Bottom tool-window stripe: click to show/hide; clicking the
+            // already-active one hides it (only one tool window at a time).
+            for (tool, icon, label) in [
+                (BottomTool::Run, icons::RUN, "Run"),
+                (BottomTool::History, icons::HISTORY, "History"),
+                (BottomTool::Console, icons::CONSOLE, "Console"),
+                (BottomTool::Cookies, icons::COOKIES, "Cookies"),
+            ] {
+                let active = self.state.bottom_tool == Some(tool);
+                if ui.selectable_label(active, icon).on_hover_text(label).clicked() {
+                    self.state.bottom_tool = if active { None } else { Some(tool) };
+                }
+            }
             ui.separator();
 
             let workspace_name =
@@ -355,7 +410,8 @@ impl eframe::App for ForgeApp {
         self.drain_bridge_events();
 
         if let Some(action) = keymap::dispatch(ui.ctx()) {
-            self.dispatch_action(action);
+            let ctx = ui.ctx().clone();
+            self.dispatch_action(&ctx, action);
         }
 
         egui::Panel::top("menu-bar").resizable(false).show(ui, |ui| {
@@ -406,6 +462,20 @@ impl eframe::App for ForgeApp {
             self.status_bar(ui);
         });
 
+        if self.state.show_bottom {
+            if let Some(tool) = self.state.bottom_tool {
+                egui::Panel::bottom("bottom-tool-panel").exact_size(260.0).resizable(true).size_range(120.0..=520.0).show(
+                    ui,
+                    |ui| match tool {
+                        BottomTool::Run => test_results::show(ui, &mut self.state, &self.bridge),
+                        BottomTool::History => history::show(ui, &mut self.state),
+                        BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
+                        BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
+                    },
+                );
+            }
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
             self.tab_bar(ui);
             ui.separator();
@@ -420,6 +490,15 @@ impl eframe::App for ForgeApp {
 
         self.about_window(ui.ctx());
         self.toast(ui);
+    }
+
+    /// Persist the open workspace's UI snapshot on shutdown (the bridge
+    /// thread saves the cookie jar on its own `Cmd::Shutdown`, sent when
+    /// `self.bridge` drops right after this returns).
+    fn on_exit(&mut self) {
+        if let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) {
+            local::save(&root, &self.state);
+        }
     }
 }
 
