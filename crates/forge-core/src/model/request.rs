@@ -134,12 +134,30 @@ pub struct Scripts {
     pub pre_request: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_response: Option<String>,
+    /// Scripting language `pre_request`/`post_response` are written in.
+    #[serde(default, skip_serializing_if = "is_default_lang")]
+    pub language: ScriptLang,
 }
 
 impl Scripts {
     pub fn is_empty(&self) -> bool {
         self.pre_request.is_none() && self.post_response.is_none()
     }
+}
+
+/// Which scripting engine runs a request's (or a suite hook's) scripts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ScriptLang {
+    /// The Rhai scripting engine (the original, still the default).
+    #[default]
+    Rhai,
+    /// Sandboxed JavaScript via QuickJS.
+    Js,
+}
+
+pub(crate) fn is_default_lang(lang: &ScriptLang) -> bool {
+    *lang == ScriptLang::default()
 }
 
 /// Per-request overrides of workspace-level execution settings.
@@ -162,5 +180,34 @@ pub struct RequestSettings {
 impl RequestSettings {
     pub fn is_default(&self) -> bool {
         self == &RequestSettings::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scripts_language_js_round_trips() {
+        let scripts = Scripts {
+            pre_request: Some("req.url = req.url;".to_string()),
+            post_response: None,
+            language: ScriptLang::Js,
+        };
+        let json = serde_json::to_string(&scripts).expect("serialize");
+        assert!(json.contains(r#""language":"js""#), "{json}");
+        let back: Scripts = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, scripts);
+    }
+
+    #[test]
+    fn scripts_default_language_is_rhai_and_omitted_from_json() {
+        let scripts = Scripts { pre_request: Some("x".to_string()), ..Default::default() };
+        assert_eq!(scripts.language, ScriptLang::Rhai);
+        let json = serde_json::to_string(&scripts).expect("serialize");
+        assert!(!json.contains("language"), "default language must be omitted: {json}");
+        // Legacy documents without a language field parse as Rhai.
+        let back: Scripts = serde_json::from_str(r#"{"preRequest":"x"}"#).expect("deserialize");
+        assert_eq!(back.language, ScriptLang::Rhai);
     }
 }

@@ -8,15 +8,18 @@ use std::path::PathBuf;
 use forge_core::assert::AssertionOutcome;
 use forge_core::exec::{ExecutionResult, HttpEngine, PartData, ResolvedBody, Sizes, TimingBreakdown};
 use forge_core::model::{
-    ApiKeyPlacement, AssertionDef, AuthConfig, BodyDef, Check, EnvVar, Environment, ExtractScope,
-    Extractor, ExtractorSource, KeyValue, Method, MultipartPart, NumberOp, Param, ParamKind,
-    PartContent, RawLanguage, RequestDef, SecretValues,
+    ApiKeyPlacement, AssertionDef, AuthConfig, BodyDef, Check, CollectionMeta, EnvVar, Environment,
+    ExtractScope, Extractor, ExtractorSource, FolderMeta, KeyValue, Method, MultipartPart, NumberOp,
+    Param, ParamKind, PartContent, RawLanguage, RequestDef, ScriptLang, SecretValues, SuiteHooks,
 };
 use forge_core::runner::{
     junit_xml, resolve_request, run, AuthChain, CancellationToken, DataSource, RequestOutcome,
     ResolveError, RunError, RunEvent, RunOptions, RunScope, RunSummary,
 };
-use forge_core::store::{create_collection, create_environment, create_request, save_environment, save_secrets, Workspace};
+use forge_core::store::{
+    create_collection, create_environment, create_folder, create_request, load_json, save_collection_meta,
+    save_environment, save_folder_meta, save_secrets, Workspace, COLLECTION_FILE, FOLDER_FILE,
+};
 use forge_core::vars::VarScopes;
 
 use wiremock::matchers::{header, method, path};
@@ -93,6 +96,18 @@ fn always_fails_def() -> RequestDef {
     let mut def = RequestDef::new("Should Fail", Method::Get, "{{baseUrl}}/maybe-fail");
     def.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 500 }));
     def
+}
+
+fn set_collection_hooks(dir: &std::path::Path, hooks: SuiteHooks) {
+    let mut meta: CollectionMeta = load_json(&dir.join(COLLECTION_FILE)).expect("load collection meta");
+    meta.hooks = hooks;
+    save_collection_meta(dir, &meta).expect("save collection meta");
+}
+
+fn set_folder_hooks(dir: &std::path::Path, hooks: SuiteHooks) {
+    let mut meta: FolderMeta = load_json(&dir.join(FOLDER_FILE)).expect("load folder meta");
+    meta.hooks = hooks;
+    save_folder_meta(dir, &meta).expect("save folder meta");
 }
 
 async fn drain(mut rx: tokio::sync::mpsc::UnboundedReceiver<RunEvent>) -> Vec<RunEvent> {
@@ -369,6 +384,334 @@ async fn runtime_vars_do_not_leak_across_iterations() {
         "expected row 2's Use Token to fail to resolve {{token}}, got {:?}",
         outcomes[3].result
     );
+}
+
+// ---------------------------------------------------------------------
+// Suite lifecycle hooks (beforeAll/beforeEach/afterEach/afterAll)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn before_all_runs_once_and_its_var_is_visible_to_every_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .and(header("x-suite-var", "hello"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/b"))
+        .and(header("x-suite-var", "hello"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+    set_collection_hooks(
+        &col_dir,
+        SuiteHooks {
+            before_all: Some(r#"vars.set("suiteVar", "hello"); log("before-all-ran");"#.to_string()),
+            ..Default::default()
+        },
+    );
+
+    let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
+    a.headers.push(KeyValue::new("X-Suite-Var", "{{suiteVar}}"));
+    let mut b = RequestDef::new("B", Method::Get, "{{baseUrl}}/b");
+    b.headers.push(KeyValue::new("X-Suite-Var", "{{suiteVar}}"));
+    create_request(&col_dir, &a).expect("create a");
+    create_request(&col_dir, &b).expect("create b");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+    assert_eq!(summary.passed, 2);
+
+    let outcomes: Vec<RequestOutcome> = drain(rx)
+        .await
+        .into_iter()
+        .filter_map(|ev| if let RunEvent::RequestFinished(o) = ev { Some(*o) } else { None })
+        .collect();
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes[0].script_log.iter().any(|l| l.contains("before-all-ran")), "{:?}", outcomes[0].script_log);
+    assert!(
+        !outcomes[1].script_log.iter().any(|l| l.contains("before-all-ran")),
+        "beforeAll must only run once: {:?}",
+        outcomes[1].script_log
+    );
+}
+
+#[tokio::test]
+async fn before_each_overrides_a_var_set_by_before_all_for_every_request() {
+    let server = MockServer::start().await;
+    for p in ["/a", "/b"] {
+        Mock::given(method("GET"))
+            .and(path(p))
+            .and(header("x-val", "overridden"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+    }
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+    set_collection_hooks(
+        &col_dir,
+        SuiteHooks {
+            before_all: Some(r#"vars.set("val", "hello");"#.to_string()),
+            before_each: Some(r#"vars.set("val", "overridden");"#.to_string()),
+            ..Default::default()
+        },
+    );
+
+    let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
+    a.headers.push(KeyValue::new("X-Val", "{{val}}"));
+    let mut b = RequestDef::new("B", Method::Get, "{{baseUrl}}/b");
+    b.headers.push(KeyValue::new("X-Val", "{{val}}"));
+    create_request(&col_dir, &a).expect("create a");
+    create_request(&col_dir, &b).expect("create b");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+    drop(drain(rx).await);
+
+    assert_eq!(summary.passed, 2, "beforeEach must override the value for both requests");
+}
+
+#[tokio::test]
+async fn after_each_assertion_failure_flips_the_request_to_failed() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/a")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+    set_collection_hooks(
+        &col_dir,
+        SuiteHooks { after_each: Some(r#"assert(res.status == 201, "expected 201");"#.to_string()), ..Default::default() },
+    );
+    create_request(&col_dir, &RequestDef::new("A", Method::Get, "{{baseUrl}}/a")).expect("create a");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.passed, 0);
+
+    let outcomes: Vec<RequestOutcome> = drain(rx)
+        .await
+        .into_iter()
+        .filter_map(|ev| if let RunEvent::RequestFinished(o) = ev { Some(*o) } else { None })
+        .collect();
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].result.is_ok(), "the transport itself succeeded");
+    assert!(!outcomes[0].passed());
+    assert!(outcomes[0].assertions.iter().any(|a| !a.passed && a.summary == "expected 201"));
+}
+
+#[tokio::test]
+async fn collection_before_each_runs_before_folder_before_each() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .and(header("x-order", "collection,folder,"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+    set_collection_hooks(
+        &col_dir,
+        SuiteHooks {
+            before_each: Some(
+                r#"
+                    let existing = vars.get("order");
+                    let prefix = if existing == () { "" } else { existing };
+                    vars.set("order", prefix + "collection,");
+                "#
+                .to_string(),
+            ),
+            ..Default::default()
+        },
+    );
+    let folder_dir = create_folder(&col_dir, "Sub").expect("create folder");
+    set_folder_hooks(
+        &folder_dir,
+        SuiteHooks {
+            before_each: Some(r#"vars.set("order", vars.get("order") + "folder,");"#.to_string()),
+            ..Default::default()
+        },
+    );
+
+    let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
+    a.headers.push(KeyValue::new("X-Order", "{{order}}"));
+    create_request(&folder_dir, &a).expect("create a");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+    drop(drain(rx).await);
+
+    assert_eq!(summary.passed, 1, "collection beforeEach must run before the folder's");
+}
+
+#[tokio::test]
+async fn before_each_error_fails_the_request_and_respects_bail() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/b"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+    set_collection_hooks(
+        &col_dir,
+        SuiteHooks { before_each: Some(r#"undefined_fn();"#.to_string()), ..Default::default() },
+    );
+    create_request(&col_dir, &RequestDef::new("A", Method::Get, "{{baseUrl}}/a")).expect("create a");
+    create_request(&col_dir, &RequestDef::new("B", Method::Get, "{{baseUrl}}/b")).expect("create b");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: true, delay_ms: 0 };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.skipped, 1);
+
+    let outcomes: Vec<RequestOutcome> = drain(rx)
+        .await
+        .into_iter()
+        .filter_map(|ev| if let RunEvent::RequestFinished(o) = ev { Some(*o) } else { None })
+        .collect();
+    assert_eq!(outcomes.len(), 1);
+    assert!(
+        matches!(&outcomes[0].result, Err(msg) if msg.starts_with("beforeEach hook failed:")),
+        "{:?}",
+        outcomes[0].result
+    );
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn javascript_language_hook_runs_end_to_end() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .and(header("x-marker", "js-hook"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    Workspace::create(root, "Test WS").expect("create workspace");
+    write_env(root, "dev", &[("baseUrl", &server.uri())], &[]);
+    let col_dir = create_collection(root, "Coll").expect("create collection");
+    set_collection_hooks(
+        &col_dir,
+        SuiteHooks {
+            before_each: Some(r#"vars.set("marker", "js-hook");"#.to_string()),
+            language: ScriptLang::Js,
+            ..Default::default()
+        },
+    );
+    let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
+    a.headers.push(KeyValue::new("X-Marker", "{{marker}}"));
+    create_request(&col_dir, &a).expect("create a");
+
+    let workspace = Workspace::load(root).expect("load workspace");
+    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let engine = HttpEngine::new();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let summary = run(
+        &workspace,
+        RunScope::Collection("collections/coll".to_string()),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
+    drop(drain(rx).await);
+
+    assert_eq!(summary.passed, 1);
 }
 
 // ---------------------------------------------------------------------

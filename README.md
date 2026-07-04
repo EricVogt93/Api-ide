@@ -37,8 +37,12 @@ The project is a Cargo workspace:
 - **Contract tests from OpenAPI** — import an OpenAPI 3.x spec and bind
   requests to `operationId`s to keep your collection honest as the spec
   evolves.
-- **Rhai pre-/post-request scripts** — full scripting hooks per request for
-  request mutation, chaining and custom validation.
+- **Rhai & JavaScript pre-/post-request scripts** — full scripting hooks
+  per request for request mutation, chaining and custom validation, in
+  either Rhai or sandboxed JavaScript (QuickJS).
+- **Suite lifecycle hooks** — `beforeAll` / `beforeEach` / `afterEach` /
+  `afterAll` scripts on collections and folders, sharing variables with the
+  requests they wrap.
 - **Data-driven runs** — replay a request or a whole collection once per
   row of a CSV or JSON dataset.
 - **JUnit XML reports** — CI-friendly output from both the GUI runner and
@@ -113,12 +117,29 @@ my-workspace/
   holding the actual secret values, keyed by variable name.
 - **`collections/<name>/collection.json`** — a collection's metadata:
   `name`, `description`, `variables`, `auth`, an `openapi` binding when the
-  collection was generated from a spec, and an `order` array.
+  collection was generated from a spec, an `order` array, and optional
+  suite lifecycle `hooks`:
+
+  ```json
+  {
+    "hooks": {
+      "beforeAll": "vars.set(\"token\", \"...\");",
+      "beforeEach": "log(\"about to run a request\");",
+      "afterEach": "assert(res.status < 500, \"no server errors\");",
+      "afterAll": "log(\"suite done\");",
+      "language": "rhai"
+    }
+  }
+  ```
+
+  All four scripts are optional; `language` is `"rhai"` (default, omitted
+  when default) or `"js"` and applies to all four.
 - **`collections/<name>/folder.json`** — the same shape as a collection's
-  metadata (minus the OpenAPI binding) for a sub-folder.
+  metadata (minus the OpenAPI binding) for a sub-folder, including `hooks`.
 - **`*.request.json`** — one HTTP request: `method`, `url`, `params`,
   `headers`, `auth`, `body`, `assertions`, `extractors`, pre-/post-request
-  `scripts`, and per-request `settings` overrides.
+  `scripts` (with an optional `"language": "rhai" | "js"`), and per-request
+  `settings` overrides.
 - **`specs/`** — OpenAPI specs imported into the workspace.
 - **`.forge-local/`** — local-only state (run history, UI layout) that is
   never committed.
@@ -136,6 +157,56 @@ titled "Create Charge (v2)").
 
 See [`examples/demo-workspace`](examples/demo-workspace) for a complete,
 working example of this layout.
+
+## Scripting & lifecycle hooks
+
+Scripts run in one of two sandboxed languages, chosen per request (Scripts
+tab → Language) or per hook set (`hooks.language`):
+
+- **Rhai** (default) — the embedded Rust scripting language. Snake_case
+  API: `req.set_header(n, v)`, `res.body_text`, `base64_encode(s)`.
+- **JavaScript** — QuickJS, fully sandboxed (32 MB memory cap, ~2 s wall
+  clock budget, no filesystem/network/process access). CamelCase API:
+  `req.setHeader(n, v)`, `res.bodyText`, `base64Encode(s)`, plus
+  `console.log(...)`.
+
+Both expose the same surface: `req` (pre-request only: `url` get/set,
+`method`, header get/set/remove, body text get/set), `res` (post-response:
+`status`, `bodyText`/`body_text`, `header(n)`, `timeMs`/`time_ms`,
+`json()`), `vars.get(n)`/`vars.set(n, v)` (persisted into the run's
+variable scope), `log(msg)`, `assert(cond, message)` and `test(name, cond)`
+(recorded as assertion results), and helpers `uuid()`, `timestamp()`,
+base64 encode/decode. Compile errors, runtime errors and runaway scripts
+are captured as script errors — they never crash the app or the runner.
+
+**Suite lifecycle hooks** attach to a collection or folder (right-click →
+"Edit Hooks..." in the IDE, or edit `collection.json`/`folder.json`) and
+run around the requests underneath during collection/folder/workspace runs:
+
+- **Order.** For each request, `beforeEach` hooks fire outermost-first
+  (collection first, then each folder down to the request's parent);
+  `afterEach` fires in reverse (innermost first). `beforeAll` fires once
+  per run, immediately before a scope's first executed request; `afterAll`
+  once per run, after its last (on the final data iteration).
+- **API.** `beforeAll`/`beforeEach` get the vars-only API (`vars`, `log`,
+  `assert`/`test`, helpers — no `req`/`res`). `afterEach`/`afterAll`
+  additionally get `res`, the just-finished request's response.
+- **Variables.** `vars.set` from any hook lands in the shared runtime
+  scope, visible to the affected request itself and everything after it.
+- **Errors.** A `beforeAll`/`beforeEach` error fails the affected request
+  (it is not sent; the outcome reads `beforeEach hook failed: ...`), and
+  `--bail` semantics apply. `afterEach`/`afterAll` errors are appended to
+  the request's script log (prefixed `afterEach:`/`afterAll:`) without
+  flipping a passed request to failed.
+- **Assertions.** `assert`/`test` from `afterEach`/`afterAll` extend the
+  request's assertion list (a failing hook assertion fails the request);
+  assertion calls from `before*` hooks are dropped by design.
+- **Logs.** Hook log lines flow into the affected request's script log
+  prefixed `hook:`; `beforeAll`/`afterAll` output attaches to the scope's
+  first/last request.
+
+Hooks are a runner concept: single ad-hoc sends from the editor run only
+the request's own pre/post scripts.
 
 ## CLI usage
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::AuthConfig;
+use super::{AuthConfig, SuiteHooks};
 
 /// `collection.json` — metadata at the root of a collection directory.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -23,6 +23,10 @@ pub struct CollectionMeta {
     pub order: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openapi: Option<OpenApiBinding>,
+    /// Suite lifecycle hooks (`beforeAll`/`beforeEach`/`afterEach`/`afterAll`)
+    /// for every request in this collection.
+    #[serde(default, skip_serializing_if = "SuiteHooks::is_empty")]
+    pub hooks: SuiteHooks,
 }
 
 impl CollectionMeta {
@@ -35,6 +39,7 @@ impl CollectionMeta {
             auth: AuthConfig::None,
             order: Vec::new(),
             openapi: None,
+            hooks: SuiteHooks::default(),
         }
     }
 }
@@ -56,6 +61,10 @@ pub struct FolderMeta {
     pub auth: AuthConfig,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub order: Vec<String>,
+    /// Suite lifecycle hooks (`beforeAll`/`beforeEach`/`afterEach`/`afterAll`)
+    /// for every request under this folder.
+    #[serde(default, skip_serializing_if = "SuiteHooks::is_empty")]
+    pub hooks: SuiteHooks,
 }
 
 /// Binding of a collection to an imported OpenAPI spec.
