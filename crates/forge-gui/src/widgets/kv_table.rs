@@ -53,6 +53,7 @@ pub fn kv_table(ui: &mut Ui, id_salt: &str, rows: &mut Vec<KeyValue>, show_descr
         })
         .body(|mut body| {
             let n = rows.len();
+            #[allow(clippy::needless_range_loop)]
             for i in 0..n {
                 body.row(22.0, |mut row| {
                     row.col(|ui| {

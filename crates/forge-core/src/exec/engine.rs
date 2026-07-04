@@ -184,11 +184,10 @@ impl HttpEngine {
                     })?;
 
                     let status_code = status.as_u16();
-                    let (next_method, next_body) = if status_code == 303 {
-                        (Method::Get, ResolvedBody::None)
-                    } else if (status_code == 301 || status_code == 302)
-                        && current_method == Method::Post
-                    {
+                    let switch_to_get = status_code == 303
+                        || ((status_code == 301 || status_code == 302)
+                            && current_method == Method::Post);
+                    let (next_method, next_body) = if switch_to_get {
                         (Method::Get, ResolvedBody::None)
                     } else {
                         (current_method, current_body.clone())

@@ -230,9 +230,9 @@ impl ForgeApp {
                 }
             });
             ui.menu_button("View", |ui| {
-                if ui.checkbox(&mut self.state.show_collections, "Collections").changed() {}
-                if ui.checkbox(&mut self.state.show_environment, "Environment").changed() {}
-                if ui.checkbox(&mut self.state.show_bottom, "Bottom Tool Window").changed() {}
+                ui.checkbox(&mut self.state.show_collections, "Collections");
+                ui.checkbox(&mut self.state.show_environment, "Environment");
+                ui.checkbox(&mut self.state.show_bottom, "Bottom Tool Window");
                 ui.separator();
                 ui.menu_button("Theme", |ui| {
                     for kind in ThemeKind::ALL {
@@ -387,7 +387,6 @@ impl eframe::App for ForgeApp {
 
         crate::dialogs::handle_global_shortcuts(ui.ctx(), &mut self.state);
         if let Some(action) = keymap::dispatch(ui.ctx()) {
-            let ctx = ui.ctx().clone();
             self.dispatch_action(action);
         }
 

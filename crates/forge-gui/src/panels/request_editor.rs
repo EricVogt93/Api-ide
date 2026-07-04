@@ -258,6 +258,7 @@ fn params_tab(ui: &mut Ui, params: &mut Vec<Param>) -> bool {
         ui.end_row();
 
         let n = params.len();
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             if ui.checkbox(&mut params[i].kv.enabled, "").changed() {
                 changed = true;
