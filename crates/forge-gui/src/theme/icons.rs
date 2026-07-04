@@ -47,3 +47,5 @@ pub const LOG: &str = "\u{2261}"; // ≡
 pub const ERROR: &str = "\u{2716}"; // ✖
 /// Warning severity marker.
 pub const WARNING: &str = "\u{26A0}"; // ⚠
+/// Tool-window collapse/hide affordance.
+pub const COLLAPSE: &str = "\u{2013}"; // –

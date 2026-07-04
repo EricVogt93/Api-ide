@@ -245,7 +245,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     let cwd = state.workspace.as_ref().map(|w| w.root.clone());
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Terminal").strong());
+        // Title lives in the shared tool-window header (app.rs).
         let cwd_label = cwd
             .as_ref()
             .map(|p| p.display().to_string())

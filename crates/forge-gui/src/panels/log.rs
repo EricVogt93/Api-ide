@@ -102,8 +102,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
         });
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Log").strong());
-        ui.add_space(6.0);
         ui.toggle_value(&mut state.log.show_info, "Info");
         ui.toggle_value(&mut state.log.show_warn, egui::RichText::new(format!("Warn {warns}")).color(theme.warn_color()));
         ui.toggle_value(&mut state.log.show_error, egui::RichText::new(format!("Error {errors}")).color(theme.error_color()));

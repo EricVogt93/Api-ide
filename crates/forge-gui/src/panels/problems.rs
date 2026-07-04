@@ -122,8 +122,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> Option<String> {
     let mut open: Option<String> = None;
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Problems").strong());
-        ui.add_space(6.0);
         ui.label(egui::RichText::new(format!("{} {errors} errors", icons::ERROR)).color(theme.error_color()));
         ui.label(egui::RichText::new(format!("{} {warnings} warnings", icons::WARNING)).color(theme.warn_color()));
     });

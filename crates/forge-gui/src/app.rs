@@ -167,6 +167,27 @@ impl ForgeApp {
         }
     }
 
+    /// Slim IntelliJ-style tool-window header: title on the left, a hide
+    /// ("collapse") button on the right. Returns `true` when the user asked
+    /// to collapse the window.
+    fn tool_window_header(ui: &mut egui::Ui, title: &str) -> bool {
+        let mut collapse = false;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(title).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(egui::RichText::new(icons::COLLAPSE).size(11.0))
+                    .on_hover_text("Hide (reopen via stripe / View menu)")
+                    .clicked()
+                {
+                    collapse = true;
+                }
+            });
+        });
+        ui.separator();
+        collapse
+    }
+
     /// Open (or focus) the tab of a request by workspace-relative id.
     fn open_request_tab(&mut self, rel_id: &str) {
         if let Some(def) =
@@ -462,6 +483,9 @@ impl eframe::App for ForgeApp {
 
         if self.state.show_collections {
             egui::Panel::left("left-panel").exact_size(280.0).resizable(true).size_range(180.0..=520.0).show(ui, |ui| {
+                if Self::tool_window_header(ui, "Collections") {
+                    self.state.show_collections = false;
+                }
                 collections::show(ui, &mut self.state, &self.bridge);
             });
         }
@@ -482,6 +506,9 @@ impl eframe::App for ForgeApp {
 
         if self.state.show_environment {
             egui::Panel::right("right-panel").exact_size(260.0).resizable(true).size_range(180.0..=480.0).show(ui, |ui| {
+                if Self::tool_window_header(ui, "Environment") {
+                    self.state.show_environment = false;
+                }
                 environment_panel(ui, &mut self.state);
             });
         }
@@ -492,9 +519,14 @@ impl eframe::App for ForgeApp {
 
         if self.state.show_bottom {
             if let Some(tool) = self.state.bottom_tool {
-                egui::Panel::bottom("bottom-tool-panel").exact_size(260.0).resizable(true).size_range(120.0..=520.0).show(
+                egui::Panel::bottom("bottom-tool-panel").exact_size(260.0).resizable(true).size_range(120.0..=560.0).show(
                     ui,
-                    |ui| match tool {
+                    |ui| {
+                        if Self::tool_window_header(ui, tool.label()) {
+                            self.state.bottom_tool = None;
+                            return;
+                        }
+                        match tool {
                         BottomTool::Run => test_results::show(ui, &mut self.state, &self.bridge),
                         BottomTool::Problems => {
                             if let Some(rel_id) = problems::show(ui, &mut self.state) {
@@ -506,6 +538,7 @@ impl eframe::App for ForgeApp {
                         BottomTool::History => history::show(ui, &mut self.state),
                         BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
                         BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
+                        }
                     },
                 );
             }
