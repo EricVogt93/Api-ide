@@ -19,6 +19,7 @@ use forge_core::store::{
 use crate::state::{AppState, StatusMessage};
 
 /// What the picked file turned out to contain.
+#[allow(clippy::large_enum_variant)] // one short-lived instance per dialog
 enum Parsed {
     Collection(ImportedCollection),
     Environment(Environment, SecretValues),
@@ -211,6 +212,7 @@ pub(crate) fn import_collection(
     meta.description = import.description.clone();
     meta.variables = import.variables.clone();
     meta.auth = import.auth.clone();
+    meta.hooks = import.hooks.clone();
     meta.order = order;
     save_collection_meta(&col_dir, &meta).map_err(|e| e.to_string())?;
     Ok(())
@@ -226,13 +228,14 @@ fn write_items(dir: &Path, items: &[ImportedItem]) -> Result<Vec<String>, String
                 let file = create_request(dir, def).map_err(|e| e.to_string())?;
                 order.push(file_name(&file));
             }
-            ImportedItem::Folder { name, description, auth, items } => {
+            ImportedItem::Folder { name, description, auth, hooks, items } => {
                 let sub = create_folder(dir, name).map_err(|e| e.to_string())?;
                 let sub_order = write_items(&sub, items)?;
                 let meta = FolderMeta {
                     name: name.clone(),
                     description: description.clone(),
                     auth: auth.clone(),
+                    hooks: hooks.clone(),
                     order: sub_order,
                     ..FolderMeta::default()
                 };

@@ -60,6 +60,8 @@ impl JsEngine {
         let req_state = Rc::new(RefCell::new(req.clone()));
         let vars_state = Rc::new(RefCell::new(vars.clone()));
         let vars_sets = Rc::new(RefCell::new(Vec::new()));
+        // Postman-style `pm.test` may run in pre-request scripts too.
+        let assertions = Rc::new(RefCell::new(Vec::new()));
         let log = Rc::new(RefCell::new(Vec::new()));
 
         let error = run_sandboxed(|ctx| {
@@ -67,14 +69,16 @@ impl JsEngine {
             install_log(ctx, &log)?;
             install_vars(ctx, &vars_state, &vars_sets)?;
             install_req(ctx, &req_state)?;
+            super::pm::install_pm(ctx, &assertions, false)?;
             Ok(())
         }, script);
 
         *req = req_state.borrow().clone();
 
         let log = log.borrow().clone();
+        let assertions = assertions.borrow().clone();
         let vars_set = vars_sets.borrow().clone();
-        ScriptOutput { log, error, assertions: Vec::new(), vars_set }
+        ScriptOutput { log, error, assertions, vars_set }
     }
 
     /// Run a post-response script. `res` is read-only; `assert`/`test`
@@ -99,6 +103,7 @@ impl JsEngine {
             install_vars(ctx, &vars_state, &vars_sets)?;
             install_assertions(ctx, &assertions)?;
             install_res(ctx, &res_state)?;
+            super::pm::install_pm(ctx, &assertions, true)?;
             Ok(())
         }, script);
 
@@ -123,6 +128,7 @@ impl JsEngine {
             install_log(ctx, &log)?;
             install_vars(ctx, &vars_state, &vars_sets)?;
             install_assertions(ctx, &assertions)?;
+            super::pm::install_pm(ctx, &assertions, false)?;
             Ok(())
         }, script);
 
@@ -383,6 +389,8 @@ fn install_res<'js>(ctx: &Ctx<'js>, res: &Rc<ExecutionResult>) -> rquickjs::Resu
     let r = res.clone();
     globals.set("__resGetStatus", Function::new(ctx.clone(), move || i64::from(r.status))?)?;
     let r = res.clone();
+    globals.set("__resGetStatusText", Function::new(ctx.clone(), move || r.status_text.clone())?)?;
+    let r = res.clone();
     globals.set("__resGetBodyText", Function::new(ctx.clone(), move || r.text().into_owned())?)?;
     let r = res.clone();
     globals.set(
@@ -413,6 +421,7 @@ fn install_res<'js>(ctx: &Ctx<'js>, res: &Rc<ExecutionResult>) -> rquickjs::Resu
         r#"
             var res = {
                 get status() { return __resGetStatus(); },
+                get statusText() { return __resGetStatusText(); },
                 get bodyText() { return __resGetBodyText(); },
                 get timeMs() { return __resGetTimeMs(); },
                 header: function (n) { return __resGetHeader(String(n)); },
@@ -746,6 +755,163 @@ mod tests {
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
         assert_eq!(out.log, vec!["undefined".to_string()]);
+    }
+
+    #[test]
+    fn pm_test_and_expect_record_named_outcomes() {
+        let engine = JsEngine::new();
+        let res = sample_result(200, r#"{"value":100,"tags":["a","b"]}"#);
+
+        let script = r#"
+            pm.test("Status code is 200", function () {
+                pm.response.to.have.status(200);
+            });
+            pm.test("body checks out", function () {
+                var jsonData = pm.response.json();
+                pm.expect(jsonData.value).to.eql(100);
+                pm.expect(jsonData.tags).to.have.lengthOf(2);
+                pm.expect(jsonData.tags).to.include("a");
+                pm.expect(pm.response.responseTime).to.be.below(200);
+            });
+            pm.test("this one fails", function () {
+                pm.expect(pm.response.code).to.equal(404);
+            });
+        "#;
+
+        let out = engine.run_post(script, &res, &empty_vars());
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert_eq!(out.assertions.len(), 3);
+        assert!(out.assertions[0].passed);
+        assert_eq!(out.assertions[0].summary, "Status code is 200");
+        assert!(out.assertions[1].passed, "{:?}", out.assertions[1]);
+        assert!(!out.assertions[2].passed);
+        assert!(
+            out.assertions[2].message.as_deref().unwrap_or_default().contains("expected 200 to equal 404"),
+            "{:?}",
+            out.assertions[2].message
+        );
+    }
+
+    #[test]
+    fn pm_expect_negation_deep_equal_and_property() {
+        let engine = JsEngine::new();
+        let res = sample_result(200, r#"{"user":{"name":"eric","roles":["admin"]}}"#);
+
+        let script = r#"
+            pm.test("chai surface", function () {
+                var u = pm.response.json().user;
+                pm.expect(u).to.be.an("object");
+                pm.expect(u).to.have.property("name", "eric");
+                pm.expect(u).to.not.have.property("password");
+                pm.expect(u.roles).to.eql(["admin"]);
+                pm.expect(u.name).to.match(/^er/);
+                pm.expect("").to.be.empty;
+                pm.expect(null).to.be.null;
+                pm.expect(u.name).to.be.oneOf(["eric", "bob"]);
+            });
+        "#;
+
+        let out = engine.run_post(script, &res, &empty_vars());
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert_eq!(out.assertions.len(), 1);
+        assert!(out.assertions[0].passed, "{:?}", out.assertions[0]);
+    }
+
+    #[test]
+    fn pm_variable_scopes_share_forges_runtime_vars() {
+        let engine = JsEngine::new();
+        let res = sample_result(200, r#"{"token":"t-123"}"#);
+        let mut vars = BTreeMap::new();
+        vars.insert("existing".to_string(), "yes".to_string());
+
+        let script = r#"
+            pm.environment.set("token", pm.response.json().token);
+            pm.test("scopes alias the same store", function () {
+                pm.expect(pm.variables.get("token")).to.equal("t-123");
+                pm.expect(pm.collectionVariables.get("existing")).to.equal("yes");
+                pm.expect(pm.globals.has("missing")).to.be.false;
+            });
+            log(pm.variables.replaceIn("tok={{token}} keep={{missing}}"));
+        "#;
+
+        let out = engine.run_post(script, &res, &vars);
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert!(out.vars_set.contains(&("token".to_string(), "t-123".to_string())));
+        assert!(out.assertions[0].passed, "{:?}", out.assertions[0]);
+        assert_eq!(out.log, vec!["tok=t-123 keep={{missing}}".to_string()]);
+    }
+
+    #[test]
+    fn pm_response_status_header_and_class_helpers() {
+        let engine = JsEngine::new();
+        let res = sample_result(200, r#"{}"#);
+
+        let script = r#"
+            pm.test("status text and headers", function () {
+                pm.response.to.have.status("OK");
+                pm.response.to.have.header("Content-Type");
+                pm.expect(pm.response.headers.get("Content-Type")).to.equal("application/json");
+                pm.expect(pm.response.headers.get("X-Missing")).to.be.null;
+                pm.response.to.be.ok;
+            });
+        "#;
+
+        let out = engine.run_post(script, &res, &empty_vars());
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert!(out.assertions[0].passed, "{:?}", out.assertions[0]);
+    }
+
+    #[test]
+    fn pm_request_is_usable_in_pre_scripts_and_response_is_not() {
+        let engine = JsEngine::new();
+        let mut req = ResolvedRequest::new(Method::Post, "https://example.test/x");
+
+        let script = r#"
+            pm.request.headers.upsert({ key: "X-From-Pm", value: "1" });
+            pm.test("request surface", function () {
+                pm.expect(pm.request.method).to.equal("POST");
+                pm.expect(pm.request.headers.get("X-From-Pm")).to.equal("1");
+            });
+            pm.test("response must not exist here", function () {
+                var threw = false;
+                try { pm.response; } catch (e) { threw = true; }
+                pm.expect(threw).to.be.true;
+            });
+        "#;
+
+        let out = engine.run_pre(script, &mut req, &empty_vars());
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert_eq!(req.header("X-From-Pm"), Some("1"));
+        assert!(out.assertions.iter().all(|a| a.passed), "{:?}", out.assertions);
+    }
+
+    #[test]
+    fn pm_send_request_fails_with_a_clear_message() {
+        let engine = JsEngine::new();
+        let res = sample_result(200, "{}");
+
+        let out = engine.run_post(
+            r#"
+                pm.test("sendRequest is unsupported", function () {
+                    pm.sendRequest("https://example.test");
+                });
+            "#,
+            &res,
+            &empty_vars(),
+        );
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert!(!out.assertions[0].passed);
+        assert!(
+            out.assertions[0].message.as_deref().unwrap_or_default().contains("not supported"),
+            "{:?}",
+            out.assertions[0].message
+        );
     }
 
     #[test]

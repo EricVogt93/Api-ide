@@ -28,7 +28,7 @@ fn imports_collection_metadata_variables_and_auth() {
 fn imports_folder_tree_with_folder_level_auth() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
 
-    let ImportedItem::Folder { name, description, auth, items } = &import.items[0] else {
+    let ImportedItem::Folder { name, description, auth, items, .. } = &import.items[0] else {
         panic!("first item should be the Charges folder");
     };
     assert_eq!(name, "Charges");
@@ -146,17 +146,29 @@ fn imports_graphql_body_and_drops_unsupported_auth_with_a_note() {
 }
 
 #[test]
-fn reports_skipped_scripts_and_example_responses() {
+fn imports_scripts_as_js_and_reports_example_responses() {
+    use forge_core::model::ScriptLang;
+
     let import = parse_postman(COLLECTION).expect("fixture should parse");
 
+    // Collection prerequest event becomes a beforeEach suite hook.
+    assert_eq!(import.hooks.language, ScriptLang::Js);
+    let before_each = import.hooks.before_each.as_deref().expect("collection prerequest imported");
+    assert!(before_each.contains("pm.variables.set"), "{before_each:?}");
+    assert!(import.hooks.after_each.is_none());
+
+    // Request test event becomes its JS post-response script.
+    let ImportedItem::Folder { items, .. } = &import.items[0] else { panic!("folder") };
+    let ImportedItem::Request(def) = &items[0] else { panic!("request") };
+    assert_eq!(def.scripts.language, ScriptLang::Js);
+    let post = def.scripts.post_response.as_deref().expect("test script imported");
+    assert!(post.contains("pm.test('status 201'"), "{post:?}");
+    assert!(def.scripts.pre_request.is_none());
+
+    // Scripts no longer appear in the skip list; example responses still do.
     assert!(
-        import.skipped.iter().any(|s| s.contains("prerequest script")),
-        "collection prerequest script should be reported: {:?}",
-        import.skipped
-    );
-    assert!(
-        import.skipped.iter().any(|s| s.contains("Charges/Create Charge") && s.contains("test script")),
-        "request test script should be reported with its path: {:?}",
+        !import.skipped.iter().any(|s| s.contains("script")),
+        "scripts should import, not skip: {:?}",
         import.skipped
     );
     assert!(

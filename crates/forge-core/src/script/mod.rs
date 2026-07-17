@@ -15,6 +15,7 @@
 mod api;
 mod engine;
 mod js;
+mod pm;
 
 use std::collections::BTreeMap;
 

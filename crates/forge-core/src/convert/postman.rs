@@ -3,10 +3,13 @@
 //!
 //! Faithful where the formats overlap (folders, requests, headers, query and
 //! path params, all body modes, basic/bearer/apikey/oauth2 auth, `{{var}}`
-//! syntax is shared verbatim). Postman-only features that can't be mapped —
-//! `pm.*` scripts, saved example responses, unsupported auth types — are
-//! dropped and reported in [`ImportedCollection::skipped`] so the caller can show
-//! an honest summary instead of pretending a lossless import.
+//! syntax is shared verbatim). `pm.*` scripts come over as JavaScript
+//! scripts — the engine ships a `pm` compatibility shim — with request
+//! events mapping to pre/post scripts and folder/collection events to
+//! `beforeEach`/`afterEach` suite hooks. What can't be mapped (saved
+//! example responses, unsupported auth types) is reported in
+//! [`ImportedCollection::skipped`] so the caller can show an honest summary
+//! instead of pretending a lossless import.
 
 use std::collections::BTreeMap;
 
@@ -14,7 +17,7 @@ use serde_json::Value;
 
 use crate::model::{
     ApiKeyPlacement, AuthConfig, BodyDef, EnvVar, Environment, KeyValue, Method, MultipartPart,
-    Param, ParamKind, PartContent, RawLanguage, RequestDef, SecretValues,
+    Param, ParamKind, PartContent, RawLanguage, RequestDef, ScriptLang, SecretValues, SuiteHooks,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +39,8 @@ pub struct ImportedCollection {
     pub variables: BTreeMap<String, String>,
     /// Collection-level auth (`Inherit` when absent).
     pub auth: AuthConfig,
+    /// Collection-level lifecycle hooks (from Postman collection events).
+    pub hooks: SuiteHooks,
     pub items: Vec<ImportedItem>,
     /// Human-readable notes about dropped Postman-only features.
     pub skipped: Vec<String>,
@@ -58,11 +63,15 @@ impl ImportedCollection {
 }
 
 #[derive(Debug)]
+// Folder metadata outweighs the boxed request pointer; these trees are
+// import-time-only and tiny, so boxing every folder isn't worth the churn.
+#[allow(clippy::large_enum_variant)]
 pub enum ImportedItem {
     Folder {
         name: String,
         description: String,
         auth: AuthConfig,
+        hooks: SuiteHooks,
         items: Vec<ImportedItem>,
     },
     Request(Box<RequestDef>),
@@ -78,7 +87,7 @@ pub fn parse_postman(text: &str) -> Result<ImportedCollection, PostmanError> {
     }
 
     let mut skipped = Vec::new();
-    note_skipped_events(&root, &name, &mut skipped);
+    let hooks = hooks_from_events(&root);
     let items = parse_items(&root["item"], "", &mut skipped);
 
     let mut variables = BTreeMap::new();
@@ -97,6 +106,7 @@ pub fn parse_postman(text: &str) -> Result<ImportedCollection, PostmanError> {
         description: description_text(&info["description"]),
         variables,
         auth,
+        hooks,
         items,
         skipped,
     })
@@ -145,13 +155,13 @@ fn parse_items(items: &Value, path: &str, skipped: &mut Vec<String>) -> Vec<Impo
     for item in arr {
         let name = item["name"].as_str().unwrap_or("Unnamed").to_string();
         let item_path = if path.is_empty() { name.clone() } else { format!("{path}/{name}") };
-        note_skipped_events(item, &item_path, skipped);
 
         if item["item"].is_array() {
             let auth = parse_auth(&item["auth"], &item_path, skipped);
             out.push(ImportedItem::Folder {
                 description: description_text(&item["description"]),
                 auth,
+                hooks: hooks_from_events(item),
                 items: parse_items(&item["item"], &item_path, skipped),
                 name,
             });
@@ -199,11 +209,59 @@ fn parse_request(item: &Value, path: &str, skipped: &mut Vec<String>) -> Request
     def.auth = parse_auth(&req["auth"], path, skipped);
     def.body = parse_body(&req["body"], path, skipped);
 
+    // pm.* scripts run on Forge's JS engine through the pm compatibility
+    // shim, so events import as regular scripts instead of being dropped.
+    def.scripts.pre_request = event_script(item, "prerequest");
+    def.scripts.post_response = event_script(item, "test");
+    if !def.scripts.is_empty() {
+        def.scripts.language = ScriptLang::Js;
+    }
+
     if item["response"].as_array().is_some_and(|r| !r.is_empty()) {
         skipped.push(format!("{path}: saved example responses not imported"));
     }
 
     def
+}
+
+/// The joined source of the first non-empty script for `listen`
+/// (`prerequest` / `test`), if any. Postman stores `exec` as either an
+/// array of lines or a single string.
+fn event_script(item: &Value, listen: &str) -> Option<String> {
+    let events = item["event"].as_array()?;
+    for ev in events {
+        if ev["listen"].as_str() != Some(listen) || ev["disabled"].as_bool().unwrap_or(false) {
+            continue;
+        }
+        let exec = &ev["script"]["exec"];
+        let code = match exec {
+            Value::Array(lines) => lines
+                .iter()
+                .map(|l| l.as_str().unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Value::String(s) => s.clone(),
+            _ => continue,
+        };
+        if !code.trim().is_empty() {
+            return Some(code);
+        }
+    }
+    None
+}
+
+/// Folder/collection events map onto suite hooks: `prerequest` runs before
+/// every request underneath (→ `beforeEach`), `test` after (→ `afterEach`).
+fn hooks_from_events(item: &Value) -> SuiteHooks {
+    let mut hooks = SuiteHooks {
+        before_each: event_script(item, "prerequest"),
+        after_each: event_script(item, "test"),
+        ..SuiteHooks::default()
+    };
+    if !hooks.is_empty() {
+        hooks.language = ScriptLang::Js;
+    }
+    hooks
 }
 
 /// Split a Postman URL into the raw URL (query string stripped — query
@@ -435,22 +493,6 @@ fn auth_params(node: &Value) -> BTreeMap<String, String> {
 // ---------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------
-
-fn note_skipped_events(item: &Value, path: &str, skipped: &mut Vec<String>) {
-    if let Some(events) = item["event"].as_array() {
-        for ev in events {
-            let listen = ev["listen"].as_str().unwrap_or("script");
-            let has_code = ev["script"]["exec"]
-                .as_array()
-                .is_some_and(|lines| lines.iter().any(|l| !l.as_str().unwrap_or("").trim().is_empty()));
-            if has_code {
-                skipped.push(format!(
-                    "{path}: {listen} script uses Postman's pm.* API and was not imported"
-                ));
-            }
-        }
-    }
-}
 
 /// Postman descriptions are either a string or `{content, type}`.
 fn description_text(desc: &Value) -> String {

@@ -370,6 +370,7 @@ async fn execute_one(
 
     let mut script_log = Vec::new();
     let mut script_error = None;
+    let mut pre_assertions = Vec::new();
 
     if let Some(pre) = &def.scripts.pre_request {
         let out = scripting.run_pre(def.scripts.language, pre, &mut resolved, runtime_vars);
@@ -377,6 +378,8 @@ async fn execute_one(
         for (k, v) in out.vars_set {
             runtime_vars.insert(k, v);
         }
+        // `pm.test` may run in pre-request scripts; keep those outcomes.
+        pre_assertions = out.assertions;
         script_error = out.error;
     }
 
@@ -409,8 +412,11 @@ async fn execute_one(
         }
     };
 
-    let mut assertions =
-        evaluate_all(&super::resolve::resolve_assertions(&def.assertions, scopes), &exec_result);
+    let mut assertions = pre_assertions;
+    assertions.extend(evaluate_all(
+        &super::resolve::resolve_assertions(&def.assertions, scopes),
+        &exec_result,
+    ));
 
     let extract_report = apply_extractors(&def.extractors, &exec_result);
     let extracted = extract_report.values.clone();

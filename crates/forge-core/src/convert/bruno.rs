@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::model::{
     ApiKeyPlacement, AssertionDef, AuthConfig, BodyDef, Check, EnvVar, Environment, ExtractScope,
     Extractor, ExtractorSource, KeyValue, Method, MultipartPart, NumberOp, Param, ParamKind,
-    PartContent, RawLanguage, RequestDef, SecretValues, ValueOp,
+    PartContent, RawLanguage, RequestDef, SecretValues, SuiteHooks, ValueOp,
 };
 
 use super::postman::{ImportedCollection, ImportedItem};
@@ -87,6 +87,7 @@ pub fn import_bruno(root: &Path) -> Result<BrunoImport, BrunoError> {
             description,
             variables: BTreeMap::new(),
             auth,
+            hooks: SuiteHooks::default(),
             items,
             skipped,
         },
@@ -153,7 +154,13 @@ fn read_dir_items(
             entries.push((
                 seq,
                 folder_name.clone(),
-                ImportedItem::Folder { name: folder_name, description: folder_desc, auth, items },
+                ImportedItem::Folder {
+                    name: folder_name,
+                    description: folder_desc,
+                    auth,
+                    hooks: SuiteHooks::default(),
+                    items,
+                },
             ));
         } else if fname.ends_with(".bru") && fname != "folder.bru" && fname != "collection.bru" {
             let text = std::fs::read_to_string(&p).map_err(|e| io_err(&p, e))?;
