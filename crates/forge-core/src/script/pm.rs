@@ -35,6 +35,10 @@ pub(super) fn install_pm(
             });
         })?,
     )?;
+    ctx.globals().set(
+        "__pmSendRequest",
+        Function::new(ctx.clone(), |spec_json: String| super::send_request::send_blocking(&spec_json))?,
+    )?;
     ctx.globals().set("__pmHasResponse", has_response)?;
     ctx.eval::<(), _>(PM_PRELUDE)
 }
@@ -193,8 +197,56 @@ const PM_PRELUDE: &str = r#"
         collectionVariables: pmVars,
         globals: pmVars,
         info: { eventName: __pmHasResponse ? "test" : "prerequest" },
-        sendRequest: function () {
-            throw new Error("pm.sendRequest is not supported in Forge scripts");
+        sendRequest: function (req, cb) {
+            var spec = { url: "", method: "GET", headers: [], body: "" };
+            if (typeof req === "string") {
+                spec.url = req;
+            } else if (req && typeof req === "object") {
+                spec.url = String(req.url || "");
+                if (req.method) spec.method = String(req.method);
+                var header = req.header;
+                if (Array.isArray(header)) {
+                    header.forEach(function (h) {
+                        if (h && h.key !== undefined) spec.headers.push([String(h.key), String(h.value === undefined ? "" : h.value)]);
+                    });
+                } else if (header && typeof header === "object") {
+                    Object.keys(header).forEach(function (k) { spec.headers.push([k, String(header[k])]); });
+                }
+                var body = req.body;
+                if (typeof body === "string") spec.body = body;
+                else if (body && body.mode === "raw") spec.body = String(body.raw === undefined ? "" : body.raw);
+                else if (body && body.mode === "urlencoded" && Array.isArray(body.urlencoded)) {
+                    spec.body = body.urlencoded
+                        .map(function (p) { return encodeURIComponent(p.key) + "=" + encodeURIComponent(p.value === undefined ? "" : p.value); })
+                        .join("&");
+                    if (!spec.headers.some(function (h) { return h[0].toLowerCase() === "content-type"; })) {
+                        spec.headers.push(["Content-Type", "application/x-www-form-urlencoded"]);
+                    }
+                }
+            }
+            var raw = JSON.parse(__pmSendRequest(JSON.stringify(spec)));
+            if (raw.error) {
+                if (cb) cb({ message: raw.error }, undefined);
+                return;
+            }
+            var response = {
+                code: raw.code,
+                status: raw.status,
+                responseTime: raw.time_ms,
+                text: function () { return raw.body; },
+                json: function () { return JSON.parse(raw.body); },
+                headers: {
+                    get: function (n) {
+                        var want = String(n).toLowerCase();
+                        for (var i = 0; i < raw.headers.length; i++) {
+                            if (raw.headers[i][0].toLowerCase() === want) return raw.headers[i][1];
+                        }
+                        return null;
+                    },
+                    has: function (n) { return this.get(n) !== null; }
+                }
+            };
+            if (cb) cb(null, response);
         }
     };
 

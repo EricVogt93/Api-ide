@@ -890,28 +890,95 @@ mod tests {
         assert!(out.assertions.iter().all(|a| a.passed), "{:?}", out.assertions);
     }
 
-    #[test]
-    fn pm_send_request_fails_with_a_clear_message() {
-        let engine = JsEngine::new();
-        let res = sample_result(200, "{}");
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pm_send_request_performs_a_real_get_and_post() {
+        use wiremock::matchers::{body_string, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let out = engine.run_post(
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("X-Kind", "token")
+                    .set_body_string(r#"{"token":"tok-1"}"#),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/audit"))
+            .and(header("X-From", "script"))
+            .and(body_string(r#"{"seen":true}"#))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let script = format!(
             r#"
-                pm.test("sendRequest is unsupported", function () {
-                    pm.sendRequest("https://example.test");
-                });
-            "#,
-            &res,
-            &empty_vars(),
+                pm.sendRequest("{uri}/token", function (err, response) {{
+                    pm.test("GET roundtrip", function () {{
+                        pm.expect(err).to.be.null;
+                        pm.expect(response.code).to.equal(200);
+                        pm.expect(response.json().token).to.equal("tok-1");
+                        pm.expect(response.headers.get("X-Kind")).to.equal("token");
+                        pm.expect(response.responseTime).to.be.a("number");
+                    }});
+                    pm.environment.set("token", response.json().token);
+                }});
+                pm.sendRequest({{
+                    url: "{uri}/audit",
+                    method: "POST",
+                    header: [{{ key: "X-From", value: "script" }}],
+                    body: {{ mode: "raw", raw: JSON.stringify({{ seen: true }}) }}
+                }}, function (err, response) {{
+                    pm.test("POST roundtrip", function () {{
+                        pm.expect(err).to.be.null;
+                        pm.expect(response.code).to.equal(201);
+                    }});
+                }});
+            "#
         );
+
+        // The script blocks its thread while waiting for the reply, so keep
+        // it off this runtime's core workers.
+        let res = sample_result(200, "{}");
+        let out = tokio::task::spawn_blocking(move || {
+            JsEngine::new().run_post(&script, &res, &BTreeMap::new())
+        })
+        .await
+        .expect("script task");
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert!(!out.assertions[0].passed);
-        assert!(
-            out.assertions[0].message.as_deref().unwrap_or_default().contains("not supported"),
-            "{:?}",
-            out.assertions[0].message
-        );
+        assert_eq!(out.assertions.len(), 2, "{:?}", out.assertions);
+        assert!(out.assertions.iter().all(|a| a.passed), "{:?}", out.assertions);
+        assert!(out.vars_set.contains(&("token".to_string(), "tok-1".to_string())));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pm_send_request_reports_transport_errors_via_the_callback() {
+        let out = tokio::task::spawn_blocking(|| {
+            let res = sample_result(200, "{}");
+            JsEngine::new().run_post(
+                r#"
+                    pm.sendRequest("http://127.0.0.1:1/nope", function (err, response) {
+                        pm.test("error path", function () {
+                            pm.expect(err).to.not.be.null;
+                            pm.expect(err.message).to.be.a("string");
+                            pm.expect(response).to.be.undefined;
+                        });
+                    });
+                "#,
+                &res,
+                &BTreeMap::new(),
+            )
+        })
+        .await
+        .expect("script task");
+
+        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
+        assert_eq!(out.assertions.len(), 1);
+        assert!(out.assertions[0].passed, "{:?}", out.assertions[0]);
     }
 
     #[test]
