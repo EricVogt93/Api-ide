@@ -51,6 +51,9 @@ The project is a Cargo workspace:
   engine and assertions as the IDE.
 - **curl import/export** — paste a curl command to create a request, or
   copy any request back out as curl (plus other code snippets).
+- **Postman import** — bring over Postman v2.x collections (folders,
+  auth, all body modes, variables) and environment exports, with an
+  honest report of anything that can't be mapped (e.g. `pm.*` scripts).
 - **GraphQL, WebSocket & SSE** support alongside plain HTTP.
 - **Request history & diff** — every run is recorded locally so you can
   diff responses over time.
