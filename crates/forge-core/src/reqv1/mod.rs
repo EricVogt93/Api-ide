@@ -12,6 +12,7 @@
 pub mod build;
 pub mod diag;
 pub mod ir;
+pub mod jshost;
 pub mod matrix;
 pub mod model;
 pub mod pipeline;

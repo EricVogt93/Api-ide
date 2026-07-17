@@ -154,11 +154,12 @@ pub async fn run(
 
     // --- beforeRequest hooks ---
     for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::BeforeRequest) {
-        if is_project_asset(entry) {
-            diagnostics.push(project_asset_unsupported(&entry.asset.raw));
-            continue;
-        }
-        match run_before_request(entry, &ir) {
+        let outcome = if is_project_asset(entry) {
+            run_js_hook(entry, &ir)
+        } else {
+            run_before_request(entry, &ir)
+        };
+        match outcome {
             Ok(patch) => apply_patch(&mut ir, patch.headers, patch.url, &mut diagnostics),
             Err(d) => diagnostics.push(d),
         }
@@ -166,8 +167,8 @@ pub async fn run(
 
     // --- send or mock ---
     let response = match mode {
-        RunMode::Mock => match &ir.mock {
-            Some(m) => mock_response(m, &mut diagnostics),
+        RunMode::Mock => match &ir.mock.clone() {
+            Some(m) => mock_response(m, &ir, &mut diagnostics),
             None => {
                 diagnostics.push(Diagnostic::new(
                     Code::HttpError,
@@ -193,11 +194,12 @@ pub async fn run(
     let mut assertions = Vec::new();
     let mut runtime: BTreeMap<String, Value> = BTreeMap::new();
     for entry in ir.pipeline.iter().filter(|e| e.phase == PipelinePhase::AfterResponse) {
-        if is_project_asset(entry) {
-            diagnostics.push(project_asset_unsupported(&entry.asset.raw));
-            continue;
-        }
-        match run_after_response(entry, &response) {
+        let outcome = if is_project_asset(entry) {
+            run_js_after(entry, &ir, &response)
+        } else {
+            run_after_response(entry, &response)
+        };
+        match outcome {
             Ok((results, extracted)) => {
                 assertions.extend(results);
                 for (k, v) in extracted {
@@ -257,12 +259,112 @@ fn finish(
     }
 }
 
-fn project_asset_unsupported(raw: &str) -> Diagnostic {
-    Diagnostic::new(
-        Code::AssetError,
-        format!("project (TS/JS) asset {raw:?} not executable in v1 — use a builtin, or run on the JS host (extension point)"),
-    )
-    .with_ref(raw)
+// ---------------------------------------------------------------------
+// Project (.js) assets via the QuickJS host (§15 trusted-local tier)
+// ---------------------------------------------------------------------
+
+/// JSON snapshot of the request handed to JS assets as `ctx.request`.
+fn request_ctx(ir: &ResolvedRequest) -> Value {
+    serde_json::json!({
+        "method": ir.method.as_str(),
+        "url": ir.url,
+        "headers": ir.headers.iter().map(|h| serde_json::json!({"name": h.name, "value": h.value})).collect::<Vec<_>>(),
+    })
+}
+
+fn run_js_hook(
+    entry: &super::ir::ResolvedPipelineEntry,
+    ir: &ResolvedRequest,
+) -> Result<super::pipeline::RequestPatch, Diagnostic> {
+    let ctx = serde_json::json!({ "request": request_ctx(ir), "bindings": ir.bindings });
+    let out = super::jshost::run_js_asset(&entry.asset.address, &ctx, &entry.input)
+        .map_err(|d| d.with_ref(&entry.asset.raw))?;
+
+    let mut patch = super::pipeline::RequestPatch::default();
+    if let Some(url) = out.get("url").and_then(Value::as_str) {
+        patch.url = Some(url.to_string());
+    }
+    if let Some(headers) = out.get("headers").and_then(Value::as_array) {
+        for h in headers {
+            let (Some(name), Some(value)) =
+                (h.get("name").and_then(Value::as_str), h.get("value").and_then(Value::as_str))
+            else {
+                return Err(Diagnostic::new(
+                    Code::AssetError,
+                    "hook returned a header without string name/value",
+                )
+                .with_ref(&entry.asset.raw));
+            };
+            patch.headers.push(ResolvedHeader { name: name.to_string(), value: value.to_string() });
+        }
+    }
+    Ok(patch)
+}
+
+fn run_js_after(
+    entry: &super::ir::ResolvedPipelineEntry,
+    ir: &ResolvedRequest,
+    response: &ResponseView,
+) -> Result<(Vec<AssertionResult>, BTreeMap<String, Value>), Diagnostic> {
+    let body_json = response.json().unwrap_or(Value::Null);
+    let ctx = serde_json::json!({
+        "request": request_ctx(ir),
+        "bindings": ir.bindings,
+        "response": {
+            "status": response.status,
+            "headers": response.headers.iter().map(|(k, v)| serde_json::json!({"name": k, "value": v})).collect::<Vec<_>>(),
+            "body": body_json,
+            "bodyText": response.text(),
+            "timeMs": response.time_ms,
+        },
+    });
+    let out = super::jshost::run_js_asset(&entry.asset.address, &ctx, &entry.input)
+        .map_err(|d| d.with_ref(&entry.asset.raw))?;
+
+    // The return shape decides the meaning (§5): `runtime` → extractor,
+    // `passed` (object or array of objects) → assertion result(s).
+    let mut assertions = Vec::new();
+    let mut runtime = BTreeMap::new();
+    if let Some(rt) = out.get("runtime").and_then(Value::as_object) {
+        for (k, v) in rt {
+            runtime.insert(k.clone(), v.clone());
+        }
+    }
+    let mut push_assertion = |item: &Value| -> Result<(), Diagnostic> {
+        let passed = item.get("passed").and_then(Value::as_bool).ok_or_else(|| {
+            Diagnostic::new(
+                Code::AssetError,
+                "assertion result must have a boolean `passed`",
+            )
+            .with_ref(&entry.asset.raw)
+        })?;
+        assertions.push(AssertionResult {
+            passed,
+            message: item.get("message").and_then(Value::as_str).unwrap_or("(no message)").to_string(),
+            expected: item.get("expected").cloned(),
+            actual: item.get("actual").cloned(),
+            path: item.get("path").and_then(Value::as_str).map(str::to_string),
+        });
+        Ok(())
+    };
+    match &out {
+        Value::Array(items) => {
+            for item in items {
+                push_assertion(item)?;
+            }
+        }
+        Value::Object(map) if map.contains_key("passed") => push_assertion(&out)?,
+        Value::Object(map) if map.contains_key("runtime") => {}
+        Value::Null => {}
+        other => {
+            return Err(Diagnostic::new(
+                Code::AssetError,
+                format!("unrecognized afterResponse asset result: {other}"),
+            )
+            .with_ref(&entry.asset.raw));
+        }
+    }
+    Ok((assertions, runtime))
 }
 
 fn apply_patch(
@@ -344,7 +446,11 @@ fn body_to_exec(body: &ResolvedBody, headers: &[(String, String)]) -> ExecBody {
     }
 }
 
-fn mock_response(mock: &ResolvedMock, diagnostics: &mut Vec<Diagnostic>) -> Option<ResponseView> {
+fn mock_response(
+    mock: &ResolvedMock,
+    ir: &ResolvedRequest,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> Option<ResponseView> {
     match mock {
         ResolvedMock::Static { status, headers, body, .. } => {
             let body_bytes = match body {
@@ -365,9 +471,41 @@ fn mock_response(mock: &ResolvedMock, diagnostics: &mut Vec<Diagnostic>) -> Opti
                 time_ms: 0,
             })
         }
-        ResolvedMock::Dynamic { asset, .. } => {
-            diagnostics.push(project_asset_unsupported(&asset.raw));
-            None
+        ResolvedMock::Dynamic { asset, input } => {
+            let ctx = serde_json::json!({ "request": request_ctx(ir), "bindings": ir.bindings });
+            let out = match super::jshost::run_js_asset(&asset.address, &ctx, input) {
+                Ok(v) => v,
+                Err(d) => {
+                    diagnostics.push(d.with_ref(&asset.raw));
+                    return None;
+                }
+            };
+            let Some(status) = out.get("status").and_then(Value::as_u64) else {
+                diagnostics.push(
+                    Diagnostic::new(Code::AssetError, "mock asset must return { status, ... }")
+                        .with_ref(&asset.raw),
+                );
+                return None;
+            };
+            let headers = out
+                .get("headers")
+                .and_then(Value::as_array)
+                .map(|hs| {
+                    hs.iter()
+                        .filter_map(|h| {
+                            Some((
+                                h.get("name")?.as_str()?.to_string(),
+                                h.get("value")?.as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let body = out
+                .get("body")
+                .map(|b| serde_json::to_vec(b).unwrap_or_default())
+                .unwrap_or_default();
+            Some(ResponseView { status: status as u16, headers, body, time_ms: 0 })
         }
     }
 }

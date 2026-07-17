@@ -230,3 +230,55 @@ fn matrix_binding_must_be_an_array() {
     .unwrap_err();
     assert!(err.0.iter().any(|d| d.message.contains("must resolve to an array")), "{err:?}");
 }
+
+#[tokio::test]
+async fn js_assets_run_hook_assertions_extractor_and_generator() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/users"))
+        .and(header("authorization", "Bearer s3cr3t-token"))   // JS hook
+        .and(header("x-tag", "req-alice"))                     // JS generator binding
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "id": "u-77", "name": "Alice"
+        })))
+        .mount(&server)
+        .await;
+
+    let file = project_root().join("requests/users/create-js.request.json");
+    let doc = reqv1::RequestDocument::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let env = json!({ "baseUrl": server.uri() });
+    let engine = HttpEngine::new();
+
+    let result = reqv1::run(
+        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Http,
+        CancellationToken::new(), Value::Null,
+    )
+    .await;
+
+    assert_eq!(result.status, RunStatus::Passed, "diagnostics: {:?}", result.diagnostics);
+    // The JS assertion asset returned two results, both passing.
+    assert_eq!(result.assertions.len(), 2, "{:?}", result.assertions);
+    assert!(result.assertions.iter().all(|a| a.passed));
+    // The JS extractor wrote runtime.userId from the response body.
+    assert_eq!(result.runtime.get("userId"), Some(&json!("u-77")));
+}
+
+#[tokio::test]
+async fn js_dynamic_mock_serves_and_assertions_run_against_it() {
+    // No HTTP server: the dynamic mock asset builds the response from the
+    // bound user, so the JS assertion passes and the extractor sees u-mock.
+    let file = project_root().join("requests/users/create-js.request.json");
+    let doc = reqv1::RequestDocument::parse(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let env = json!({ "baseUrl": "http://unused" });
+    let engine = HttpEngine::new();
+
+    let result = reqv1::run(
+        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Mock,
+        CancellationToken::new(), Value::Null,
+    )
+    .await;
+
+    assert_eq!(result.status, RunStatus::Passed, "diagnostics: {:?}", result.diagnostics);
+    assert_eq!(result.http.as_ref().unwrap().status, 201);
+    assert_eq!(result.runtime.get("userId"), Some(&json!("u-mock")));
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../schemas/request-v1.schema.json",
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": { "id": "users.create.js", "name": "Create user (JS assets)" },
+  "bindings": {
+    "user": { "ref": "data:users#/valid/alice" },
+    "tag":  { "use": "project:generators/request-tag", "with": { "prefix": "req" } }
+  },
+  "request": {
+    "method": "POST",
+    "url": "${env.baseUrl}/users",
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true },
+      { "name": "X-Tag", "value": "${bindings.tag}", "enabled": true }
+    ],
+    "body": { "type": "json", "value": { "name": "${bindings.user.name}" } }
+  },
+  "pipeline": [
+    { "phase": "beforeRequest", "use": "project:hooks/service-token", "with": { "token": "${secret.apiToken}" } },
+    { "phase": "afterResponse", "use": "project:assertions/user-created", "with": { "expectedUser": "${bindings.user}" } },
+    { "phase": "afterResponse", "use": "project:extractors/user-id", "with": { "target": "userId" } }
+  ],
+  "mock": {
+    "use": "project:mocks/create-user-response",
+    "with": { "user": "${bindings.user}" }
+  }
+}

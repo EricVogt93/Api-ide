@@ -4,7 +4,14 @@
     "data:users": "./assets/data/users.json",
     "data:tenants": "./assets/data/tenants.json",
     "data:user-responses": "./assets/data/responses/users.json",
-    "data:create-user-cases": "./assets/data/create-user-cases.json"
+    "data:create-user-cases": "./assets/data/create-user-cases.json",
+    "project:hooks": "./assets/hooks",
+    "project:assertions": "./assets/assertions",
+    "project:extractors": "./assets/extractors",
+    "project:generators": "./assets/generators",
+    "project:mocks": "./assets/mocks"
   },
-  "secrets": ["env"]
+  "secrets": [
+    "env"
+  ]
 }

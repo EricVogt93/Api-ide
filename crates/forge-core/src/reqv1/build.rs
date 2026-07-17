@@ -173,19 +173,16 @@ fn resolve_one_binding(
         }
         Binding::Use(u) => {
             let desc = inp.resolver.resolve(&u.uses, inp.base_dir)?;
-            if desc.scheme != RefScheme::Builtin {
-                // Project generators run on the JS host — not wired in v1.
-                return Err(Diagnostic::new(
-                    Code::AssetError,
-                    format!(
-                        "project generator {:?} not supported yet (v1 supports builtin generators)",
-                        u.uses
-                    ),
-                )
-                .with_ref(&u.uses));
-            }
             let input = interpolate(&Value::Object(u.with.clone()), &scopes, sink)?;
-            run_generator(&desc.address, desc.version, &input, &u.uses)
+            if desc.scheme == RefScheme::Builtin {
+                run_generator(&desc.address, desc.version, &input, &u.uses)
+            } else {
+                // Project generator on the QuickJS host. ctx carries the
+                // already-resolved earlier bindings (topological order).
+                let ctx = serde_json::json!({ "bindings": resolved_bindings });
+                super::jshost::run_js_asset(&desc.address, &ctx, &input)
+                    .map_err(|d| d.with_ref(&u.uses))
+            }
         }
     }
 }

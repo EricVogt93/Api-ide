@@ -45,13 +45,27 @@ A working first version lives in `crates/forge-core/src/reqv1/` and the
   engine, or serve the document's static mock; `RunResult`/`Diagnostic` with
   secret masking (`runner.rs`).
 
-Deferred exactly as §21 says (each is an additive extension point, no format
-break): **project (TS/JS) executable assets** on the QuickJS host — the runner
-emits a clear `ASSET_ERROR` "not executable in v1" for `project:` refs;
-**matrix** parameterization; **executable mocks** and the mock server;
-lockfile; additional secret providers (v1 CLI uses process-environment
-secrets). Sibling-schema validation is presence+parse only, not full
-draft-2020-12 (a marked `ponytail:` seam in `resolve.rs`).
+Since landed (originally deferred, all additive):
+
+- **Matrix parameterization** (`matrix.rs`): each matrix binding must resolve
+  to an array; cartesian product across names; one run per case with
+  `${matrix.<name>}` bound; per-case results; CLI iterates automatically.
+- **Project `.js` executable assets** (`jshost.rs`): QuickJS host with a
+  128 MB memory cap and 5 s interrupt budget. Contract: the file defines
+  `function run(ctx, input)`; `ctx` is a frozen JSON snapshot
+  (`request`/`response?`/`bindings`) — assets never see engine memory. The
+  return shape decides the kind (hook patch / assertion result(s) /
+  `{runtime}` / generator value / mock response). `.ts` gets a clear
+  "transpile to .js" diagnostic — v1 does not pretend to run TypeScript.
+- **Executable (dynamic) mocks** — same JS contract, `{ status, headers?,
+  body? }`, with assertions running against the produced response.
+- **`.env.local` secret provider** in the CLI (file first, process env
+  fallback — the §14 declared order).
+
+Still deferred: the standalone mock *server* and route matching; lockfile +
+integrity hashes; keychain/external secret providers; full draft-2020-12
+sibling-schema validation (presence+parse only — a marked `ponytail:` seam in
+`resolve.rs`); Worker-process isolation tiers beyond trusted-local.
 
 The shipped runnable example is
 `crates/forge-core/tests/fixtures/reqv1/project/` — the canonical §1 document
