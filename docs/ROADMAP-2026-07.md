@@ -9,8 +9,8 @@ stattdessen Import von Postman (fertig) und Bruno.
 | 2 | Bruno-Collection-Import (.bru) | fertig | 197198a |
 | 3 | pm.\*-Shim (Postman-Scripts lauffähig) | fertig | 429ce0d |
 | 4 | Digest- + AWS-SigV4-Auth | fertig | (dieser Commit) |
-| 5 | gRPC (unary, dynamische .proto) | offen | |
-| 6 | Mock-Server + Response-Examples | offen | |
+| 5 | gRPC (unary, dynamische .proto) | fertig | (dieser Commit) |
+| 6 | Mock-Server + Response-Examples | zurückgestellt (Erinnerung 2026-08-17) | |
 
 Bewusste Auslassungen:
 

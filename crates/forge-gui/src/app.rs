@@ -87,6 +87,9 @@ impl ForgeApp {
                 Evt::Ws { conn_id, event } => console::handle_ws_event(&mut self.state, conn_id, event),
                 Evt::Sse { conn_id, event } => console::handle_sse_event(&mut self.state, conn_id, event),
                 Evt::Cookies(cookies) => self.state.cookies_ui.rows = cookies,
+                Evt::Grpc { call_id, result } => {
+                    self.state.dialogs.grpc_call.handle_result(call_id, result)
+                }
             }
         }
     }
@@ -292,6 +295,11 @@ impl ForgeApp {
                 let can_run = self.state.workspace.is_some();
                 if ui.add_enabled(can_run, egui::Button::new("Run Collection")).clicked() {
                     self.run_workspace();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("gRPC Call...").clicked() {
+                    self.state.dialogs.grpc_call.open();
                     ui.close();
                 }
             });

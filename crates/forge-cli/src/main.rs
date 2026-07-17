@@ -25,6 +25,49 @@ enum Command {
     List(WorkspaceArgs),
     /// List environments and their variable counts.
     Envs(WorkspaceArgs),
+    /// gRPC: list methods of a .proto or call a unary method.
+    #[command(subcommand)]
+    Grpc(GrpcCommand),
+}
+
+#[derive(Subcommand)]
+enum GrpcCommand {
+    /// List services and methods defined in .proto files.
+    List(GrpcListArgs),
+    /// Call a unary method with a JSON request message.
+    Call(GrpcCallArgs),
+}
+
+#[derive(Args)]
+struct GrpcListArgs {
+    /// One or more .proto files.
+    #[arg(required = true)]
+    protos: Vec<PathBuf>,
+    /// Import search path(s); defaults to each proto's directory.
+    #[arg(long = "include", short = 'I')]
+    includes: Vec<PathBuf>,
+}
+
+#[derive(Args)]
+struct GrpcCallArgs {
+    /// Endpoint, e.g. http://localhost:50051 or https://api.example.com
+    #[arg(long)]
+    endpoint: String,
+    /// Full method path: package.Service/Method
+    #[arg(long)]
+    method: String,
+    /// Request message as JSON (use @file.json to read from a file, - for stdin).
+    #[arg(long, default_value = "{}")]
+    data: String,
+    /// Metadata entries as key:value (repeatable).
+    #[arg(long = "meta", short = 'm')]
+    metadata: Vec<String>,
+    /// One or more .proto files.
+    #[arg(required = true)]
+    protos: Vec<PathBuf>,
+    /// Import search path(s); defaults to each proto's directory.
+    #[arg(long = "include", short = 'I')]
+    includes: Vec<PathBuf>,
 }
 
 #[derive(Args)]
@@ -65,8 +108,82 @@ async fn main() {
         Command::Run(args) => cmd_run(args).await,
         Command::List(args) => cmd_list(&args.workspace),
         Command::Envs(args) => cmd_envs(&args.workspace),
+        Command::Grpc(GrpcCommand::List(args)) => cmd_grpc_list(&args),
+        Command::Grpc(GrpcCommand::Call(args)) => cmd_grpc_call(args).await,
     };
     std::process::exit(code);
+}
+
+fn cmd_grpc_list(args: &GrpcListArgs) -> i32 {
+    let pool = match forge_core::protocols::compile_protos(&args.protos, &args.includes) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+    for m in forge_core::protocols::list_methods(&pool) {
+        let shape = if m.is_unary { "unary" } else { "streaming" };
+        println!("{}  {} -> {}  [{}]", m.path, m.input_type, m.output_type, shape);
+    }
+    0
+}
+
+async fn cmd_grpc_call(args: GrpcCallArgs) -> i32 {
+    let pool = match forge_core::protocols::compile_protos(&args.protos, &args.includes) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
+
+    let data = if args.data == "-" {
+        use std::io::Read as _;
+        let mut buf = String::new();
+        if std::io::stdin().read_to_string(&mut buf).is_err() {
+            eprintln!("error: failed to read request JSON from stdin");
+            return 2;
+        }
+        buf
+    } else if let Some(path) = args.data.strip_prefix('@') {
+        match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("error: failed to read {path}: {e}");
+                return 2;
+            }
+        }
+    } else {
+        args.data.clone()
+    };
+
+    let mut metadata = Vec::new();
+    for entry in &args.metadata {
+        match entry.split_once(':') {
+            Some((k, v)) => metadata.push((k.trim().to_string(), v.trim().to_string())),
+            None => {
+                eprintln!("error: metadata must be key:value, got {entry:?}");
+                return 2;
+            }
+        }
+    }
+
+    match forge_core::protocols::call_unary(&args.endpoint, &pool, &args.method, &data, &metadata)
+        .await
+    {
+        Ok(response) => {
+            println!("{}", response.json);
+            for (k, v) in &response.metadata {
+                eprintln!("# {k}: {v}");
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            1
+        }
+    }
 }
 
 async fn cmd_run(args: RunArgs) -> i32 {

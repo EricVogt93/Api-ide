@@ -13,6 +13,7 @@ pub mod about;
 pub mod bruno_import;
 pub mod curl_import;
 pub mod env_editor;
+pub mod grpc_call;
 pub mod hooks_editor;
 pub mod openapi_import;
 pub mod postman_import;
@@ -41,6 +42,7 @@ pub struct DialogManager {
     pub snippet_export: snippet_export::SnippetExportState,
     pub env_editor: env_editor::EnvEditorState,
     pub hooks_editor: hooks_editor::HooksEditorState,
+    pub grpc_call: grpc_call::GrpcCallState,
 }
 
 /// Render whichever overlay dialogs are currently open. Call once per frame;
@@ -58,6 +60,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     snippet_export::show(ctx, state);
     env_editor::show(ctx, state);
     hooks_editor::show(ctx, state);
+    grpc_call::show(ctx, state, bridge);
 }
 
 /// Detect the global dialog-opening gestures that don't fit a single

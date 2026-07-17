@@ -29,6 +29,16 @@ pub enum Cmd {
     SseSubscribe { conn_id: u64, url: String, headers: Vec<(String, String)> },
     /// Stop consuming an SSE stream.
     SseClose { conn_id: u64 },
+    /// Compile .proto files and call a unary gRPC method; the outcome comes
+    /// back as `Evt::Grpc`.
+    GrpcCall {
+        call_id: u64,
+        protos: Vec<PathBuf>,
+        endpoint: String,
+        method: String,
+        request_json: String,
+        metadata: Vec<(String, String)>,
+    },
     /// Ask for a snapshot of the shared `HttpEngine`'s cookie jar.
     ListCookies,
     /// Remove one cookie from the shared jar.
@@ -54,6 +64,8 @@ pub enum Evt {
     /// A fresh snapshot of the shared cookie jar (in reply to
     /// `Cmd::ListCookies`, or after any mutating cookie command).
     Cookies(Vec<StoredCookie>),
+    /// Outcome of a `Cmd::GrpcCall`: response JSON + metadata, or an error.
+    Grpc { call_id: u64, result: Result<forge_core::protocols::GrpcResponse, String> },
 }
 
 /// Handle to the background bridge thread.
@@ -168,6 +180,28 @@ fn bridge_main(
                     if let Some(token) = cancels.lock().unwrap_or_else(|p| p.into_inner()).get(&run_id) {
                         token.cancel();
                     }
+                }
+                Cmd::GrpcCall { call_id, protos, endpoint, method, request_json, metadata } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = async {
+                            let pool = forge_core::protocols::compile_protos(&protos, &[])
+                                .map_err(|e| e.to_string())?;
+                            forge_core::protocols::call_unary(
+                                &endpoint,
+                                &pool,
+                                &method,
+                                &request_json,
+                                &metadata,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
+                        }
+                        .await;
+                        let _ = evt_tx.send(Evt::Grpc { call_id, result });
+                        ctx.request_repaint();
+                    });
                 }
                 Cmd::WsConnect { conn_id, url, headers } => {
                     let evt_tx = evt_tx.clone();

@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package test;
+
+message EchoRequest {
+  string message = 1;
+  int32 count = 2;
+}
+
+message EchoReply {
+  string message = 1;
+  int32 count = 2;
+  string caller = 3;
+}
+
+service Echo {
+  rpc Say(EchoRequest) returns (EchoReply);
+  rpc Watch(EchoRequest) returns (stream EchoReply);
+}
