@@ -27,7 +27,7 @@
       "type": "jsonPath",
       "path": "$.url",
       "op": "equals",
-      "value": "https://httpbin.org/post"
+      "value": "{{baseUrl}}/post"
     },
     {
       "type": "jsonPath",

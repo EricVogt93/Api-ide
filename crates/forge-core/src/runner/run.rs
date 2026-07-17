@@ -409,7 +409,8 @@ async fn execute_one(
         }
     };
 
-    let mut assertions = evaluate_all(&def.assertions, &exec_result);
+    let mut assertions =
+        evaluate_all(&super::resolve::resolve_assertions(&def.assertions, scopes), &exec_result);
 
     let extract_report = apply_extractors(&def.extractors, &exec_result);
     let extracted = extract_report.values.clone();

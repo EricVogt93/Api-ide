@@ -199,7 +199,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                     fuzzy_score(&query_lower, &label).map(|s| (s, Item::Request { rel_id, method, label }))
                 })
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.sort_by_key(|s| std::cmp::Reverse(s.0));
             request_items = scored.into_iter().take(MAX_PER_SECTION).map(|(_, i)| i).collect();
 
             let mut scored: Vec<(i32, Item)> = ws
@@ -207,7 +207,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                 .iter()
                 .filter_map(|e| fuzzy_score(&query_lower, &e.env.name).map(|s| (s, Item::Environment { name: e.env.name.clone() })))
                 .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            scored.sort_by_key(|s| std::cmp::Reverse(s.0));
             env_items = scored.into_iter().take(MAX_PER_SECTION).map(|(_, i)| i).collect();
         }
     }
@@ -221,7 +221,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             })
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
     let action_items: Vec<Item> = scored.into_iter().take(MAX_PER_SECTION).map(|(_, i)| i).collect();
 
     let total = request_items.len() + action_items.len() + env_items.len();

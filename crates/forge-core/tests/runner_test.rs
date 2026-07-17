@@ -13,8 +13,8 @@ use forge_core::model::{
     Param, ParamKind, PartContent, RawLanguage, RequestDef, ScriptLang, SecretValues, SuiteHooks,
 };
 use forge_core::runner::{
-    junit_xml, resolve_request, run, AuthChain, CancellationToken, DataSource, RequestOutcome,
-    ResolveError, RunError, RunEvent, RunOptions, RunScope, RunSummary,
+    junit_xml, resolve_assertions, resolve_request, run, AuthChain, CancellationToken, DataSource,
+    RequestOutcome, ResolveError, RunError, RunEvent, RunOptions, RunScope, RunSummary,
 };
 use forge_core::store::{
     create_collection, create_environment, create_folder, create_request, load_json, save_collection_meta,
@@ -1296,4 +1296,61 @@ fn junit_xml_reports_transport_errors_as_error_elements() {
 
     assert!(xml.contains("[iter 2] Broken"));
     assert!(xml.contains("<error message=\"connection refused\">connection refused</error>"));
+}
+
+#[test]
+fn resolve_assertions_interpolates_variables_and_leaves_unresolved_verbatim() {
+    use forge_core::model::{AssertionDef, Check, StringOp, ValueOp};
+    use forge_core::vars::VarScopes;
+
+    let vars: BTreeMap<String, String> =
+        [("baseUrl".to_string(), "http://api.test".to_string())].into();
+    let scopes = VarScopes::new().with_collection(&vars);
+
+    let defs: Vec<AssertionDef> = vec![
+        Check::JsonPath {
+            path: "$.url".into(),
+            op: ValueOp::Equals,
+            value: serde_json::json!("{{baseUrl}}/post"),
+        }
+        .into(),
+        Check::Header { name: "X-{{baseUrl}}".into(), op: StringOp::Equals, value: "{{missing}}".into() }
+            .into(),
+        Check::BodyContains { value: "{{baseUrl}}".into() }.into(),
+        Check::JsonPath {
+            path: "$.list".into(),
+            op: ValueOp::Equals,
+            value: serde_json::json!(["{{baseUrl}}", 42, {"u": "{{baseUrl}}"}]),
+        }
+        .into(),
+    ];
+
+    let resolved = resolve_assertions(&defs, &scopes);
+
+    assert_eq!(
+        resolved[0].check,
+        Check::JsonPath {
+            path: "$.url".into(),
+            op: ValueOp::Equals,
+            value: serde_json::json!("http://api.test/post"),
+        }
+    );
+    // Unresolved variables stay verbatim instead of failing the run.
+    assert_eq!(
+        resolved[1].check,
+        Check::Header {
+            name: "X-http://api.test".into(),
+            op: StringOp::Equals,
+            value: "{{missing}}".into(),
+        }
+    );
+    assert_eq!(resolved[2].check, Check::BodyContains { value: "http://api.test".into() });
+    assert_eq!(
+        resolved[3].check,
+        Check::JsonPath {
+            path: "$.list".into(),
+            op: ValueOp::Equals,
+            value: serde_json::json!(["http://api.test", 42, {"u": "http://api.test"}]),
+        }
+    );
 }

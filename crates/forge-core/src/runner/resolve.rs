@@ -162,6 +162,55 @@ pub async fn resolve_request(
     })
 }
 
+/// Interpolate `{{variables}}` in the string-valued parts of assertions
+/// (header names/values, JSONPath paths and expected values, body
+/// contains/matches patterns). Unlike request resolution, an unresolved
+/// variable is left verbatim rather than failing the run — the request has
+/// already executed by the time assertions are evaluated, and the literal
+/// `{{name}}` in the failure message points straight at the typo.
+pub fn resolve_assertions(
+    defs: &[crate::model::AssertionDef],
+    scopes: &VarScopes,
+) -> Vec<crate::model::AssertionDef> {
+    use crate::model::Check;
+
+    let interp = |s: &str| interpolate(s, scopes).unwrap_or_else(|_| s.to_string());
+    fn interp_json(v: &serde_json::Value, interp: &dyn Fn(&str) -> String) -> serde_json::Value {
+        match v {
+            serde_json::Value::String(s) => serde_json::Value::String(interp(s)),
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(|i| interp_json(i, interp)).collect())
+            }
+            serde_json::Value::Object(map) => serde_json::Value::Object(
+                map.iter().map(|(k, val)| (k.clone(), interp_json(val, interp))).collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    defs.iter()
+        .map(|def| {
+            let check = match &def.check {
+                Check::Header { name, op, value } => {
+                    Check::Header { name: interp(name), op: *op, value: interp(value) }
+                }
+                Check::ContentType { value } => Check::ContentType { value: interp(value) },
+                Check::JsonPath { path, op, value } => Check::JsonPath {
+                    path: interp(path),
+                    op: *op,
+                    value: interp_json(value, &interp),
+                },
+                Check::BodyContains { value } => Check::BodyContains { value: interp(value) },
+                Check::BodyMatches { regex } => Check::BodyMatches { regex: interp(regex) },
+                // No strings to interpolate; JsonSchema is deliberately left
+                // untouched — schemas are structural, not user data.
+                other => other.clone(),
+            };
+            crate::model::AssertionDef { check, enabled: def.enabled, note: def.note.clone() }
+        })
+        .collect()
+}
+
 /// Resolve `AuthConfig::Inherit` by walking `def_auth` then `chain`
 /// (index 0 = innermost ancestor), returning the first non-`Inherit`
 /// config found. `None` means no auth applies (equivalent to
