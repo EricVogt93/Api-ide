@@ -28,6 +28,31 @@ enum Command {
     /// gRPC: list methods of a .proto or call a unary method.
     #[command(subcommand)]
     Grpc(GrpcCommand),
+    /// Request-format v1: validate a request document (no network).
+    Validate(V1Args),
+    /// Request-format v1: run a request document.
+    RunV1(V1RunArgs),
+}
+
+#[derive(Args)]
+struct V1Args {
+    /// The `*.request.json` document.
+    request: PathBuf,
+    /// Project root (holds project.json); defaults to walking up from the request.
+    #[arg(long)]
+    root: Option<PathBuf>,
+    /// Environment name under environments/.
+    #[arg(long = "env")]
+    env: Option<String>,
+}
+
+#[derive(Args)]
+struct V1RunArgs {
+    #[command(flatten)]
+    common: V1Args,
+    /// Serve the document's mock instead of sending over HTTP.
+    #[arg(long)]
+    mock: bool,
 }
 
 #[derive(Subcommand)]
@@ -110,8 +135,140 @@ async fn main() {
         Command::Envs(args) => cmd_envs(&args.workspace),
         Command::Grpc(GrpcCommand::List(args)) => cmd_grpc_list(&args),
         Command::Grpc(GrpcCommand::Call(args)) => cmd_grpc_call(args).await,
+        Command::Validate(args) => cmd_validate(&args),
+        Command::RunV1(args) => cmd_run_v1(args).await,
     };
     std::process::exit(code);
+}
+
+/// A secret provider from process environment: `${secret.API_TOKEN}` reads
+/// `API_TOKEN`. v1 default (§14). A gitignored .env.local loader is a small
+/// later addition on the same boundary.
+fn env_secret_provider(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+fn v1_root(args: &V1Args) -> PathBuf {
+    if let Some(root) = &args.root {
+        return root.clone();
+    }
+    // Walk up from the request file to the nearest project.json.
+    let mut dir = args.request.parent().map(Path::to_path_buf);
+    while let Some(d) = dir {
+        if d.join("project.json").exists() {
+            return d;
+        }
+        dir = d.parent().map(Path::to_path_buf);
+    }
+    args.request.parent().unwrap_or(Path::new(".")).to_path_buf()
+}
+
+fn cmd_validate(args: &V1Args) -> i32 {
+    use forge_core::reqv1;
+    let root = v1_root(args);
+    let text = match std::fs::read_to_string(&args.request) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {e}", args.request.display());
+            return 2;
+        }
+    };
+    let doc = match reqv1::RequestDocument::parse(&text) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: invalid request document: {e}");
+            return 2;
+        }
+    };
+    let env = match reqv1::load_environment(&root, args.env.as_deref()) {
+        Ok(e) => e,
+        Err(d) => {
+            eprintln!("error: {}", d.message);
+            return 2;
+        }
+    };
+    // validate is a structural, no-network check — it must not require the
+    // actual secrets to be present. A placeholder provider proves the
+    // reference is well-formed without needing the value.
+    let validate_secret = |_name: &str| Some("<secret>".to_string());
+    match reqv1::validate(&doc, &root, &args.request, env, &validate_secret) {
+        Ok(ir) => {
+            println!("ok: {} ({})", ir.id, ir.name);
+            println!("  {} {}", ir.method, ir.url);
+            println!("  {} pipeline step(s), {} header(s)", ir.pipeline.len(), ir.headers.len());
+            0
+        }
+        Err(diags) => {
+            for d in &diags {
+                let loc = d.instance_path.as_deref().unwrap_or("");
+                eprintln!("  [{}] {} {}", d.code, loc, d.message);
+            }
+            eprintln!("{} diagnostic(s)", diags.len());
+            1
+        }
+    }
+}
+
+async fn cmd_run_v1(args: V1RunArgs) -> i32 {
+    use forge_core::exec::HttpEngine;
+    use forge_core::reqv1::{self, RunMode, RunStatus};
+    use forge_core::runner::CancellationToken;
+
+    let root = v1_root(&args.common);
+    let text = match std::fs::read_to_string(&args.common.request) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: cannot read {}: {e}", args.common.request.display());
+            return 2;
+        }
+    };
+    let doc = match reqv1::RequestDocument::parse(&text) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("error: invalid request document: {e}");
+            return 2;
+        }
+    };
+    let env = match reqv1::load_environment(&root, args.common.env.as_deref()) {
+        Ok(e) => e,
+        Err(d) => {
+            eprintln!("error: {}", d.message);
+            return 2;
+        }
+    };
+
+    let engine = HttpEngine::new();
+    let mode = if args.mock { RunMode::Mock } else { RunMode::Http };
+    let result = reqv1::run(
+        &doc,
+        &root,
+        &args.common.request,
+        env,
+        &env_secret_provider,
+        &engine,
+        mode,
+        CancellationToken::new(),
+    )
+    .await;
+
+    if let Some(http) = &result.http {
+        println!("{} — {} ({} ms, {} bytes)", result.request_id, http.status, http.time_ms, http.bytes);
+    }
+    for a in &result.assertions {
+        println!("  {} {}", if a.passed { "✓" } else { "✗" }, a.message);
+    }
+    for (k, v) in &result.runtime {
+        println!("  → {k} = {v}");
+    }
+    for d in &result.diagnostics {
+        eprintln!("  [{}] {}", d.code, d.message);
+    }
+    println!("{:?}", result.status);
+    match result.status {
+        RunStatus::Passed => 0,
+        RunStatus::Failed => 1,
+        RunStatus::Error => 2,
+    }
 }
 
 fn cmd_grpc_list(args: &GrpcListArgs) -> i32 {

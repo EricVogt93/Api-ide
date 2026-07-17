@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/request-v1.schema.json",
+  "title": "Forge request document (v1)",
+  "description": "A single API request. Request-specific config plus references to reusable assets. Exactly one request per file.",
+  "type": "object",
+  "required": ["formatVersion", "kind", "meta", "request"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "formatVersion": { "const": 1 },
+    "kind": { "const": "request" },
+
+    "meta": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9._-]+$",
+          "description": "Stable identifier, unique within the project."
+        },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "bindings": {
+      "type": "object",
+      "description": "Named values resolved before the request runs. value | ref | use.",
+      "additionalProperties": { "$ref": "#/$defs/binding" }
+    },
+
+    "matrix": {
+      "type": "object",
+      "description": "Parameterized execution: one run per element of each named iteration source. Referenced as ${matrix.<name>}.",
+      "additionalProperties": { "$ref": "#/$defs/binding" }
+    },
+
+    "request": {
+      "type": "object",
+      "required": ["method", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"]
+        },
+        "url": { "type": "string", "minLength": 1 },
+        "headers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/header" }
+        },
+        "query": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/header" }
+        },
+        "body": { "$ref": "#/$defs/body" }
+      }
+    },
+
+    "pipeline": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pipelineEntry" }
+    },
+
+    "mock": { "$ref": "#/$defs/mock" }
+  },
+
+  "$defs": {
+    "assetRef": {
+      "type": "string",
+      "description": "alias-or-path[#json-pointer][@version]. Forward slashes only.",
+      "pattern": "^[^\\\\]+$"
+    },
+
+    "jsonPatch": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["op", "path"],
+        "properties": {
+          "op": { "enum": ["add", "remove", "replace", "move", "copy", "test"] },
+          "path": { "type": "string" },
+          "from": { "type": "string" },
+          "value": {}
+        }
+      }
+    },
+
+    "binding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["value"],
+          "additionalProperties": false,
+          "properties": { "value": {} }
+        },
+        {
+          "type": "object",
+          "required": ["ref"],
+          "additionalProperties": false,
+          "properties": {
+            "ref": { "$ref": "#/$defs/assetRef" },
+            "patch": { "$ref": "#/$defs/jsonPatch" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["use"],
+          "additionalProperties": false,
+          "properties": {
+            "use": { "$ref": "#/$defs/assetRef" },
+            "with": { "type": "object" }
+          }
+        }
+      ]
+    },
+
+    "header": {
+      "type": "object",
+      "required": ["name", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "value": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
+
+    "body": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "enum": ["json", "text", "form", "multipart", "binary", "none"] },
+            "value": {}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["ref"],
+          "additionalProperties": false,
+          "properties": {
+            "ref": { "$ref": "#/$defs/assetRef" },
+            "type": { "enum": ["json", "text", "form", "multipart", "binary"] }
+          }
+        }
+      ]
+    },
+
+    "pipelineEntry": {
+      "type": "object",
+      "required": ["phase", "use"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": { "enum": ["beforeRequest", "afterResponse", "onError", "finally"] },
+        "use": { "$ref": "#/$defs/assetRef" },
+        "with": { "type": "object" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
+
+    "mock": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status"],
+          "additionalProperties": false,
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "headers": { "type": "array", "items": { "$ref": "#/$defs/header" } },
+            "body": { "$ref": "#/$defs/body" },
+            "delayMs": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["use"],
+          "additionalProperties": false,
+          "properties": {
+            "use": { "$ref": "#/$defs/assetRef" },
+            "with": { "type": "object" }
+          }
+        }
+      ]
+    }
+  }
+}

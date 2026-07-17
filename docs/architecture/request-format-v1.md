@@ -23,6 +23,41 @@ types never add request-schema fields.
 
 ---
 
+## Implementation status
+
+A working first version lives in `crates/forge-core/src/reqv1/` and the
+`forge validate` / `forge run-v1` CLI subcommands. Built:
+
+- Document model + `deny_unknown_fields` validation (`model.rs`), schema at
+  `schemas/request-v1.schema.json`.
+- Ref parsing, alias (exact/prefix) resolution, path-escape guard (`refs.rs`).
+- Data-asset resolution: load, JSON Pointer, JSON Patch, clone-on-read cache,
+  reference-cycle detection, full diagnostic set (`resolve.rs`, `diag.rs`).
+- Namespaced, type-preserving variable resolution with `$$` escaping, the
+  coercion table, and secret masking (`vars.rs`).
+- Binding resolution with topological ordering + `BINDING_CYCLE`, builtin
+  generators `uuid`/`now` (`build.rs`), canonical IR (`ir.rs`).
+- 4-phase pipeline with builtin assets `bearer`, `basic`, `header` (hooks),
+  `assert-status`, `assert-json-path`, `assert-header` (assertions),
+  `extract-json-path` (extractor), plus the header-upsert conflict warning
+  (`pipeline.rs`).
+- Runner: validate (no network) + run over the existing `forge-core` HTTP
+  engine, or serve the document's static mock; `RunResult`/`Diagnostic` with
+  secret masking (`runner.rs`).
+
+Deferred exactly as §21 says (each is an additive extension point, no format
+break): **project (TS/JS) executable assets** on the QuickJS host — the runner
+emits a clear `ASSET_ERROR` "not executable in v1" for `project:` refs;
+**matrix** parameterization; **executable mocks** and the mock server;
+lockfile; additional secret providers (v1 CLI uses process-environment
+secrets). Sibling-schema validation is presence+parse only, not full
+draft-2020-12 (a marked `ponytail:` seam in `resolve.rs`).
+
+The shipped runnable example is
+`crates/forge-core/tests/fixtures/reqv1/project/` — the canonical §1 document
+using builtins instead of project assets, exercised end-to-end (HTTP + mock)
+by `crates/forge-core/tests/reqv1_test.rs`.
+
 ## 0. Decisions at a glance
 
 | Area | Decision | Why default | When to deviate |

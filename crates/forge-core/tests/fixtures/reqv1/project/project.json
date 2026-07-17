@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "aliases": {
+    "data:users": "./assets/data/users.json",
+    "data:tenants": "./assets/data/tenants.json",
+    "data:user-responses": "./assets/data/responses/users.json",
+    "data:create-user-cases": "./assets/data/create-user-cases.json"
+  },
+  "secrets": ["env"]
+}

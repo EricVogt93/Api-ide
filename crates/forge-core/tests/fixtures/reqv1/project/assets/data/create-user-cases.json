@@ -1,0 +1,4 @@
+{ "cases": [
+  { "name": "valid",        "payload": { "name": "Alice" }, "expectedStatus": 201 },
+  { "name": "missingEmail", "payload": { "name": "Bob" },   "expectedStatus": 201 }
+] }
