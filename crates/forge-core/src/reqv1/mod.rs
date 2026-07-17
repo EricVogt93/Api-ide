@@ -11,6 +11,7 @@
 
 pub mod build;
 pub mod diag;
+pub mod index;
 pub mod ir;
 pub mod jshost;
 pub mod matrix;
@@ -23,6 +24,7 @@ pub mod vars;
 
 pub use build::{build_ir, BuildInputs};
 pub use diag::{Code, Diagnostic, Errors, Severity};
+pub use index::{AssetEntry, AssetKind, ProjectIndex};
 pub use ir::{ResolvedBody, ResolvedHeader, ResolvedRequest};
 pub use model::{Binding, ProjectConfig, RequestDocument};
 pub use pipeline::{AssertionResult, ResponseView};

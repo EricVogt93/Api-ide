@@ -62,10 +62,20 @@ Since landed (originally deferred, all additive):
 - **`.env.local` secret provider** in the CLI (file first, process env
   fallback — the §14 declared order).
 
+**Asset store view** (§11): `index.rs` scans a project into a `ProjectIndex`
+— assets grouped by kind, each data asset browsable to any JSON node, a
+reverse-reference (usage) graph, broken-ref detection with request + instance
+path, and `suggest_ref` (alias-preferred, else relative). Surfaced by
+`forge assets [--json]` and a GUI "Assets" tool window (left stripe): browse
+by kind, expand data assets to copy a `data:x#/pointer` ref for any node,
+per-asset usage badges, broken refs flagged, open-in-editor. Read-only — the
+filesystem stays the source of truth.
+
 Still deferred: the standalone mock *server* and route matching; lockfile +
 integrity hashes; keychain/external secret providers; full draft-2020-12
 sibling-schema validation (presence+parse only — a marked `ponytail:` seam in
-`resolve.rs`); Worker-process isolation tiers beyond trusted-local.
+`resolve.rs`); Worker-process isolation tiers beyond trusted-local; asset CRUD
+from the UI (create/rename/move — v1 is discovery-only).
 
 The shipped runnable example is
 `crates/forge-core/tests/fixtures/reqv1/project/` — the canonical §1 document

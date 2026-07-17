@@ -1,5 +1,6 @@
 //! Tool-window and editor panels.
 
+pub mod assets;
 pub mod collections;
 pub mod console;
 pub mod cookies;

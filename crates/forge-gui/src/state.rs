@@ -160,6 +160,7 @@ pub struct AppState {
     pub theme: ThemeKind,
     pub show_collections: bool,
     pub show_environment: bool,
+    pub show_assets: bool,
     pub show_bottom: bool,
     pub run_state: RunState,
     pub status: Option<StatusMessage>,
@@ -179,6 +180,8 @@ pub struct AppState {
     pub history_ui: HistoryUiState,
     pub console: ConsoleState,
     pub cookies_ui: CookiesUiState,
+    /// reqv1 asset-store browser (left tool window).
+    pub assets: crate::panels::assets::AssetsState,
     /// Embedded terminal (bottom tool window).
     pub terminal: TerminalState,
     /// Application event log (bottom tool window).
@@ -206,6 +209,7 @@ impl Default for AppState {
             theme: ThemeKind::default(),
             show_collections: true,
             show_environment: true,
+            show_assets: false,
             show_bottom: true,
             run_state: RunState::default(),
             status: None,
@@ -217,6 +221,7 @@ impl Default for AppState {
             history_ui: HistoryUiState::default(),
             console: ConsoleState::default(),
             cookies_ui: CookiesUiState::default(),
+            assets: crate::panels::assets::AssetsState::default(),
             terminal: TerminalState::default(),
             log: EventLog::default(),
             editor_font_size: 13.0,

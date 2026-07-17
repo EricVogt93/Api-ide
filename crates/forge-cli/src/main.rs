@@ -32,6 +32,17 @@ enum Command {
     Validate(V1Args),
     /// Request-format v1: run a request document.
     RunV1(V1RunArgs),
+    /// Request-format v1: list the project's asset store (usage, broken refs).
+    Assets(AssetsArgs),
+}
+
+#[derive(Args)]
+struct AssetsArgs {
+    /// Project root (holds project.json).
+    root: PathBuf,
+    /// Emit the full index as JSON instead of the table.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -137,8 +148,57 @@ async fn main() {
         Command::Grpc(GrpcCommand::Call(args)) => cmd_grpc_call(args).await,
         Command::Validate(args) => cmd_validate(&args),
         Command::RunV1(args) => cmd_run_v1(args).await,
+        Command::Assets(args) => cmd_assets(&args),
     };
     std::process::exit(code);
+}
+
+fn cmd_assets(args: &AssetsArgs) -> i32 {
+    use forge_core::reqv1::ProjectIndex;
+
+    let index = match ProjectIndex::scan(&args.root) {
+        Ok(i) => i,
+        Err(d) => {
+            eprintln!("error: {}", d.message);
+            return 2;
+        }
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&index).unwrap_or_default());
+        return if index.broken.is_empty() { 0 } else { 1 };
+    }
+
+    let mut current_kind = None;
+    for asset in &index.assets {
+        if current_kind != Some(asset.kind) {
+            println!("{}:", asset.kind.label());
+            current_kind = Some(asset.kind);
+        }
+        let ref_form = asset
+            .alias
+            .clone()
+            .or_else(|| asset.prefix_ref.clone())
+            .unwrap_or_else(|| asset.rel_path.clone());
+        println!("  {ref_form}  ({}, used by {})", asset.rel_path, asset.used_by.len());
+    }
+    if !index.requests.is_empty() {
+        println!("requests:");
+        for r in &index.requests {
+            println!("  {}  ({}, {} ref(s))", r.id, r.rel_path, r.refs.len());
+        }
+    }
+    if !index.environments.is_empty() {
+        println!("environments: {}", index.environments.join(", "));
+    }
+    if !index.broken.is_empty() {
+        eprintln!("broken refs:");
+        for b in &index.broken {
+            eprintln!("  {} {} {:?}: {}", b.request, b.instance_path, b.reference, b.message);
+        }
+        return 1;
+    }
+    0
 }
 
 /// v1 secret provider (§14): a gitignored `<root>/.env.local` (KEY=value

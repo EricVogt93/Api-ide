@@ -7,6 +7,8 @@
 pub const COLLECTIONS: &str = "\u{1F4C1}"; // 📁
 /// Right tool-window stripe: environment variables.
 pub const ENVIRONMENT: &str = "\u{1F30D}"; // 🌍
+/// Left tool-window stripe: reqv1 asset store.
+pub const ASSETS: &str = "\u{1F5C3}"; // 🗃
 /// Bottom tool-window stripe: run/test results.
 pub const RUN: &str = "\u{25B6}"; // ▶
 /// Bottom tool-window stripe: history.

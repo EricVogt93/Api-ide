@@ -10,7 +10,7 @@ use forge_core::store::{save_request, Workspace};
 use crate::bridge::{Bridge, Cmd, Evt};
 use crate::keymap::{self, ActionId};
 use crate::local;
-use crate::panels::{collections, console, cookies, history, log, problems, request_editor, terminal, test_results};
+use crate::panels::{assets, collections, console, cookies, history, log, problems, request_editor, terminal, test_results};
 use crate::state::{AppState, BottomTool, RunState, StatusMessage};
 use crate::theme::{icons, ThemeKind};
 
@@ -305,6 +305,7 @@ impl ForgeApp {
             });
             ui.menu_button("View", |ui| {
                 ui.checkbox(&mut self.state.show_collections, "Collections");
+                ui.checkbox(&mut self.state.show_assets, "Assets");
                 ui.checkbox(&mut self.state.show_environment, "Environment");
                 ui.checkbox(&mut self.state.show_bottom, "Bottom Tool Window");
                 ui.separator();
@@ -494,6 +495,15 @@ impl eframe::App for ForgeApp {
                 {
                     self.state.show_collections = !self.state.show_collections;
                 }
+                ui.add_space(4.0);
+                let assets_active = self.state.show_assets;
+                if ui
+                    .selectable_label(assets_active, icons::ASSETS)
+                    .on_hover_text("Assets (reqv1 store)")
+                    .clicked()
+                {
+                    self.state.show_assets = !self.state.show_assets;
+                }
             });
         });
 
@@ -503,6 +513,15 @@ impl eframe::App for ForgeApp {
                     self.state.show_collections = false;
                 }
                 collections::show(ui, &mut self.state, &self.bridge);
+            });
+        }
+
+        if self.state.show_assets {
+            egui::Panel::left("assets-panel").exact_size(300.0).resizable(true).size_range(200.0..=560.0).show(ui, |ui| {
+                if Self::tool_window_header(ui, "Assets") {
+                    self.state.show_assets = false;
+                }
+                assets::show(ui, &mut self.state);
             });
         }
 
