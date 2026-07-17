@@ -82,7 +82,12 @@ fn build_view(def: &RequestDef) -> View {
             ApiKeyPlacement::Query => query.push((key.clone(), value.clone())),
         },
         AuthConfig::None | AuthConfig::Inherit => {}
-        AuthConfig::OAuth2ClientCredentials { .. } | AuthConfig::OAuth2AuthCode { .. } => {}
+        // Challenge-response (Digest), token exchange (OAuth2) and request
+        // signing (SigV4) can't be expressed as static snippet headers.
+        AuthConfig::OAuth2ClientCredentials { .. }
+        | AuthConfig::OAuth2AuthCode { .. }
+        | AuthConfig::Digest { .. }
+        | AuthConfig::AwsSigV4 { .. } => {}
     }
 
     let url = append_query(&def.url, &query);

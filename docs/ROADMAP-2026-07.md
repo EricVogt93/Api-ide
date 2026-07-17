@@ -5,10 +5,10 @@ stattdessen Import von Postman (fertig) und Bruno.
 
 | # | Feature | Status | Commit |
 |---|---------|--------|--------|
-| 1 | mTLS-Client-Zertifikate + Custom-CA | offen | |
-| 2 | Bruno-Collection-Import (.bru) | offen | |
-| 3 | pm.\*-Shim (Postman-Scripts lauffähig) | offen | |
-| 4 | Digest- + AWS-SigV4-Auth | offen | |
+| 1 | mTLS-Client-Zertifikate + Custom-CA | fertig | 82eab03 |
+| 2 | Bruno-Collection-Import (.bru) | fertig | 197198a |
+| 3 | pm.\*-Shim (Postman-Scripts lauffähig) | fertig | 429ce0d |
+| 4 | Digest- + AWS-SigV4-Auth | fertig | (dieser Commit) |
 | 5 | gRPC (unary, dynamische .proto) | offen | |
 | 6 | Mock-Server + Response-Examples | offen | |
 

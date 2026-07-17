@@ -25,6 +25,26 @@ pub struct ResolvedRequest {
     pub client_pem: Option<Vec<u8>>,
     /// Extra trusted root CAs as a PEM bundle, on top of the system store.
     pub extra_roots_pem: Option<Vec<u8>>,
+    /// Digest-auth credentials; the engine answers a 401 challenge with
+    /// them and retries once.
+    pub digest: Option<DigestCredentials>,
+    /// AWS SigV4 signing parameters; the engine signs every hop it sends.
+    pub sigv4: Option<SigV4Params>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DigestCredentials {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SigV4Params {
+    pub access_key: String,
+    pub secret_key: String,
+    pub session_token: Option<String>,
+    pub region: String,
+    pub service: String,
 }
 
 impl ResolvedRequest {
@@ -41,6 +61,8 @@ impl ResolvedRequest {
             proxy: None,
             client_pem: None,
             extra_roots_pem: None,
+            digest: None,
+            sigv4: None,
         }
     }
 

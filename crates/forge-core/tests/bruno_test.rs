@@ -163,12 +163,15 @@ fn imports_path_params_basic_auth_multipart_and_graphql() {
     let BodyDef::GraphQl { query, variables, .. } = &search.body else { panic!("graphql") };
     assert!(query.starts_with("query Charges"));
     assert_eq!(variables, "{ \"after\": null }");
-    // awsv4 has no Forge equivalent yet.
-    assert_eq!(search.auth, AuthConfig::None);
-    assert!(
-        import.collection.skipped.iter().any(|s| s.contains("Search") && s.contains("awsv4")),
-        "{:?}",
-        import.collection.skipped
+    assert_eq!(
+        search.auth,
+        AuthConfig::AwsSigV4 {
+            access_key: "AKIA123".to_string(),
+            secret_key: String::new(),
+            session_token: None,
+            region: String::new(),
+            service: String::new(),
+        }
     );
 }
 

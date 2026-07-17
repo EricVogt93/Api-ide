@@ -342,17 +342,21 @@ enum AuthKind {
     Basic,
     Bearer,
     ApiKey,
+    Digest,
+    AwsSigV4,
     OAuth2ClientCredentials,
     OAuth2AuthCode,
 }
 
 impl AuthKind {
-    const ALL: [AuthKind; 7] = [
+    const ALL: [AuthKind; 9] = [
         AuthKind::Inherit,
         AuthKind::None,
         AuthKind::Basic,
         AuthKind::Bearer,
         AuthKind::ApiKey,
+        AuthKind::Digest,
+        AuthKind::AwsSigV4,
         AuthKind::OAuth2ClientCredentials,
         AuthKind::OAuth2AuthCode,
     ];
@@ -364,6 +368,8 @@ impl AuthKind {
             AuthKind::Basic => "Basic",
             AuthKind::Bearer => "Bearer Token",
             AuthKind::ApiKey => "API Key",
+            AuthKind::Digest => "Digest",
+            AuthKind::AwsSigV4 => "AWS Signature v4",
             AuthKind::OAuth2ClientCredentials => "OAuth 2.0 (Client Credentials)",
             AuthKind::OAuth2AuthCode => "OAuth 2.0 (Authorization Code)",
         }
@@ -376,6 +382,8 @@ impl AuthKind {
             AuthConfig::Basic { .. } => AuthKind::Basic,
             AuthConfig::Bearer { .. } => AuthKind::Bearer,
             AuthConfig::ApiKey { .. } => AuthKind::ApiKey,
+            AuthConfig::Digest { .. } => AuthKind::Digest,
+            AuthConfig::AwsSigV4 { .. } => AuthKind::AwsSigV4,
             AuthConfig::OAuth2ClientCredentials { .. } => AuthKind::OAuth2ClientCredentials,
             AuthConfig::OAuth2AuthCode { .. } => AuthKind::OAuth2AuthCode,
         }
@@ -391,6 +399,16 @@ impl AuthKind {
                 key: String::new(),
                 value: String::new(),
                 placement: ApiKeyPlacement::Header,
+            },
+            AuthKind::Digest => {
+                AuthConfig::Digest { username: String::new(), password: String::new() }
+            }
+            AuthKind::AwsSigV4 => AuthConfig::AwsSigV4 {
+                access_key: String::new(),
+                secret_key: String::new(),
+                session_token: None,
+                region: String::new(),
+                service: String::new(),
             },
             AuthKind::OAuth2ClientCredentials => AuthConfig::OAuth2ClientCredentials {
                 token_url: String::new(),
@@ -456,6 +474,28 @@ fn auth_tab(ui: &mut Ui, auth: &mut AuthConfig) -> bool {
                     changed = true;
                 }
             });
+        }
+        AuthConfig::Digest { username, password } => {
+            field(ui, "Username", |ui| changed |= ui.text_edit_singleline(username).changed());
+            field(ui, "Password", |ui| {
+                changed |= ui.add(TextEdit::singleline(password).password(true)).changed()
+            });
+            ui.weak("Answers the server's 401 Digest challenge automatically (RFC 7616).");
+        }
+        AuthConfig::AwsSigV4 { access_key, secret_key, session_token, region, service } => {
+            field(ui, "Access key", |ui| changed |= ui.text_edit_singleline(access_key).changed());
+            field(ui, "Secret key", |ui| {
+                changed |= ui.add(TextEdit::singleline(secret_key).password(true)).changed()
+            });
+            let mut token = session_token.clone().unwrap_or_default();
+            field(ui, "Session token", |ui| {
+                if ui.add(TextEdit::singleline(&mut token).password(true)).changed() {
+                    *session_token = if token.is_empty() { None } else { Some(token.clone()) };
+                    changed = true;
+                }
+            });
+            field(ui, "Region", |ui| changed |= ui.text_edit_singleline(region).changed());
+            field(ui, "Service", |ui| changed |= ui.text_edit_singleline(service).changed());
         }
         AuthConfig::ApiKey { key, value, placement } => {
             field(ui, "Key", |ui| changed |= ui.text_edit_singleline(key).changed());

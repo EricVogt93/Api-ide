@@ -89,8 +89,9 @@ pub async fn resolve_request(
     }
 
     let auth = effective_auth(&def.auth, auth_chain);
-    let (auth_headers, auth_query) = resolve_auth_additions(auth, scopes).await?;
-    for (k, v) in auth_headers {
+    let additions = resolve_auth_additions(auth, scopes).await?;
+    let auth_query = additions.query;
+    for (k, v) in additions.headers {
         if !headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(&k)) {
             headers.push((k, v));
         }
@@ -162,6 +163,8 @@ pub async fn resolve_request(
         proxy,
         client_pem,
         extra_roots_pem,
+        digest: additions.digest,
+        sigv4: additions.sigv4,
     })
 }
 
@@ -262,21 +265,42 @@ fn effective_auth<'a>(def_auth: &'a AuthConfig, chain: &AuthChain<'a>) -> Option
     chain.iter().find(|a| !a.is_inherit()).copied()
 }
 
+/// What an auth config contributes to the resolved request.
+#[derive(Default)]
+struct AuthAdditions {
+    headers: Vec<(String, String)>,
+    query: Vec<(String, String)>,
+    /// Digest can't be precomputed — it needs the server's 401 challenge —
+    /// so the credentials ride along for the engine.
+    digest: Option<crate::exec::DigestCredentials>,
+    /// SigV4 signs the final wire request, so the parameters ride along too.
+    sigv4: Option<crate::exec::SigV4Params>,
+}
+
+impl AuthAdditions {
+    fn headers(headers: Vec<(String, String)>) -> Self {
+        Self { headers, ..Self::default() }
+    }
+}
+
 /// Compute the headers and query params an auth config contributes.
 async fn resolve_auth_additions(
     auth: Option<&AuthConfig>,
     vars: &VarScopes,
-) -> Result<(Vec<(String, String)>, Vec<(String, String)>), ResolveError> {
+) -> Result<AuthAdditions, ResolveError> {
     let Some(auth) = auth else {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok(AuthAdditions::default());
     };
     match auth {
-        AuthConfig::None | AuthConfig::Inherit => Ok((Vec::new(), Vec::new())),
+        AuthConfig::None | AuthConfig::Inherit => Ok(AuthAdditions::default()),
         AuthConfig::Basic { username, password } => {
             let user = interpolate(username, vars)?;
             let pass = interpolate(password, vars)?;
             let token = BASE64_STANDARD.encode(format!("{user}:{pass}"));
-            Ok((vec![("Authorization".to_string(), format!("Basic {token}"))], Vec::new()))
+            Ok(AuthAdditions::headers(vec![(
+                "Authorization".to_string(),
+                format!("Basic {token}"),
+            )]))
         }
         AuthConfig::Bearer { token, prefix } => {
             let tok = interpolate(token, vars)?;
@@ -284,14 +308,19 @@ async fn resolve_auth_additions(
                 Some(p) => interpolate(p, vars)?,
                 None => "Bearer".to_string(),
             };
-            Ok((vec![("Authorization".to_string(), format!("{prefix} {tok}"))], Vec::new()))
+            Ok(AuthAdditions::headers(vec![(
+                "Authorization".to_string(),
+                format!("{prefix} {tok}"),
+            )]))
         }
         AuthConfig::ApiKey { key, value, placement } => {
             let k = interpolate(key, vars)?;
             let v = interpolate(value, vars)?;
             match placement {
-                ApiKeyPlacement::Header => Ok((vec![(k, v)], Vec::new())),
-                ApiKeyPlacement::Query => Ok((Vec::new(), vec![(k, v)])),
+                ApiKeyPlacement::Header => Ok(AuthAdditions::headers(vec![(k, v)])),
+                ApiKeyPlacement::Query => {
+                    Ok(AuthAdditions { query: vec![(k, v)], ..AuthAdditions::default() })
+                }
             }
         }
         AuthConfig::OAuth2ClientCredentials {
@@ -308,10 +337,32 @@ async fn resolve_auth_additions(
             let token = token_cache()
                 .get_or_fetch(oauth_client(), key, &client_secret, *credentials_in_body)
                 .await?;
-            Ok((
-                vec![("Authorization".to_string(), format!("{} {}", token.token_type, token.access_token))],
-                Vec::new(),
-            ))
+            Ok(AuthAdditions::headers(vec![(
+                "Authorization".to_string(),
+                format!("{} {}", token.token_type, token.access_token),
+            )]))
+        }
+        AuthConfig::Digest { username, password } => Ok(AuthAdditions {
+            digest: Some(crate::exec::DigestCredentials {
+                username: interpolate(username, vars)?,
+                password: interpolate(password, vars)?,
+            }),
+            ..AuthAdditions::default()
+        }),
+        AuthConfig::AwsSigV4 { access_key, secret_key, session_token, region, service } => {
+            Ok(AuthAdditions {
+                sigv4: Some(crate::exec::SigV4Params {
+                    access_key: interpolate(access_key, vars)?,
+                    secret_key: interpolate(secret_key, vars)?,
+                    session_token: match session_token {
+                        Some(t) => Some(interpolate(t, vars)?),
+                        None => None,
+                    },
+                    region: interpolate(region, vars)?,
+                    service: interpolate(service, vars)?,
+                }),
+                ..AuthAdditions::default()
+            })
         }
         AuthConfig::OAuth2AuthCode { .. } => Err(ResolveError::Auth(
             "interactive OAuth2 authorization-code flow requires the GUI".to_string(),

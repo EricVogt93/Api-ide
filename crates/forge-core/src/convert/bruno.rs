@@ -352,6 +352,17 @@ fn auth_from_blocks(
     match name.as_str() {
         "auth:basic" => AuthConfig::Basic { username: get("username"), password: get("password") },
         "auth:bearer" => AuthConfig::Bearer { token: get("token"), prefix: None },
+        "auth:digest" => AuthConfig::Digest { username: get("username"), password: get("password") },
+        "auth:awsv4" => AuthConfig::AwsSigV4 {
+            access_key: get("accessKeyId"),
+            secret_key: get("secretAccessKey"),
+            session_token: {
+                let t = get("sessionToken");
+                if t.is_empty() { None } else { Some(t) }
+            },
+            region: get("region"),
+            service: get("service"),
+        },
         "auth:apikey" => AuthConfig::ApiKey {
             key: get("key"),
             value: get("value"),

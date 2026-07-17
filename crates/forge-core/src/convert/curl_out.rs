@@ -47,10 +47,18 @@ pub fn to_curl(def: &RequestDef, opts: &CurlExportOptions) -> String {
             ApiKeyPlacement::Header => headers.push((key.clone(), value.clone())),
             ApiKeyPlacement::Query => query.push((key.clone(), value.clone())),
         },
+        AuthConfig::Digest { username, password } => {
+            let flag = if opts.long_flags { "--digest --user" } else { "--digest -u" };
+            auth_chunk =
+                Some(format!("{flag} {}", shell_quote(&format!("{username}:{password}"))));
+        }
         AuthConfig::None | AuthConfig::Inherit => {}
-        // OAuth2 flows need a live token exchange; not representable as a
-        // static curl flag, so they're left for the caller to pre-resolve.
-        AuthConfig::OAuth2ClientCredentials { .. } | AuthConfig::OAuth2AuthCode { .. } => {}
+        // OAuth2 flows need a live token exchange and SigV4 a computed
+        // signature; neither is representable as a static curl flag, so
+        // they're left for the caller to pre-resolve.
+        AuthConfig::OAuth2ClientCredentials { .. }
+        | AuthConfig::OAuth2AuthCode { .. }
+        | AuthConfig::AwsSigV4 { .. } => {}
     }
 
     let url = append_query(&def.url, &query);

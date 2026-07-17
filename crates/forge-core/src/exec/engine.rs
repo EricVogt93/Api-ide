@@ -168,6 +168,7 @@ impl HttpEngine {
         let mut current_body = req.body.clone();
         let mut redirect_chain: Vec<Hop> = Vec::new();
         let mut hop_count: u32 = 0;
+        let mut digest_answered = false;
 
         loop {
             if cancel.is_cancelled() {
@@ -175,7 +176,10 @@ impl HttpEngine {
             }
 
             let jar_pairs = self.cookies.matching(&current_url);
-            let leg_headers = merge_cookie_header(&current_headers, &jar_pairs);
+            let mut leg_headers = merge_cookie_header(&current_headers, &jar_pairs);
+            if let Some(sigv4) = &req.sigv4 {
+                apply_sigv4(&mut leg_headers, sigv4, current_method, &current_url, &current_body)?;
+            }
             let header_map = header_map_from_pairs(&leg_headers)?;
             let request_bytes =
                 approx_request_bytes(current_method, &current_url, &leg_headers, &current_body);
@@ -199,6 +203,28 @@ impl HttpEngine {
             }
 
             let status = response.status();
+
+            // Digest auth: answer the server's 401 challenge once, then
+            // retry the same request with the computed Authorization.
+            if status.as_u16() == 401 && !digest_answered {
+                if let Some(creds) = &req.digest {
+                    let challenge = response
+                        .headers()
+                        .get_all(reqwest::header::WWW_AUTHENTICATE)
+                        .iter()
+                        .filter_map(|v| v.to_str().ok())
+                        .find(|v| v.trim_start().to_ascii_lowercase().starts_with("digest"));
+                    if let Some(challenge) = challenge {
+                        let authorization =
+                            digest_authorization(challenge, creds, current_method, &current_url)?;
+                        current_headers.retain(|(k, _)| !k.eq_ignore_ascii_case("authorization"));
+                        current_headers.push(("Authorization".to_string(), authorization));
+                        digest_answered = true;
+                        continue;
+                    }
+                }
+            }
+
             let is_redirect_status = matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308);
             let location = response
                 .headers()
@@ -302,6 +328,108 @@ impl HttpEngine {
             });
         }
     }
+}
+
+/// Compute the `Authorization` header answering a Digest challenge
+/// (RFC 7616, qop=auth; auth-int is not supported).
+fn digest_authorization(
+    challenge: &str,
+    creds: &super::types::DigestCredentials,
+    method: Method,
+    url: &Url,
+) -> Result<String, ExecError> {
+    let mut prompt = digest_auth::parse(challenge)
+        .map_err(|e| ExecError::Http(format!("invalid Digest challenge: {e}")))?;
+    let uri = match url.query() {
+        Some(q) => format!("{}?{q}", url.path()),
+        None => url.path().to_string(),
+    };
+    let context = digest_auth::AuthContext::new_with_method(
+        creds.username.clone(),
+        creds.password.clone(),
+        uri,
+        Option::<&[u8]>::None,
+        digest_auth::HttpMethod::from(method.as_str()),
+    );
+    let answer = prompt
+        .respond(&context)
+        .map_err(|e| ExecError::Http(format!("failed to answer Digest challenge: {e}")))?;
+    Ok(answer.to_header_string())
+}
+
+/// Sign this hop with AWS SigV4, appending `x-amz-date`, the optional
+/// session-token header and `Authorization` to `headers`.
+fn apply_sigv4(
+    headers: &mut Vec<(String, String)>,
+    params: &super::types::SigV4Params,
+    method: Method,
+    url: &Url,
+    body: &ResolvedBody,
+) -> Result<(), ExecError> {
+    use aws_sigv4::http_request::{sign, SignableBody, SignableRequest, SigningSettings};
+    use aws_sigv4::sign::v4;
+
+    let identity: aws_smithy_runtime_api::client::identity::Identity =
+        aws_credential_types::Credentials::new(
+            params.access_key.clone(),
+            params.secret_key.clone(),
+            params.session_token.clone(),
+            None,
+            "forge",
+        )
+        .into();
+
+    let signing_params: aws_sigv4::http_request::SigningParams<'_> = v4::SigningParams::builder()
+        .identity(&identity)
+        .region(&params.region)
+        .name(&params.service)
+        .time(std::time::SystemTime::now())
+        .settings(SigningSettings::default())
+        .build()
+        .map_err(|e| ExecError::Http(format!("invalid SigV4 parameters: {e}")))?
+        .into();
+
+    // SigV4 requires a Host header in the canonical request; reqwest adds
+    // it on the wire, so mirror it here for signing.
+    let host = url.host_str().unwrap_or_default().to_string();
+    let host_header = match url.port() {
+        Some(p) => format!("{host}:{p}"),
+        None => host,
+    };
+    let mut to_sign: Vec<(String, String)> = headers.clone();
+    if !to_sign.iter().any(|(k, _)| k.eq_ignore_ascii_case("host")) {
+        to_sign.push(("host".to_string(), host_header));
+    }
+
+    let form_body;
+    let signable_body = match body {
+        ResolvedBody::None => SignableBody::Bytes(b""),
+        ResolvedBody::Bytes { data, .. } => SignableBody::Bytes(data),
+        ResolvedBody::Form(pairs) => {
+            form_body = form_urlencode(pairs);
+            SignableBody::Bytes(form_body.as_bytes())
+        }
+        // Multipart bodies are streamed with generated boundaries; sign
+        // them as unsigned payload (the SigV4-sanctioned escape hatch).
+        ResolvedBody::Multipart(_) => SignableBody::UnsignedPayload,
+    };
+
+    let signable = SignableRequest::new(
+        method.as_str(),
+        url.as_str(),
+        to_sign.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        signable_body,
+    )
+    .map_err(|e| ExecError::Http(format!("SigV4: unsignable request: {e}")))?;
+
+    let (instructions, _signature) = sign(signable, &signing_params)
+        .map_err(|e| ExecError::Http(format!("SigV4 signing failed: {e}")))?
+        .into_parts();
+    for header in instructions.into_parts().0 {
+        headers.retain(|(k, _)| !k.eq_ignore_ascii_case(header.name()));
+        headers.push((header.name().to_string(), header.value().to_string()));
+    }
+    Ok(())
 }
 
 /// Race `fut` against cancellation, so long-running sends/reads/file-reads

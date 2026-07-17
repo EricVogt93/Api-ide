@@ -415,6 +415,17 @@ fn parse_auth(auth: &Value, path: &str, skipped: &mut Vec<String>) -> AuthConfig
         "noauth" => AuthConfig::None,
         "basic" => AuthConfig::Basic { username: get("username"), password: get("password") },
         "bearer" => AuthConfig::Bearer { token: get("token"), prefix: None },
+        "digest" => AuthConfig::Digest { username: get("username"), password: get("password") },
+        "awsv4" => AuthConfig::AwsSigV4 {
+            access_key: get("accessKey"),
+            secret_key: get("secretKey"),
+            session_token: {
+                let t = get("sessionToken");
+                if t.is_empty() { None } else { Some(t) }
+            },
+            region: get("region"),
+            service: get("service"),
+        },
         "apikey" => AuthConfig::ApiKey {
             key: get("key"),
             value: get("value"),

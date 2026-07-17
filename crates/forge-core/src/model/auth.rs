@@ -52,6 +52,23 @@ pub enum AuthConfig {
         #[serde(default = "super::default_true", skip_serializing_if = "super::is_true")]
         pkce: bool,
     },
+    /// HTTP Digest auth (RFC 7616): the engine answers the server's 401
+    /// challenge with computed credentials, then retries once.
+    Digest {
+        username: String,
+        password: String,
+    },
+    /// AWS Signature Version 4 request signing.
+    #[serde(rename_all = "camelCase")]
+    AwsSigV4 {
+        access_key: String,
+        secret_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_token: Option<String>,
+        region: String,
+        /// AWS service name, e.g. `s3` or `execute-api`.
+        service: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
