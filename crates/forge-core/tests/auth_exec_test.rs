@@ -165,3 +165,184 @@ async fn sigv4_signs_the_request_with_date_token_and_authorization() {
     assert_eq!(header("x-amz-date").len(), 16, "x-amz-date like 20260717T101500Z");
     assert_eq!(header("x-amz-security-token"), "the-session-token");
 }
+
+// ---------------------------------------------------------------------
+// NTLM (NTLMv2)
+// ---------------------------------------------------------------------
+
+const NTLM_USER: &str = "eric";
+const NTLM_PASS: &str = "S3cr3t!";
+const NTLM_DOMAIN: &str = "FORGE";
+const NTLM_CHALLENGE: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+
+fn utf16le(s: &str) -> Vec<u8> {
+    s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
+}
+
+fn hmac_md5(key: &[u8], data: &[u8]) -> Vec<u8> {
+    use hmac::{KeyInit, Mac, SimpleHmac};
+    let mut mac = <SimpleHmac<md5::Md5> as KeyInit>::new_from_slice(key).expect("hmac key");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// Independent NTLMv2 verification (MS-NLMP 3.3.2), built from the md4 /
+/// hmac / md5 primitives — deliberately NOT via the client's ntlm library.
+fn ntlmv2_proof_is_valid(auth_message: &[u8]) -> bool {
+    // Parse just enough of the Authenticate message: the NTLM response
+    // security buffer sits at offset 20 (len u16, cap u16, offset u32).
+    if auth_message.len() < 28 || &auth_message[0..8] != b"NTLMSSP\0" {
+        return false;
+    }
+    let nt_len = u16::from_le_bytes([auth_message[20], auth_message[21]]) as usize;
+    let nt_off = u32::from_le_bytes([
+        auth_message[24],
+        auth_message[25],
+        auth_message[26],
+        auth_message[27],
+    ]) as usize;
+    if nt_len < 16 || auth_message.len() < nt_off + nt_len {
+        return false;
+    }
+    let nt_response = &auth_message[nt_off..nt_off + nt_len];
+    let (proof, temp) = nt_response.split_at(16);
+
+    let nt_hash = {
+        use md4::Digest as _;
+        let mut h = md4::Md4::new();
+        h.update(utf16le(NTLM_PASS));
+        h.finalize().to_vec()
+    };
+    let v2_key = hmac_md5(&nt_hash, &utf16le(&format!("{}{}", NTLM_USER.to_uppercase(), NTLM_DOMAIN)));
+
+    let mut challenge_and_temp = NTLM_CHALLENGE.to_vec();
+    challenge_and_temp.extend_from_slice(temp);
+    hmac_md5(&v2_key, &challenge_and_temp) == proof
+}
+
+/// A type-2 Challenge message with a fixed challenge and a minimal target
+/// info block (one NetBIOS domain entry + terminator).
+fn ntlm_type2_message() -> Vec<u8> {
+    let target = utf16le("FORGE");
+    let mut target_info = Vec::new();
+    target_info.extend_from_slice(&2u16.to_le_bytes()); // NetBIOS domain
+    target_info.extend_from_slice(&(target.len() as u16).to_le_bytes());
+    target_info.extend_from_slice(&target);
+    target_info.extend_from_slice(&0u16.to_le_bytes()); // terminator
+    target_info.extend_from_slice(&0u16.to_le_bytes());
+
+    let mut msg = Vec::new();
+    msg.extend_from_slice(b"NTLMSSP\0");
+    msg.extend_from_slice(&2u32.to_le_bytes()); // type 2
+    let name = utf16le("FORGE");
+    let payload_base = 56u32;
+    // target name security buffer
+    msg.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    msg.extend_from_slice(&(name.len() as u16).to_le_bytes());
+    msg.extend_from_slice(&payload_base.to_le_bytes());
+    // flags: unicode | NTLM | target info | NTLM2 key
+    msg.extend_from_slice(&(0x0000_0001u32 | 0x0000_0200 | 0x0080_0000 | 0x0008_0000).to_le_bytes());
+    msg.extend_from_slice(&NTLM_CHALLENGE);
+    msg.extend_from_slice(&[0u8; 8]); // context
+    // target info security buffer
+    msg.extend_from_slice(&(target_info.len() as u16).to_le_bytes());
+    msg.extend_from_slice(&(target_info.len() as u16).to_le_bytes());
+    msg.extend_from_slice(&(payload_base + name.len() as u32).to_le_bytes());
+    msg.extend_from_slice(&[0u8; 8]); // OS version
+    assert_eq!(msg.len(), 56);
+    msg.extend_from_slice(&name);
+    msg.extend_from_slice(&target_info);
+    msg
+}
+
+/// NTLM server: drives the 3-leg handshake on a single TCP connection and
+/// verifies the NTLMv2 proof independently before returning 200.
+async fn ntlm_server() -> u16 {
+    use base64::prelude::{Engine as _, BASE64_STANDARD};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+
+    tokio::spawn(async move {
+        // Exactly one connection: the whole handshake must ride it.
+        let Ok((mut stream, _)) = listener.accept().await else { return };
+        loop {
+            let mut buf = Vec::new();
+            let mut byte = [0u8; 1];
+            while !buf.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte).await {
+                    Ok(0) => return,
+                    Ok(_) => buf.push(byte[0]),
+                    Err(_) => return,
+                }
+            }
+            let request = String::from_utf8_lossy(&buf).into_owned();
+            let auth = request
+                .lines()
+                .find(|l| l.to_ascii_lowercase().starts_with("authorization: ntlm "))
+                .map(|l| l["authorization: ntlm ".len()..].trim().to_string());
+
+            let response = match auth {
+                None => "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM\r\ncontent-length: 0\r\n\r\n"
+                    .to_string(),
+                Some(b64) => {
+                    let Ok(bytes) = BASE64_STANDARD.decode(&b64) else { return };
+                    let msg_type =
+                        u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+                    match msg_type {
+                        1 => {
+                            let challenge = BASE64_STANDARD.encode(ntlm_type2_message());
+                            format!(
+                                "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: NTLM {challenge}\r\ncontent-length: 0\r\n\r\n"
+                            )
+                        }
+                        3 if ntlmv2_proof_is_valid(&bytes) => {
+                            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+                                .to_string()
+                        }
+                        _ => "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                            .to_string(),
+                    }
+                }
+            };
+            if stream.write_all(response.as_bytes()).await.is_err() {
+                return;
+            }
+            if response.contains("connection: close") {
+                let _ = stream.shutdown().await;
+                return;
+            }
+        }
+    });
+
+    port
+}
+
+#[tokio::test]
+async fn ntlm_handshake_completes_on_one_connection_and_passes_verification() {
+    let port = ntlm_server().await;
+
+    let mut req = ResolvedRequest::new(Method::Get, format!("http://127.0.0.1:{port}/protected"));
+    req.ntlm = Some(forge_core::exec::NtlmCredentials {
+        username: NTLM_USER.to_string(),
+        password: NTLM_PASS.to_string(),
+        domain: NTLM_DOMAIN.to_string(),
+    });
+
+    let engine = HttpEngine::new();
+    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+
+    assert_eq!(res.status, 200, "server rejected the NTLMv2 proof");
+    assert_eq!(res.body, b"ok");
+}
+
+#[tokio::test]
+async fn ntlm_without_credentials_stays_a_plain_401() {
+    let port = ntlm_server().await;
+
+    let req = ResolvedRequest::new(Method::Get, format!("http://127.0.0.1:{port}/protected"));
+    let engine = HttpEngine::new();
+    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    assert_eq!(res.status, 401);
+}

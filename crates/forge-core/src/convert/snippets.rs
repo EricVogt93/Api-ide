@@ -87,6 +87,7 @@ fn build_view(def: &RequestDef) -> View {
         AuthConfig::OAuth2ClientCredentials { .. }
         | AuthConfig::OAuth2AuthCode { .. }
         | AuthConfig::Digest { .. }
+        | AuthConfig::Ntlm { .. }
         | AuthConfig::AwsSigV4 { .. } => {}
     }
 

@@ -58,6 +58,14 @@ pub enum AuthConfig {
         username: String,
         password: String,
     },
+    /// NTLM (NTLMv2): the engine runs the Negotiate/Challenge/Authenticate
+    /// handshake over the connection.
+    Ntlm {
+        username: String,
+        password: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        domain: String,
+    },
     /// AWS Signature Version 4 request signing.
     #[serde(rename_all = "camelCase")]
     AwsSigV4 {

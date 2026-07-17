@@ -52,6 +52,7 @@ tonic = { version = "0.14.6", features = ["tls-ring", "tls-native-roots"] }
 rustls = { version = "0.23.42", features = ["ring"] }
 webpki-roots = "1.0.8"
 rustls-pemfile = "2.2.0"
+ntlmclient = "0.2.0"
 
 [dev-dependencies]
 wiremock.workspace = true
@@ -60,3 +61,5 @@ rcgen = "0.14.8"
 tokio-rustls = "0.26.4"
 rustls-pemfile = "2.2.0"
 md-5 = "0.11.0"
+hmac = "0.13"
+md4 = "0.11"

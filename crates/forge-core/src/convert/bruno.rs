@@ -353,6 +353,11 @@ fn auth_from_blocks(
         "auth:basic" => AuthConfig::Basic { username: get("username"), password: get("password") },
         "auth:bearer" => AuthConfig::Bearer { token: get("token"), prefix: None },
         "auth:digest" => AuthConfig::Digest { username: get("username"), password: get("password") },
+        "auth:ntlm" => AuthConfig::Ntlm {
+            username: get("username"),
+            password: get("password"),
+            domain: get("domain"),
+        },
         "auth:awsv4" => AuthConfig::AwsSigV4 {
             access_key: get("accessKeyId"),
             secret_key: get("secretAccessKey"),

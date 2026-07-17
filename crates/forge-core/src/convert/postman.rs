@@ -416,6 +416,11 @@ fn parse_auth(auth: &Value, path: &str, skipped: &mut Vec<String>) -> AuthConfig
         "basic" => AuthConfig::Basic { username: get("username"), password: get("password") },
         "bearer" => AuthConfig::Bearer { token: get("token"), prefix: None },
         "digest" => AuthConfig::Digest { username: get("username"), password: get("password") },
+        "ntlm" => AuthConfig::Ntlm {
+            username: get("username"),
+            password: get("password"),
+            domain: get("domain"),
+        },
         "awsv4" => AuthConfig::AwsSigV4 {
             access_key: get("accessKey"),
             secret_key: get("secretKey"),

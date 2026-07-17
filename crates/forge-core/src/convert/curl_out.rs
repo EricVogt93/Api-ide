@@ -52,6 +52,15 @@ pub fn to_curl(def: &RequestDef, opts: &CurlExportOptions) -> String {
             auth_chunk =
                 Some(format!("{flag} {}", shell_quote(&format!("{username}:{password}"))));
         }
+        AuthConfig::Ntlm { username, password, domain } => {
+            let flag = if opts.long_flags { "--ntlm --user" } else { "--ntlm -u" };
+            let user = if domain.is_empty() {
+                username.clone()
+            } else {
+                format!("{domain}\\{username}")
+            };
+            auth_chunk = Some(format!("{flag} {}", shell_quote(&format!("{user}:{password}"))));
+        }
         AuthConfig::None | AuthConfig::Inherit => {}
         // OAuth2 flows need a live token exchange and SigV4 a computed
         // signature; neither is representable as a static curl flag, so

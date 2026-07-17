@@ -164,6 +164,7 @@ pub async fn resolve_request(
         client_pem,
         extra_roots_pem,
         digest: additions.digest,
+        ntlm: additions.ntlm,
         sigv4: additions.sigv4,
     })
 }
@@ -273,6 +274,8 @@ struct AuthAdditions {
     /// Digest can't be precomputed — it needs the server's 401 challenge —
     /// so the credentials ride along for the engine.
     digest: Option<crate::exec::DigestCredentials>,
+    /// NTLM needs a per-connection handshake; credentials ride along too.
+    ntlm: Option<crate::exec::NtlmCredentials>,
     /// SigV4 signs the final wire request, so the parameters ride along too.
     sigv4: Option<crate::exec::SigV4Params>,
 }
@@ -346,6 +349,14 @@ async fn resolve_auth_additions(
             digest: Some(crate::exec::DigestCredentials {
                 username: interpolate(username, vars)?,
                 password: interpolate(password, vars)?,
+            }),
+            ..AuthAdditions::default()
+        }),
+        AuthConfig::Ntlm { username, password, domain } => Ok(AuthAdditions {
+            ntlm: Some(crate::exec::NtlmCredentials {
+                username: interpolate(username, vars)?,
+                password: interpolate(password, vars)?,
+                domain: interpolate(domain, vars)?,
             }),
             ..AuthAdditions::default()
         }),

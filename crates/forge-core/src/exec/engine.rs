@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use base64::prelude::{Engine as _, BASE64_STANDARD};
 use chrono::Utc;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, LOCATION, SET_COOKIE};
 use reqwest::{multipart, redirect::Policy};
@@ -30,6 +31,10 @@ struct ClientKey {
     verify_tls: bool,
     proxy: Option<String>,
     tls_fingerprint: u64,
+    /// NTLM authenticates the TCP connection, so its clients are isolated
+    /// (own pool, at most one idle connection) and pinned to HTTP/1.1 —
+    /// HTTP/2 multiplexing would break the per-connection handshake.
+    ntlm: bool,
 }
 
 fn tls_fingerprint(client_pem: Option<&[u8]>, extra_roots_pem: Option<&[u8]>) -> u64 {
@@ -84,6 +89,7 @@ impl HttpEngine {
             req.proxy.as_deref(),
             req.client_pem.as_deref(),
             req.extra_roots_pem.as_deref(),
+            req.ntlm.is_some(),
         )?;
         let timeout = req.timeout;
 
@@ -99,11 +105,13 @@ impl HttpEngine {
         proxy: Option<&str>,
         client_pem: Option<&[u8]>,
         extra_roots_pem: Option<&[u8]>,
+        ntlm: bool,
     ) -> Result<reqwest::Client, ExecError> {
         let key = ClientKey {
             verify_tls,
             proxy: proxy.map(|s| s.to_string()),
             tls_fingerprint: tls_fingerprint(client_pem, extra_roots_pem),
+            ntlm,
         };
 
         if let Some(client) = self.lock_clients().get(&key) {
@@ -121,6 +129,9 @@ impl HttpEngine {
             .deflate(true)
             .cookie_store(false);
 
+        if key.ntlm {
+            builder = builder.http1_only().pool_max_idle_per_host(1);
+        }
         if !key.verify_tls {
             builder = builder.danger_accept_invalid_certs(true);
         }
@@ -169,6 +180,7 @@ impl HttpEngine {
         let mut redirect_chain: Vec<Hop> = Vec::new();
         let mut hop_count: u32 = 0;
         let mut digest_answered = false;
+        let mut ntlm_state = NtlmState::Fresh;
 
         loop {
             if cancel.is_cancelled() {
@@ -203,6 +215,41 @@ impl HttpEngine {
             }
 
             let status = response.status();
+
+            // NTLM: Negotiate (type 1) → server Challenge (type 2) →
+            // Authenticate (type 3), all riding the same keep-alive
+            // connection (the client for NTLM requests is HTTP/1.1-only
+            // with a single-connection pool).
+            if status.as_u16() == 401 && ntlm_state != NtlmState::Done {
+                if let Some(creds) = &req.ntlm {
+                    let ntlm_challenge = response
+                        .headers()
+                        .get_all(reqwest::header::WWW_AUTHENTICATE)
+                        .iter()
+                        .filter_map(|v| v.to_str().ok())
+                        .find_map(|v| {
+                            let v = v.trim_start();
+                            v.strip_prefix("NTLM").map(|rest| rest.trim().to_string())
+                        });
+                    match (&ntlm_state, ntlm_challenge) {
+                        (NtlmState::Fresh, Some(challenge)) if challenge.is_empty() => {
+                            let negotiate = ntlm_negotiate(creds)?;
+                            set_header(&mut current_headers, "Authorization", negotiate);
+                            ntlm_state = NtlmState::Negotiated;
+                            continue;
+                        }
+                        (NtlmState::Negotiated, Some(challenge)) if !challenge.is_empty() => {
+                            let authenticate = ntlm_authenticate(creds, &challenge)?;
+                            set_header(&mut current_headers, "Authorization", authenticate);
+                            ntlm_state = NtlmState::Done;
+                            continue;
+                        }
+                        // Anything else: not an NTLM exchange we can drive;
+                        // fall through and surface the 401.
+                        _ => {}
+                    }
+                }
+            }
 
             // Digest auth: answer the server's 401 challenge once, then
             // retry the same request with the computed Authorization.
@@ -328,6 +375,87 @@ impl HttpEngine {
             });
         }
     }
+}
+
+/// Where the NTLM handshake currently stands for this request.
+#[derive(Debug, PartialEq, Eq)]
+enum NtlmState {
+    Fresh,
+    Negotiated,
+    Done,
+}
+
+fn set_header(headers: &mut Vec<(String, String)>, name: &str, value: String) {
+    headers.retain(|(k, _)| !k.eq_ignore_ascii_case(name));
+    headers.push((name.to_string(), value));
+}
+
+fn ntlm_creds(creds: &super::types::NtlmCredentials) -> ntlmclient::Credentials {
+    ntlmclient::Credentials {
+        username: creds.username.clone(),
+        password: creds.password.clone(),
+        domain: creds.domain.clone(),
+    }
+}
+
+/// Build the NTLM Negotiate (type 1) Authorization header.
+fn ntlm_negotiate(creds: &super::types::NtlmCredentials) -> Result<String, ExecError> {
+    let message = ntlmclient::Message::Negotiate(ntlmclient::NegotiateMessage {
+        flags: ntlmclient::Flags::NEGOTIATE_UNICODE
+            | ntlmclient::Flags::REQUEST_TARGET
+            | ntlmclient::Flags::NEGOTIATE_NTLM
+            | ntlmclient::Flags::NEGOTIATE_NTLM2_KEY
+            | ntlmclient::Flags::NEGOTIATE_ALWAYS_SIGN,
+        supplied_domain: creds.domain.clone(),
+        supplied_workstation: String::new(),
+        os_version: ntlmclient::OsVersion::default(),
+    });
+    let bytes = message
+        .to_bytes()
+        .map_err(|e| ExecError::Http(format!("NTLM negotiate failed: {e:?}")))?;
+    Ok(format!("NTLM {}", BASE64_STANDARD.encode(bytes)))
+}
+
+/// Answer an NTLM Challenge (type 2) with an NTLMv2 Authenticate (type 3)
+/// Authorization header.
+fn ntlm_authenticate(
+    creds: &super::types::NtlmCredentials,
+    challenge_b64: &str,
+) -> Result<String, ExecError> {
+    let challenge_bytes = BASE64_STANDARD
+        .decode(challenge_b64)
+        .map_err(|e| ExecError::Http(format!("invalid NTLM challenge encoding: {e}")))?;
+    let message = ntlmclient::Message::try_from(challenge_bytes.as_slice())
+        .map_err(|e| ExecError::Http(format!("invalid NTLM challenge: {e:?}")))?;
+    let ntlmclient::Message::Challenge(challenge) = message else {
+        return Err(ExecError::Http("server did not send an NTLM challenge".to_string()));
+    };
+
+    let target_info: Vec<u8> =
+        challenge.target_information.iter().flat_map(|entry| entry.to_bytes()).collect();
+    // NTLMv2 timestamps are Windows FILETIME: 100ns ticks since 1601-01-01.
+    let now_filetime = (Utc::now().timestamp() + 11_644_473_600) * 10_000_000;
+    let response = ntlmclient::respond_challenge_ntlm_v2(
+        challenge.challenge,
+        &target_info,
+        now_filetime,
+        &ntlm_creds(creds),
+    );
+
+    let authenticate = ntlmclient::Message::Authenticate(ntlmclient::AuthenticateMessage {
+        lm_response: response.lm_response,
+        ntlm_response: response.ntlm_response,
+        domain_name: creds.domain.clone(),
+        user_name: creds.username.clone(),
+        workstation_name: String::new(),
+        session_key: Vec::new(),
+        flags: ntlmclient::Flags::NEGOTIATE_UNICODE | ntlmclient::Flags::NEGOTIATE_NTLM,
+        os_version: ntlmclient::OsVersion::default(),
+    });
+    let bytes = authenticate
+        .to_bytes()
+        .map_err(|e| ExecError::Http(format!("NTLM authenticate failed: {e:?}")))?;
+    Ok(format!("NTLM {}", BASE64_STANDARD.encode(bytes)))
 }
 
 /// Compute the `Authorization` header answering a Digest challenge

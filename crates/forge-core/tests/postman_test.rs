@@ -128,19 +128,26 @@ fn imports_oauth2_client_credentials_and_multipart_body() {
 }
 
 #[test]
-fn imports_graphql_body_and_drops_unsupported_auth_with_a_note() {
+fn imports_graphql_body_and_ntlm_auth() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
     let ImportedItem::Request(def) = &import.items[3] else { panic!("request") };
 
     assert_eq!(def.name, "Search");
-    assert_eq!(def.auth, AuthConfig::None, "unsupported ntlm auth should drop to None");
+    assert_eq!(
+        def.auth,
+        AuthConfig::Ntlm {
+            username: String::new(),
+            password: String::new(),
+            domain: String::new(),
+        },
+        "ntlm now maps instead of dropping"
+    );
     let BodyDef::GraphQl { query, variables, .. } = &def.body else { panic!("graphql") };
     assert!(query.starts_with("query Charges"));
     assert_eq!(variables, "{ \"after\": null }");
-
     assert!(
-        import.skipped.iter().any(|s| s.contains("Search") && s.contains("ntlm")),
-        "skipped notes should mention the dropped auth: {:?}",
+        !import.skipped.iter().any(|s| s.contains("ntlm")),
+        "ntlm must no longer appear in the skip list: {:?}",
         import.skipped
     );
 }

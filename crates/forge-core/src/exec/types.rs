@@ -28,6 +28,8 @@ pub struct ResolvedRequest {
     /// Digest-auth credentials; the engine answers a 401 challenge with
     /// them and retries once.
     pub digest: Option<DigestCredentials>,
+    /// NTLM credentials; the engine runs the type1/2/3 handshake on 401.
+    pub ntlm: Option<NtlmCredentials>,
     /// AWS SigV4 signing parameters; the engine signs every hop it sends.
     pub sigv4: Option<SigV4Params>,
 }
@@ -36,6 +38,13 @@ pub struct ResolvedRequest {
 pub struct DigestCredentials {
     pub username: String,
     pub password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NtlmCredentials {
+    pub username: String,
+    pub password: String,
+    pub domain: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +71,7 @@ impl ResolvedRequest {
             client_pem: None,
             extra_roots_pem: None,
             digest: None,
+            ntlm: None,
             sigv4: None,
         }
     }
