@@ -413,3 +413,38 @@ async fn assert_schema_builtin_validates_response_body() {
     assert!(!result.assertions[1].passed, "missing-required schema should fail");
     assert_eq!(result.status, RunStatus::Failed);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mock_server_serves_over_real_http() {
+    use forge_core::reqv1::{serve_mock, MockServerConfig};
+
+    let env = json!({ "baseUrl": "http://mock.local" });
+    let config = MockServerConfig::scan(&project_root(), env, &secret).expect("scan");
+
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("bind");
+    let port = server.server_addr().to_ip().unwrap().port();
+
+    // Serve on a blocking thread; one request then we're done checking.
+    std::thread::spawn(move || {
+        let sec = |name: &str| (name == "apiToken").then(|| "tok".to_string());
+        serve_mock(&config, &server, &sec);
+    });
+
+    // Hit POST /users — a mocked route — and an unmocked one.
+    let client = reqwest::Client::new();
+    let ok = client
+        .post(format!("http://127.0.0.1:{port}/users"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(ok.status(), 201);
+    let body: Value = ok.json().await.expect("json");
+    assert!(body.get("id").is_some(), "{body}");
+
+    let missing = client
+        .get(format!("http://127.0.0.1:{port}/does-not-exist"))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(missing.status(), 404);
+}

@@ -34,6 +34,31 @@ enum Command {
     RunV1(V1RunArgs),
     /// Request-format v1: list the project's asset store (usage, broken refs).
     Assets(AssetsArgs),
+    /// Request-format v1: write .forge/lock.json (asset integrity hashes).
+    Lock(LockArgs),
+    /// Request-format v1: serve request documents' mocks over HTTP.
+    Mock(MockArgs),
+}
+
+#[derive(Args)]
+struct LockArgs {
+    /// Project root (holds project.json).
+    root: PathBuf,
+    /// Verify against the existing lockfile instead of writing a new one.
+    #[arg(long)]
+    check: bool,
+}
+
+#[derive(Args)]
+struct MockArgs {
+    /// Project root (holds project.json).
+    root: PathBuf,
+    /// Port to listen on.
+    #[arg(long, default_value_t = 8080)]
+    port: u16,
+    /// Environment name under environments/ (for `${env.*}` in URLs/mocks).
+    #[arg(long = "env")]
+    env: Option<String>,
 }
 
 #[derive(Args)]
@@ -72,6 +97,9 @@ struct V1RunArgs {
     /// Serve each document's mock instead of sending over HTTP.
     #[arg(long)]
     mock: bool,
+    /// Verify assets against .forge/lock.json before running; abort on drift.
+    #[arg(long)]
+    frozen: bool,
 }
 
 #[derive(Subcommand)]
@@ -157,8 +185,90 @@ async fn main() {
         Command::Validate(args) => cmd_validate(&args),
         Command::RunV1(args) => cmd_run_v1(args).await,
         Command::Assets(args) => cmd_assets(&args),
+        Command::Lock(args) => cmd_lock(&args),
+        Command::Mock(args) => cmd_mock(&args),
     };
     std::process::exit(code);
+}
+
+fn cmd_lock(args: &LockArgs) -> i32 {
+    use forge_core::reqv1::Lockfile;
+
+    if args.check {
+        let lock = match Lockfile::read(&args.root) {
+            Ok(l) => l,
+            Err(d) => {
+                eprintln!("error: {}", d.message);
+                return 2;
+            }
+        };
+        match lock.verify(&args.root) {
+            Ok(diags) if diags.is_empty() => {
+                println!("lockfile is clean ({} asset(s))", lock.assets.len());
+                0
+            }
+            Ok(diags) => {
+                for d in &diags {
+                    eprintln!("  [{}] {}", d.code, d.message);
+                }
+                eprintln!("{} drift(s)", diags.len());
+                1
+            }
+            Err(d) => {
+                eprintln!("error: {}", d.message);
+                2
+            }
+        }
+    } else {
+        match Lockfile::build(&args.root).and_then(|l| l.write(&args.root).map(|_| l)) {
+            Ok(l) => {
+                println!("wrote .forge/lock.json ({} asset(s))", l.assets.len());
+                0
+            }
+            Err(d) => {
+                eprintln!("error: {}", d.message);
+                2
+            }
+        }
+    }
+}
+
+fn cmd_mock(args: &MockArgs) -> i32 {
+    use forge_core::reqv1::{self, serve_mock, MockServerConfig};
+
+    let env = match reqv1::load_environment(&args.root, args.env.as_deref()) {
+        Ok(e) => e,
+        Err(d) => {
+            eprintln!("error: {}", d.message);
+            return 2;
+        }
+    };
+    // A mock server serves canned responses; it must not demand production
+    // secrets to resolve a document. Real secrets (if a dynamic mock needs
+    // one) still come from .env.local/env; a missing one gets a placeholder
+    // so routing never silently drops a route.
+    let real = make_secret_provider(&args.root);
+    let secret = move |name: &str| real(name).or_else(|| Some("<secret>".to_string()));
+    let config = match MockServerConfig::scan(&args.root, env, &secret) {
+        Ok(c) => c,
+        Err(d) => {
+            eprintln!("error: {}", d.message);
+            return 2;
+        }
+    };
+    let server = match tiny_http::Server::http(("0.0.0.0", args.port)) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: cannot bind port {}: {e}", args.port);
+            return 2;
+        }
+    };
+    println!("mock server on http://0.0.0.0:{} — {} route(s):", args.port, config.route_count());
+    for (method, path, id) in config.routes() {
+        println!("  {method} {path}  → {id}");
+    }
+    serve_mock(&config, &server, &secret);
+    0
 }
 
 fn cmd_assets(args: &AssetsArgs) -> i32 {
@@ -302,6 +412,24 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
 
     let first = &args.requests[0];
     let root = v1_root_for(first, args.root.as_deref());
+
+    if args.frozen {
+        match reqv1::Lockfile::read(&root).and_then(|l| l.verify(&root)) {
+            Ok(diags) if diags.is_empty() => {}
+            Ok(diags) => {
+                for d in &diags {
+                    eprintln!("  [{}] {}", d.code, d.message);
+                }
+                eprintln!("error: --frozen and the project drifted from .forge/lock.json");
+                return 2;
+            }
+            Err(d) => {
+                eprintln!("error: --frozen: {}", d.message);
+                return 2;
+            }
+        }
+    }
+
     let env = match reqv1::load_environment(&root, args.env.as_deref()) {
         Ok(e) => e,
         Err(d) => {

@@ -82,11 +82,24 @@ by kind, expand data assets to copy a `data:x#/pointer` ref for any node,
 per-asset usage badges, broken refs flagged, open-in-editor. Read-only — the
 filesystem stays the source of truth.
 
-Still deferred: the standalone mock *server* and route matching; lockfile +
-integrity hashes; keychain/external secret providers; full draft-2020-12
-sibling-schema validation (presence+parse only — a marked `ponytail:` seam in
-`resolve.rs`); Worker-process isolation tiers beyond trusted-local; asset CRUD
-from the UI (create/rename/move — v1 is discovery-only).
+- **Full sibling-schema validation** (`resolve.rs`): a data asset with a
+  `*.schema.json` sibling is validated against it (draft-2020-12) at load time
+  — the `ponytail:` presence+parse seam is closed.
+- **Lockfile + integrity** (`lock.rs`): `forge lock` writes `.forge/lock.json`
+  (sha256 per file asset); `forge lock --check` and `run-v1 --frozen` verify
+  and report drift (changed / missing / unlocked). Off by default.
+- **Mock server** (`mock.rs`): `forge mock <root>` serves each mock-bearing
+  request document over HTTP, routed by method + a path template derived from
+  its URL (`:seg` and `${...}` segments are wildcards; literal routes beat
+  wildcards). Static and dynamic (JS) mocks both served; an optional
+  `mocks.routes.json` adds/overrides explicit routes. Routing lives outside
+  the request document (§10). Matching is a pure `handle(method, path)`,
+  socket-free-testable.
+
+Still deferred (each additive, no format break): keychain/external secret
+providers (interface exists; not built — headless-untestable); Worker-process
+isolation tiers beyond trusted-local; asset CRUD from the UI (create/rename/
+move — v1 is deliberately discovery-only); matrix × sequence combined (niche).
 
 The shipped runnable example is
 `crates/forge-core/tests/fixtures/reqv1/project/` — the canonical §1 document

@@ -602,6 +602,18 @@ fn body_to_exec(body: &ResolvedBody, headers: &[(String, String)]) -> ExecBody {
     }
 }
 
+/// Render a resolved request's mock to a [`ResponseView`] (static or the
+/// dynamic JS mock). Used by the mock server. Returns the response and any
+/// diagnostics; `None` if the document has no mock or the mock failed.
+pub fn render_mock(ir: &ResolvedRequest) -> (Option<ResponseView>, Vec<Diagnostic>) {
+    let mut diags = Vec::new();
+    let response = match &ir.mock {
+        Some(m) => mock_response(m, ir, &mut diags),
+        None => None,
+    };
+    (response, diags)
+}
+
 fn mock_response(
     mock: &ResolvedMock,
     ir: &ResolvedRequest,

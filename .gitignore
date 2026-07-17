@@ -5,3 +5,4 @@
 .forge-local/
 *.secrets.json
 .env.local
+.forge/

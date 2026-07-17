@@ -2099,6 +2099,7 @@ dependencies = [
  "clap",
  "forge-core",
  "serde_json",
+ "tiny_http",
  "tokio",
 ]
 
@@ -2147,6 +2148,7 @@ dependencies = [
  "serde_json",
  "serde_json_path",
  "serde_yaml_ng",
+ "sha2 0.11.0",
  "shlex 2.0.1",
  "similar",
  "tempfile",

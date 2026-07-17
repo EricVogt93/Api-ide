@@ -129,31 +129,39 @@ impl<'a> DataStore<'a> {
     fn validate_sibling_schema(
         &self,
         asset_path: &str,
-        _value: &Value,
+        value: &Value,
         raw: &str,
     ) -> Result<(), Diagnostic> {
-        let schema_path = asset_path.strip_suffix(".json").map(|p| format!("{p}.schema.json"));
-        if let Some(schema_path) = schema_path {
-            if std::path::Path::new(&schema_path).exists() {
-                let text = std::fs::read_to_string(&schema_path).map_err(|e| {
-                    Diagnostic::new(
-                        Code::InvalidAssetInput,
-                        format!("cannot read schema {schema_path}: {e}"),
-                    )
-                    .with_ref(raw)
-                })?;
-                serde_json::from_str::<Value>(&text).map_err(|e| {
-                    Diagnostic::new(
-                        Code::InvalidAssetInput,
-                        format!("sibling schema {schema_path} is not valid JSON: {e}"),
-                    )
-                    .with_ref(raw)
-                })?;
-                // ponytail: presence + parse only for v1; wire a real
-                // draft-2020-12 validator when data contracts must be enforced.
-            }
+        let Some(schema_path) = asset_path.strip_suffix(".json").map(|p| format!("{p}.schema.json"))
+        else {
+            return Ok(());
+        };
+        if !std::path::Path::new(&schema_path).exists() {
+            return Ok(());
         }
-        Ok(())
+        let text = std::fs::read_to_string(&schema_path).map_err(|e| {
+            Diagnostic::new(Code::InvalidAssetInput, format!("cannot read schema {schema_path}: {e}"))
+                .with_ref(raw)
+        })?;
+        let schema: Value = serde_json::from_str(&text).map_err(|e| {
+            Diagnostic::new(
+                Code::InvalidAssetInput,
+                format!("sibling schema {schema_path} is not valid JSON: {e}"),
+            )
+            .with_ref(raw)
+        })?;
+        // Full draft-2020-12 validation of the whole data document against
+        // its sibling schema, before any JSON Pointer is applied.
+        crate::assert::schema::validate(&schema, value).map_err(|errors| {
+            Diagnostic::new(
+                Code::InvalidAssetInput,
+                format!(
+                    "asset {asset_path} violates {schema_path}: {}",
+                    errors.join("; ")
+                ),
+            )
+            .with_ref(raw)
+        })
     }
 
     pub fn resolver(&self) -> &RefResolver {
@@ -247,6 +255,31 @@ mod tests {
         let store = DataStore::new(&r);
         let d = r.resolve("data:users#/x", dir.path()).unwrap();
         assert_eq!(store.resolve(&d, &[]).unwrap_err().code, Code::InvalidAssetInput.as_str());
+    }
+
+    #[test]
+    fn sibling_schema_validates_the_data() {
+        let schema = r#"{"type":"object","required":["valid"],
+            "properties":{"valid":{"type":"object"}}}"#;
+        // Passes its schema.
+        let (dir, r) = setup(&[
+            ("users.json", r#"{"valid":{"alice":{}}}"#),
+            ("users.schema.json", schema),
+        ]);
+        let store = DataStore::new(&r);
+        let d = r.resolve("data:users#/valid/alice", dir.path()).unwrap();
+        assert!(store.resolve(&d, &[]).is_ok());
+
+        // Violates its schema (missing required "valid").
+        let (dir, r) = setup(&[
+            ("users.json", r#"{"other":1}"#),
+            ("users.schema.json", schema),
+        ]);
+        let store = DataStore::new(&r);
+        let d = r.resolve("data:users#/other", dir.path()).unwrap();
+        let err = store.resolve(&d, &[]).unwrap_err();
+        assert_eq!(err.code, Code::InvalidAssetInput.as_str());
+        assert!(err.message.contains("violates"), "{}", err.message);
     }
 
     #[test]
