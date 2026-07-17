@@ -14,6 +14,7 @@ pub mod curl_import;
 pub mod env_editor;
 pub mod hooks_editor;
 pub mod openapi_import;
+pub mod postman_import;
 pub mod search;
 pub mod settings;
 pub mod snippet_export;
@@ -34,6 +35,7 @@ pub struct DialogManager {
     pub search: search::SearchState,
     pub curl_import: curl_import::CurlImportState,
     pub openapi_import: openapi_import::OpenApiImportState,
+    pub postman_import: postman_import::PostmanImportState,
     pub snippet_export: snippet_export::SnippetExportState,
     pub env_editor: env_editor::EnvEditorState,
     pub hooks_editor: hooks_editor::HooksEditorState,
@@ -49,6 +51,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     search::show(ctx, state, bridge);
     curl_import::show(ctx, state);
     openapi_import::show(ctx, state);
+    postman_import::show(ctx, state);
     snippet_export::show(ctx, state);
     env_editor::show(ctx, state);
     hooks_editor::show(ctx, state);

@@ -1,0 +1,146 @@
+{
+  "info": {
+    "_postman_id": "3f1c2b6e-8a5d-4f0e-9b7a-1c2d3e4f5a6b",
+    "name": "Payments API",
+    "description": { "content": "Postman export used by the import tests.", "type": "text/plain" },
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.example.com" },
+    { "key": "accountId", "value": "acc_123" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": { "type": "text/javascript", "exec": ["pm.variables.set('ts', Date.now());"] }
+    }
+  ],
+  "item": [
+    {
+      "name": "Charges",
+      "description": "Charge lifecycle",
+      "auth": {
+        "type": "apikey",
+        "apikey": [
+          { "key": "key", "value": "X-Api-Key", "type": "string" },
+          { "key": "value", "value": "{{apiKey}}", "type": "string" },
+          { "key": "in", "value": "query", "type": "string" }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Charge",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('status 201', () => pm.response.to.have.status(201));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Debug", "value": "1", "disabled": true, "description": "debug flag" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/charges?expand=customer&dryRun=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "charges"],
+              "query": [
+                { "key": "expand", "value": "customer" },
+                { "key": "dryRun", "value": "true", "disabled": true }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1250,\n  \"currency\": \"eur\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          },
+          "response": [
+            { "name": "example 201", "originalRequest": {}, "code": 201, "body": "{}" }
+          ]
+        },
+        {
+          "name": "Get Charge",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/v1/charges/:chargeId",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "charges", ":chargeId"],
+              "variable": [{ "key": "chargeId", "value": "ch_42", "description": "charge id" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            { "key": "username", "value": "{{user}}", "type": "string" },
+            { "key": "password", "value": "{{pass}}", "type": "string" }
+          ]
+        },
+        "url": "{{baseUrl}}/oauth/login",
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "grant_type", "value": "password" },
+            { "key": "otp", "value": "", "disabled": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Upload Receipt",
+      "request": {
+        "method": "PUT",
+        "auth": {
+          "type": "oauth2",
+          "oauth2": [
+            { "key": "grant_type", "value": "client_credentials", "type": "string" },
+            { "key": "accessTokenUrl", "value": "{{baseUrl}}/oauth/token", "type": "string" },
+            { "key": "clientId", "value": "forge-tests", "type": "string" },
+            { "key": "clientSecret", "value": "{{clientSecret}}", "type": "string" },
+            { "key": "scope", "value": "receipts:write receipts:read", "type": "string" }
+          ]
+        },
+        "url": "{{baseUrl}}/v1/receipts",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "file", "type": "file", "src": "/tmp/receipt.pdf" },
+            { "key": "note", "type": "text", "value": "Q3 receipt", "contentType": "text/plain" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search",
+      "request": {
+        "method": "POST",
+        "auth": { "type": "ntlm", "ntlm": [] },
+        "url": "{{baseUrl}}/graphql",
+        "body": {
+          "mode": "graphql",
+          "graphql": {
+            "query": "query Charges($after: String) { charges(after: $after) { id } }",
+            "variables": "{ \"after\": null }"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -24,3 +24,6 @@ tokio-util.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
