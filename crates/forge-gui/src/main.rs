@@ -19,13 +19,16 @@ fn main() -> eframe::Result {
     // Optional CLI arg: a workspace directory to open on startup.
     let initial_workspace: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([900.0, 600.0])
-            .with_title("Forge — API Test IDE"),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1440.0, 900.0])
+        .with_min_inner_size([900.0, 600.0])
+        .with_title("Forge — API Test IDE");
+    // Window/taskbar icon. A bad decode just means no icon, never a crash.
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/logo.png")) {
+        viewport = viewport.with_icon(std::sync::Arc::new(icon));
+    }
+
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
 
     eframe::run_native(
         "forge-ide",

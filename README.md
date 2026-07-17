@@ -1,5 +1,7 @@
 # Forge — API Test IDE
 
+<img src="crates/forge-gui/assets/logo.png" alt="Forge logo" width="128" align="right" />
+
 Forge is a native, GUI-free-core desktop IDE for writing, running and
 managing API tests — built in Rust, styled after the JetBrains / IntelliJ
 family of tools (dockable panels, dark **Darcula** and **Light** themes, a
