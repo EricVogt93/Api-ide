@@ -188,7 +188,7 @@ fn bridge_main(
                         let result = async {
                             let pool = forge_core::protocols::compile_protos(&protos, &[])
                                 .map_err(|e| e.to_string())?;
-                            forge_core::protocols::call_unary(
+                            forge_core::protocols::call(
                                 &endpoint,
                                 &pool,
                                 &method,

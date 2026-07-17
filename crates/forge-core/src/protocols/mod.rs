@@ -7,7 +7,7 @@ pub mod sse;
 pub mod websocket;
 
 pub use graphql::{GqlField, GqlType, GraphQlSchema, INTROSPECTION_QUERY};
-pub use grpc::{call_unary, compile_protos, list_methods, GrpcError, GrpcMethod, GrpcResponse};
+pub use grpc::{call, compile_protos, list_methods, GrpcError, GrpcMethod, GrpcResponse};
 pub use sse::{SseEvent, SseSession};
 pub use websocket::{WsEvent, WsOutgoing, WsSession};
 

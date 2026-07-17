@@ -16,4 +16,6 @@ message EchoReply {
 service Echo {
   rpc Say(EchoRequest) returns (EchoReply);
   rpc Watch(EchoRequest) returns (stream EchoReply);
+  rpc Sum(stream EchoRequest) returns (EchoReply);
+  rpc Chat(stream EchoRequest) returns (stream EchoReply);
 }

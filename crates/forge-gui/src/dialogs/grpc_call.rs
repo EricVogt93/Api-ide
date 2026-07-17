@@ -120,10 +120,11 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                     .width(240.0)
                     .show_ui(ui, |ui| {
                         for (i, m) in dialog.methods.iter().enumerate() {
-                            let label = if m.is_unary {
-                                m.path.clone()
-                            } else {
-                                format!("{} (streaming — unsupported)", m.path)
+                            let label = match (m.client_streaming, m.server_streaming) {
+                                (false, false) => m.path.clone(),
+                                (false, true) => format!("{} (server streaming)", m.path),
+                                (true, false) => format!("{} (client streaming)", m.path),
+                                (true, true) => format!("{} (bidi streaming)", m.path),
                             };
                             ui.selectable_value(&mut dialog.selected_method, i, label);
                         }
@@ -131,6 +132,9 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             });
             if let Some(m) = dialog.methods.get(dialog.selected_method) {
                 ui.weak(format!("{} → {}", m.input_type, m.output_type));
+                if m.client_streaming {
+                    ui.weak("Client-streaming: a JSON array sends one message per element.");
+                }
             }
 
             ui.add_space(6.0);
@@ -168,7 +172,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             ui.add_space(8.0);
             let can_call = !dialog.in_flight
                 && !dialog.endpoint.trim().is_empty()
-                && dialog.methods.get(dialog.selected_method).is_some_and(|m| m.is_unary);
+                && dialog.methods.get(dialog.selected_method).is_some();
             if ui.add_enabled(can_call, egui::Button::new("▶ Call")).clicked() {
                 let call_id = dialog.next_call_id;
                 dialog.next_call_id += 1;
@@ -211,16 +215,20 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                         }
                         ui.add_space(4.0);
                     }
+                    let joined = response.messages.join("\n\n");
                     ui.horizontal(|ui| {
                         if ui.button("Copy").clicked() {
-                            ui.ctx().copy_text(response.json.clone());
+                            ui.ctx().copy_text(joined.clone());
                         }
                         ui.label(RichText::new("OK").color(egui::Color32::from_rgb(0x49, 0x9C, 0x54)));
+                        if response.messages.len() != 1 {
+                            ui.weak(format!("{} message(s)", response.messages.len()));
+                        }
                     });
                     egui::ScrollArea::vertical().id_salt("grpc-res").max_height(200.0).show(
                         ui,
                         |ui| {
-                            let mut text = response.json.as_str();
+                            let mut text = joined.as_str();
                             ui.add(
                                 TextEdit::multiline(&mut text)
                                     .code_editor()

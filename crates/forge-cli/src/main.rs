@@ -169,11 +169,13 @@ async fn cmd_grpc_call(args: GrpcCallArgs) -> i32 {
         }
     }
 
-    match forge_core::protocols::call_unary(&args.endpoint, &pool, &args.method, &data, &metadata)
+    match forge_core::protocols::call(&args.endpoint, &pool, &args.method, &data, &metadata)
         .await
     {
         Ok(response) => {
-            println!("{}", response.json);
+            for message in &response.messages {
+                println!("{message}");
+            }
             for (k, v) in &response.metadata {
                 eprintln!("# {k}: {v}");
             }

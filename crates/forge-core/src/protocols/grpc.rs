@@ -21,8 +21,8 @@ pub enum GrpcError {
     Compile(String),
     #[error("method not found: {0} (expected package.Service/Method)")]
     MethodNotFound(String),
-    #[error("streaming methods are not supported yet: {0}")]
-    Streaming(String),
+    #[error("{0}")]
+    InputShape(String),
     #[error("invalid request JSON for {type_name}: {message}")]
     RequestJson { type_name: String, message: String },
     #[error("invalid metadata {key:?}: {message}")]
@@ -42,16 +42,18 @@ pub struct GrpcMethod {
     pub path: String,
     pub input_type: String,
     pub output_type: String,
-    /// Unary is the only shape `call_unary` accepts.
     pub is_unary: bool,
+    pub client_streaming: bool,
+    pub server_streaming: bool,
 }
 
-/// Result of a successful unary call.
+/// Result of a successful call, any shape.
 #[derive(Debug, Clone)]
 pub struct GrpcResponse {
-    /// Response message rendered as pretty JSON.
-    pub json: String,
-    /// Response metadata (ASCII entries only).
+    /// Response message(s) rendered as pretty JSON — exactly one for unary
+    /// and client-streaming methods, zero or more for streaming responses.
+    pub messages: Vec<String>,
+    /// Response metadata: headers plus (for streaming responses) trailers.
     pub metadata: Vec<(String, String)>,
 }
 
@@ -83,6 +85,8 @@ pub fn list_methods(pool: &DescriptorPool) -> Vec<GrpcMethod> {
             input_type: m.input().full_name().to_string(),
             output_type: m.output().full_name().to_string(),
             is_unary: !m.is_client_streaming() && !m.is_server_streaming(),
+            client_streaming: m.is_client_streaming(),
+            server_streaming: m.is_server_streaming(),
         })
         .collect();
     out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -99,11 +103,13 @@ fn find_method(pool: &DescriptorPool, path: &str) -> Result<MethodDescriptor, Gr
     found.ok_or_else(|| GrpcError::MethodNotFound(path.to_string()))
 }
 
-/// Make a unary call. `endpoint` is `http://host:port` (plaintext HTTP/2)
-/// or `https://…` (TLS via the system trust store); `method_path` is
-/// `package.Service/Method`; `request_json` is the request message as JSON;
-/// `metadata` entries become ASCII request metadata.
-pub async fn call_unary(
+/// Call a method of any shape. `endpoint` is `http://host:port` (plaintext
+/// HTTP/2) or `https://…` (TLS via the system trust store); `method_path`
+/// is `package.Service/Method`; `request_json` is the request message as
+/// JSON — for client-streaming/bidi methods a JSON array sends one message
+/// per element; `metadata` entries become ASCII request metadata. Streaming
+/// responses are collected until the server ends the stream.
+pub async fn call(
     endpoint: &str,
     pool: &DescriptorPool,
     method_path: &str,
@@ -111,18 +117,7 @@ pub async fn call_unary(
     metadata: &[(String, String)],
 ) -> Result<GrpcResponse, GrpcError> {
     let method = find_method(pool, method_path)?;
-    if method.is_client_streaming() || method.is_server_streaming() {
-        return Err(GrpcError::Streaming(method_path.to_string()));
-    }
-
-    let mut deserializer = serde_json::Deserializer::from_str(request_json);
-    let message =
-        DynamicMessage::deserialize(method.input(), &mut deserializer).map_err(|e| {
-            GrpcError::RequestJson {
-                type_name: method.input().full_name().to_string(),
-                message: e.to_string(),
-            }
-        })?;
+    let inputs = parse_inputs(request_json, &method)?;
 
     // Validate metadata before connecting, so a typo'd key fails fast.
     let mut request_metadata = tonic::metadata::MetadataMap::new();
@@ -146,47 +141,134 @@ pub async fn call_unary(
         .await
         .map_err(|e| GrpcError::Connect(e.to_string()))?;
 
-    let mut request = Request::new(message);
-    *request.metadata_mut() = request_metadata;
-
     let path = http::uri::PathAndQuery::from_str(&format!("/{method_path}"))
         .map_err(|e| GrpcError::MethodNotFound(format!("{method_path}: {e}")))?;
+    let codec = DynamicCodec::new(method.output());
 
     let mut grpc = tonic::client::Grpc::new(channel);
     grpc.ready().await.map_err(|e| GrpcError::Connect(e.to_string()))?;
-    let response = grpc
-        .unary(request, path, DynamicCodec::new(method.output()))
-        .await
-        .map_err(|status: Status| GrpcError::Call {
-            code: format!("{:?}", status.code()),
-            message: status.message().to_string(),
-        })?;
 
-    let response_metadata = response
-        .metadata()
-        .iter()
+    let status_err = |status: Status| GrpcError::Call {
+        code: format!("{:?}", status.code()),
+        message: status.message().to_string(),
+    };
+
+    let mut messages = Vec::new();
+    let mut response_metadata: Vec<(String, String)>;
+    match (method.is_client_streaming(), method.is_server_streaming()) {
+        (false, false) => {
+            let mut request = Request::new(into_single(inputs));
+            *request.metadata_mut() = request_metadata;
+            let response = grpc.unary(request, path, codec).await.map_err(status_err)?;
+            response_metadata = ascii_metadata(response.metadata());
+            messages.push(message_to_json(response.get_ref())?);
+        }
+        (true, false) => {
+            let mut request = Request::new(tonic::codegen::tokio_stream::iter(inputs));
+            *request.metadata_mut() = request_metadata;
+            let response = grpc.client_streaming(request, path, codec).await.map_err(status_err)?;
+            response_metadata = ascii_metadata(response.metadata());
+            messages.push(message_to_json(response.get_ref())?);
+        }
+        (false, true) => {
+            let mut request = Request::new(into_single(inputs));
+            *request.metadata_mut() = request_metadata;
+            let response = grpc.server_streaming(request, path, codec).await.map_err(status_err)?;
+            response_metadata = ascii_metadata(response.metadata());
+            drain_stream(response.into_inner(), &mut messages, &mut response_metadata).await?;
+        }
+        (true, true) => {
+            let mut request = Request::new(tonic::codegen::tokio_stream::iter(inputs));
+            *request.metadata_mut() = request_metadata;
+            let response = grpc.streaming(request, path, codec).await.map_err(status_err)?;
+            response_metadata = ascii_metadata(response.metadata());
+            drain_stream(response.into_inner(), &mut messages, &mut response_metadata).await?;
+        }
+    }
+
+    Ok(GrpcResponse { messages, metadata: response_metadata })
+}
+
+/// Parse the request JSON into input messages: a single object for
+/// unary/server-streaming, an array (or a single object meaning one
+/// message) for client-streaming/bidi.
+fn parse_inputs(
+    request_json: &str,
+    method: &MethodDescriptor,
+) -> Result<Vec<DynamicMessage>, GrpcError> {
+    let type_name = method.input().full_name().to_string();
+    let json_err = |e: &dyn std::fmt::Display| GrpcError::RequestJson {
+        type_name: type_name.clone(),
+        message: e.to_string(),
+    };
+
+    let value: serde_json::Value =
+        serde_json::from_str(request_json).map_err(|e| json_err(&e))?;
+    let raw_messages: Vec<serde_json::Value> = match value {
+        serde_json::Value::Array(items) => items,
+        other => vec![other],
+    };
+
+    if !method.is_client_streaming() && raw_messages.len() != 1 {
+        return Err(GrpcError::InputShape(format!(
+            "{} takes exactly one request message, got {}",
+            method.full_name(),
+            raw_messages.len()
+        )));
+    }
+
+    raw_messages
+        .into_iter()
+        .map(|v| {
+            DynamicMessage::deserialize(method.input(), v).map_err(|e| json_err(&e))
+        })
+        .collect()
+}
+
+fn into_single(mut inputs: Vec<DynamicMessage>) -> DynamicMessage {
+    // parse_inputs guarantees exactly one element for non-client-streaming.
+    inputs.remove(0)
+}
+
+fn ascii_metadata(map: &tonic::metadata::MetadataMap) -> Vec<(String, String)> {
+    map.iter()
         .filter_map(|kv| match kv {
             tonic::metadata::KeyAndValueRef::Ascii(k, v) => {
                 Some((k.to_string(), v.to_str().unwrap_or_default().to_string()))
             }
             tonic::metadata::KeyAndValueRef::Binary(..) => None,
         })
-        .collect();
+        .collect()
+}
 
+async fn drain_stream(
+    mut stream: tonic::Streaming<DynamicMessage>,
+    messages: &mut Vec<String>,
+    metadata: &mut Vec<(String, String)>,
+) -> Result<(), GrpcError> {
+    let status_err = |status: Status| GrpcError::Call {
+        code: format!("{:?}", status.code()),
+        message: status.message().to_string(),
+    };
+    while let Some(message) = stream.message().await.map_err(status_err)? {
+        messages.push(message_to_json(&message)?);
+    }
+    if let Ok(Some(trailers)) = stream.trailers().await {
+        metadata.extend(ascii_metadata(&trailers));
+    }
+    Ok(())
+}
+
+fn message_to_json(message: &DynamicMessage) -> Result<String, GrpcError> {
     let mut json = Vec::new();
     let mut serializer = serde_json::Serializer::pretty(&mut json);
-    response
-        .get_ref()
+    message
         .serialize_with_options(
             &mut serializer,
             &prost_reflect::SerializeOptions::new().skip_default_fields(false),
         )
         .map_err(|e| GrpcError::Call { code: "Internal".to_string(), message: e.to_string() })?;
-
-    Ok(GrpcResponse {
-        json: String::from_utf8_lossy(&json).into_owned(),
-        metadata: response_metadata,
-    })
+    Ok(String::from_utf8_lossy(&json).into_owned())
 }
 
 // ---------------------------------------------------------------------
