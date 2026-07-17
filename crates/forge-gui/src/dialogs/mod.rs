@@ -19,6 +19,7 @@ pub mod openapi_import;
 pub mod postman_import;
 pub mod search;
 pub mod settings;
+pub mod v1_editor;
 pub mod snippet_export;
 pub mod welcome;
 
@@ -43,6 +44,7 @@ pub struct DialogManager {
     pub env_editor: env_editor::EnvEditorState,
     pub hooks_editor: hooks_editor::HooksEditorState,
     pub grpc_call: grpc_call::GrpcCallState,
+    pub v1_editor: v1_editor::V1EditorState,
 }
 
 /// Render whichever overlay dialogs are currently open. Call once per frame;
@@ -61,6 +63,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     env_editor::show(ctx, state);
     hooks_editor::show(ctx, state);
     grpc_call::show(ctx, state, bridge);
+    v1_editor::show(ctx, state, bridge);
 }
 
 /// Detect the global dialog-opening gestures that don't fit a single

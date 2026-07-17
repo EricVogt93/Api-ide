@@ -91,7 +91,7 @@ pub fn validate(
     root: &Path,
     request_file: &Path,
     env: Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
 ) -> Result<ResolvedRequest, Vec<Diagnostic>> {
     validate_case(doc, root, request_file, env, secret, Value::Null, empty_object())
 }
@@ -107,7 +107,7 @@ pub fn validate_case(
     root: &Path,
     request_file: &Path,
     env: Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
     matrix: Value,
     runtime: Value,
 ) -> Result<ResolvedRequest, Vec<Diagnostic>> {
@@ -134,7 +134,7 @@ pub async fn run(
     root: &Path,
     request_file: &Path,
     env: Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
     engine: &HttpEngine,
     mode: RunMode,
     cancel: CancellationToken,
@@ -153,7 +153,7 @@ pub async fn run_with_runtime(
     root: &Path,
     request_file: &Path,
     env: Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
     engine: &HttpEngine,
     mode: RunMode,
     cancel: CancellationToken,
@@ -274,7 +274,7 @@ pub async fn run_sequence(
     files: &[std::path::PathBuf],
     root: &Path,
     env: Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
     engine: &HttpEngine,
     mode: RunMode,
     cancel: CancellationToken,

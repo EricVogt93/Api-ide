@@ -73,6 +73,17 @@ Since landed (originally deferred, all additive):
 - **`builtin:assert-schema@1`**: validates the response body against an
   inline JSON Schema (reuses the crate's `jsonschema` validator).
 
+**v1 request editor** (`dialogs/v1_editor.rs`): a self-contained window for
+authoring a `*.request.json` with chill store access — the asset store on the
+left (data fixtures browsable to any JSON node, hooks/assertions/extractors/
+generators/mocks), each with an "insert" that drops a ready `ref`/`use`
+snippet into the JSON at the cursor, so you *reference* a stored dataset or
+assertion instead of rewriting it. JSON editor on the right with Validate
+(no-network), Save, and Run (over the bridge, HTTP or `mock`), plus a result
+strip (status, assertions, extracted runtime, diagnostics). Opened from the
+Assets panel's request list ("edit") or "New request". This closes the
+last-mile authoring UX; the format already supported the referencing.
+
 **Asset store view** (§11): `index.rs` scans a project into a `ProjectIndex`
 — assets grouped by kind, each data asset browsable to any JSON node, a
 reverse-reference (usage) graph, broken-ref detection with request + instance

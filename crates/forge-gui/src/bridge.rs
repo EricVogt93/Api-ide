@@ -39,6 +39,17 @@ pub enum Cmd {
         request_json: String,
         metadata: Vec<(String, String)>,
     },
+    /// Run a reqv1 request document (from the v1 editor). `text` is the
+    /// current buffer; `root` the project root; `env_name` an environment
+    /// under environments/. Outcome comes back as `Evt::V1Run`.
+    RunV1 {
+        run_id: u64,
+        root: PathBuf,
+        file: PathBuf,
+        text: String,
+        env_name: Option<String>,
+        mock: bool,
+    },
     /// Ask for a snapshot of the shared `HttpEngine`'s cookie jar.
     ListCookies,
     /// Remove one cookie from the shared jar.
@@ -66,6 +77,8 @@ pub enum Evt {
     Cookies(Vec<StoredCookie>),
     /// Outcome of a `Cmd::GrpcCall`: response JSON + metadata, or an error.
     Grpc { call_id: u64, result: Result<forge_core::protocols::GrpcResponse, String> },
+    /// Outcome of a `Cmd::RunV1`: the run result, or a parse/setup error.
+    V1Run { run_id: u64, result: Result<forge_core::reqv1::RunResult, String> },
 }
 
 /// Handle to the background bridge thread.
@@ -203,6 +216,16 @@ fn bridge_main(
                         ctx.request_repaint();
                     });
                 }
+                Cmd::RunV1 { run_id, root, file, text, env_name, mock } => {
+                    let engine = engine.clone();
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = run_v1_document(&engine, &root, &file, &text, env_name.as_deref(), mock).await;
+                        let _ = evt_tx.send(Evt::V1Run { run_id, result });
+                        ctx.request_repaint();
+                    });
+                }
                 Cmd::WsConnect { conn_id, url, headers, tls } => {
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
@@ -313,6 +336,52 @@ fn bridge_main(
             }
         }
     });
+}
+
+/// Run a reqv1 document from the v1 editor: parse `text`, load the named
+/// environment, and run over the shared HTTP engine (or serve its mock).
+/// Secrets come from `<root>/.env.local` then the process environment.
+async fn run_v1_document(
+    engine: &HttpEngine,
+    root: &std::path::Path,
+    file: &std::path::Path,
+    text: &str,
+    env_name: Option<&str>,
+    mock: bool,
+) -> Result<forge_core::reqv1::RunResult, String> {
+    use forge_core::reqv1::{self, RunMode};
+
+    let doc = reqv1::RequestDocument::parse(text).map_err(|e| e.to_string())?;
+    let env = reqv1::load_environment(root, env_name).map_err(|d| d.message)?;
+
+    // Secret provider: .env.local (KEY=value) first, then process env.
+    let mut file_secrets = HashMap::new();
+    if let Ok(text) = std::fs::read_to_string(root.join(".env.local")) {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                file_secrets.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    let secret = move |name: &str| file_secrets.get(name).cloned().or_else(|| std::env::var(name).ok());
+
+    let mode = if mock { RunMode::Mock } else { RunMode::Http };
+    Ok(reqv1::run(
+        &doc,
+        root,
+        file,
+        env,
+        &secret,
+        engine,
+        mode,
+        CancellationToken::new(),
+        serde_json::Value::Null,
+    )
+    .await)
 }
 
 /// Persist the shared cookie jar to whichever path `Cmd::LoadCookies` last

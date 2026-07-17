@@ -66,7 +66,7 @@ impl MockServerConfig {
     pub fn scan(
         root: &Path,
         mut env: Value,
-        secret: &dyn Fn(&str) -> Option<String>,
+        secret: &(dyn Fn(&str) -> Option<String> + Sync),
     ) -> Result<MockServerConfig, Diagnostic> {
         if env.get("baseUrl").is_none() {
             if let Value::Object(map) = &mut env {
@@ -158,7 +158,7 @@ impl MockServerConfig {
         &self,
         method: &str,
         path: &str,
-        secret: &dyn Fn(&str) -> Option<String>,
+        secret: &(dyn Fn(&str) -> Option<String> + Sync),
     ) -> Option<MockHttpResponse> {
         let incoming = parse_incoming(path);
         let method = method.to_uppercase();
@@ -187,7 +187,7 @@ impl MockServerConfig {
 pub fn serve_mock(
     config: &MockServerConfig,
     server: &tiny_http::Server,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
 ) {
     for request in server.incoming_requests() {
         let method = request.method().as_str().to_string();

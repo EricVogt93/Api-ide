@@ -24,7 +24,7 @@ pub struct Scopes<'a> {
     pub matrix: &'a Value,
     pub runtime: &'a Value,
     /// Secret provider: name → value. Returns None for a missing secret.
-    pub secret: &'a dyn Fn(&str) -> Option<String>,
+    pub secret: &'a (dyn Fn(&str) -> Option<String> + Sync),
 }
 
 /// Collects the concrete secret values that were interpolated, so the result

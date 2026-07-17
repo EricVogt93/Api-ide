@@ -90,6 +90,9 @@ impl ForgeApp {
                 Evt::Grpc { call_id, result } => {
                     self.state.dialogs.grpc_call.handle_result(call_id, result)
                 }
+                Evt::V1Run { run_id, result } => {
+                    self.state.dialogs.v1_editor.handle_result(run_id, result)
+                }
             }
         }
     }

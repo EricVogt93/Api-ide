@@ -28,7 +28,7 @@ pub struct BuildInputs<'a> {
     /// Runtime values carried in from earlier requests in a sequence
     /// (`${runtime.*}`). Empty object for a standalone run.
     pub runtime: Value,
-    pub secret: &'a dyn Fn(&str) -> Option<String>,
+    pub secret: &'a (dyn Fn(&str) -> Option<String> + Sync),
 }
 
 /// Build the canonical IR from a parsed document. Collects every independent

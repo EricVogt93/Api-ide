@@ -75,6 +75,12 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                 state.assets.load(root);
             }
         }
+        if let Some(root) = state.assets.root.clone() {
+            if ui.button("New request").on_hover_text("Author a v1 request").clicked() {
+                let env = state.active_env.clone();
+                state.dialogs.v1_editor.open_new(root, env);
+            }
+        }
     });
 
     if let Some(err) = &state.assets.error {
@@ -111,8 +117,26 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     let base_dir = state.assets.base_dir.clone();
     let mut to_copy: Option<(String, String)> = None; // (ref, kind-of-thing)
     let mut to_open: Option<String> = None;
+    let mut to_edit: Option<std::path::PathBuf> = None;
+    let active_env = state.active_env.clone();
 
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+        // Requests first — click "edit" to open the v1 editor on that file.
+        if !index.requests.is_empty() {
+            ui.label(RichText::new("requests").strong());
+            for r in &index.requests {
+                ui.horizontal(|ui| {
+                    let name = r.rel_path.rsplit('/').next().unwrap_or(&r.rel_path);
+                    ui.label(name).on_hover_text(&r.id);
+                    ui.label(RichText::new(format!("{} ref(s)", r.refs.len())).small().weak());
+                    if ui.small_button("edit").clicked() {
+                        to_edit = Some(std::path::PathBuf::from(&r.path));
+                    }
+                });
+            }
+            ui.separator();
+        }
+
         // Group assets by kind.
         let mut current: Option<AssetKind> = None;
         for asset in &index.assets {
@@ -124,6 +148,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             asset_row(ui, index, asset, base_dir.as_deref(), &mut state.assets.expanded, &mut to_copy, &mut to_open);
         }
     });
+
+    if let Some(file) = to_edit {
+        state.dialogs.v1_editor.open_file(file, active_env);
+    }
 
     if let Some((r, what)) = to_copy {
         ui.ctx().copy_text(r.clone());

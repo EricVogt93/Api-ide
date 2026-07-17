@@ -29,7 +29,7 @@ pub fn resolve_cases(
     store: &DataStore<'_>,
     base_dir: &Path,
     env: &Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
 ) -> Result<Vec<MatrixCase>, Errors> {
     if matrix.is_empty() {
         return Ok(vec![Map::new()]);
@@ -101,7 +101,7 @@ pub async fn run_matrix(
     root: &Path,
     request_file: &Path,
     env: Value,
-    secret: &dyn Fn(&str) -> Option<String>,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
     engine: &HttpEngine,
     mode: RunMode,
     cancel: CancellationToken,
