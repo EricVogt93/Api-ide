@@ -29,12 +29,25 @@ pub struct V1EditorState {
     cursor_byte: usize,
     env_name: Option<String>,
     mock: bool,
+    /// Vertical splitter: fraction of height given to the request (top).
+    split_ratio: f32,
+    /// Which results pane is shown in the bottom split.
+    result_tab: ResultTab,
     // Run plumbing.
     next_run_id: u64,
     active_run: Option<u64>,
     in_flight: bool,
     diagnostics: Vec<String>,
     result: Option<RunResult>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ResultTab {
+    #[default]
+    Result,
+    Assertions,
+    Runtime,
+    Diagnostics,
 }
 
 impl V1EditorState {
@@ -48,6 +61,7 @@ impl V1EditorState {
         self.dirty = false;
         self.result = None;
         self.diagnostics.clear();
+        if self.split_ratio <= 0.0 { self.split_ratio = 0.6; }
         self.open = true;
     }
 
@@ -61,11 +75,19 @@ impl V1EditorState {
         self.dirty = true;
         self.result = None;
         self.diagnostics.clear();
+        if self.split_ratio <= 0.0 { self.split_ratio = 0.6; }
         self.open = true;
     }
 
     fn load_index(&mut self) {
         self.index = self.root.as_ref().and_then(|r| ProjectIndex::scan(r).ok());
+        // Default to the first environment if none is chosen, so ${env.*}
+        // resolves out of the box.
+        if self.env_name.is_none() {
+            if let Some(index) = &self.index {
+                self.env_name = index.environments.first().cloned();
+            }
+        }
     }
 
     /// Route a bridge `Evt::V1Run` outcome.
@@ -137,42 +159,75 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                     |ui| palette(ui, d, &mut insert_snippet),
                 );
 
-                // --- right: JSON editor + toolbar + results ---
+                // --- right: split view (request top / results bottom) ---
                 let ui = &mut cols[1];
-                ui.horizontal(|ui| {
-                    if ui.button("Validate").clicked() {
-                        validate_now(d);
-                    }
-                    if ui.button("Save").clicked() {
-                        save_now(d);
-                    }
-                    ui.checkbox(&mut d.mock, "mock");
-                    let can_run = !d.in_flight && d.root.is_some();
-                    if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
-                        run_now(d, bridge);
-                    }
-                    if d.in_flight {
-                        ui.spinner();
+                let total_h = ui.available_height();
+                let top_h = (total_h * d.split_ratio).clamp(120.0, (total_h - 90.0).max(120.0));
+
+                // Top: toolbar + JSON editor.
+                ui.allocate_ui(egui::vec2(ui.available_width(), top_h), |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Validate").clicked() {
+                            validate_now(d);
+                        }
+                        if ui.button("Save").clicked() {
+                            save_now(d);
+                        }
+                        ui.checkbox(&mut d.mock, "mock");
+                        // Environment picker (drives ${env.*}).
+                        let envs: Vec<String> =
+                            d.index.as_ref().map(|i| i.environments.clone()).unwrap_or_default();
+                        let selected = d.env_name.clone().unwrap_or_else(|| "(none)".to_string());
+                        egui::ComboBox::from_id_salt("v1-env")
+                            .selected_text(selected)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut d.env_name, None, "(none)");
+                                for e in &envs {
+                                    ui.selectable_value(&mut d.env_name, Some(e.clone()), e);
+                                }
+                            });
+                        let can_run = !d.in_flight && d.root.is_some();
+                        if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
+                            run_now(d, bridge);
+                        }
+                        if d.in_flight {
+                            ui.spinner();
+                        }
+                    });
+                    let output = egui::ScrollArea::vertical().id_salt("v1-json").auto_shrink([false, false]).show(ui, |ui| {
+                        let out = TextEdit::multiline(&mut d.text)
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(18)
+                            .show(ui);
+                        if out.response.changed() {
+                            d.dirty = true;
+                        }
+                        out
+                    });
+                    if let Some(range) = output.inner.cursor_range {
+                        d.cursor_byte = byte_offset(&d.text, range);
                     }
                 });
 
-                let output = egui::ScrollArea::vertical().id_salt("v1-json").max_height(360.0).show(ui, |ui| {
-                    let out = TextEdit::multiline(&mut d.text)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(20)
-                        .show(ui);
-                    if out.response.changed() {
-                        d.dirty = true;
-                    }
-                    out
-                });
-                // Track the cursor byte offset for insert-at-cursor.
-                if let Some(range) = output.inner.cursor_range {
-                    d.cursor_byte = byte_offset(&d.text, range);
+                // Draggable splitter.
+                let splitter = ui.allocate_response(egui::vec2(ui.available_width(), 6.0), egui::Sense::drag());
+                ui.painter().hline(
+                    splitter.rect.x_range(),
+                    splitter.rect.center().y,
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
+                if splitter.dragged() && total_h > 1.0 {
+                    d.split_ratio = ((top_h + splitter.drag_delta().y) / total_h).clamp(0.2, 0.85);
+                }
+                if splitter.hovered() || splitter.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
                 }
 
-                results_strip(ui, d);
+                // Bottom: tabbed results — assertions get their own pane.
+                ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height()), |ui| {
+                    results_pane(ui, d);
+                });
             });
         });
 
@@ -287,32 +342,130 @@ fn snippet_for(asset: &AssetEntry, base_ref: &str) -> String {
     }
 }
 
-fn results_strip(ui: &mut egui::Ui, d: &V1EditorState) {
+/// Bottom of the split: a tabbed results pane. Assertions live in their own
+/// tab (Postman/Bruno-style), separate from the run summary, extracted
+/// runtime and diagnostics.
+fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState) {
+    // Tab strip with a pass/fail count on the Assertions tab.
+    let (passed, total) = d
+        .result
+        .as_ref()
+        .map(|r| (r.assertions.iter().filter(|a| a.passed).count(), r.assertions.len()))
+        .unwrap_or((0, 0));
+    let assertions_label =
+        if total > 0 { format!("Assertions ({passed}/{total})") } else { "Assertions".to_string() };
+
+    ui.horizontal(|ui| {
+        let mut tab = |ui: &mut egui::Ui, which: ResultTab, label: &str| {
+            if ui.selectable_label(d.result_tab == which, label).clicked() {
+                d.result_tab = which;
+            }
+        };
+        tab(ui, ResultTab::Result, "Result");
+        tab(ui, ResultTab::Assertions, &assertions_label);
+        tab(ui, ResultTab::Runtime, "Runtime");
+        tab(ui, ResultTab::Diagnostics, "Diagnostics");
+    });
     ui.separator();
+
+    egui::ScrollArea::vertical().id_salt("v1-results").auto_shrink([false, false]).show(ui, |ui| {
+        match d.result_tab {
+            ResultTab::Result => result_summary(ui, d),
+            ResultTab::Assertions => assertions_pane(ui, d),
+            ResultTab::Runtime => runtime_pane(ui, d),
+            ResultTab::Diagnostics => diagnostics_pane(ui, d),
+        }
+    });
+}
+
+fn result_summary(ui: &mut egui::Ui, d: &V1EditorState) {
+    let Some(r) = &d.result else {
+        ui.weak("Run the request to see its result.");
+        return;
+    };
+    let (label, color) = match r.status {
+        RunStatus::Passed => ("PASSED", egui::Color32::from_rgb(0x49, 0x9C, 0x54)),
+        RunStatus::Failed => ("FAILED", egui::Color32::from_rgb(0xC7, 0x5A, 0x3B)),
+        RunStatus::Error => ("ERROR", ui.visuals().error_fg_color),
+    };
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).color(color).strong());
+        if let Some(http) = &r.http {
+            ui.label(format!("{} · {} ms · {} bytes", http.status, http.time_ms, http.bytes));
+        }
+    });
+    let (passed, total) = (r.assertions.iter().filter(|a| a.passed).count(), r.assertions.len());
+    if total > 0 {
+        ui.label(format!("{passed}/{total} assertion(s) passed"));
+    }
+    if !r.runtime.is_empty() {
+        ui.label(format!("{} runtime value(s) extracted", r.runtime.len()));
+    }
+}
+
+fn assertions_pane(ui: &mut egui::Ui, d: &V1EditorState) {
+    let Some(r) = &d.result else {
+        ui.weak("No run yet.");
+        return;
+    };
+    if r.assertions.is_empty() {
+        ui.weak("This request has no assertions.");
+        return;
+    }
+    for a in &r.assertions {
+        let (mark, color) = if a.passed {
+            ("✓", egui::Color32::from_rgb(0x49, 0x9C, 0x54))
+        } else {
+            ("✗", ui.visuals().error_fg_color)
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(mark).color(color).strong());
+            ui.label(&a.message);
+        });
+        if !a.passed {
+            if let Some(exp) = &a.expected {
+                ui.label(RichText::new(format!("    expected: {exp}")).small().weak());
+            }
+            if let Some(act) = &a.actual {
+                ui.label(RichText::new(format!("    actual:   {act}")).small().weak());
+            }
+        }
+    }
+}
+
+fn runtime_pane(ui: &mut egui::Ui, d: &V1EditorState) {
+    match &d.result {
+        Some(r) if !r.runtime.is_empty() => {
+            for (k, v) in &r.runtime {
+                ui.label(RichText::new(format!("{k} = {v}")).monospace());
+            }
+        }
+        Some(_) => {
+            ui.weak("No runtime values extracted.");
+        }
+        None => {
+            ui.weak("No run yet.");
+        }
+    }
+}
+
+fn diagnostics_pane(ui: &mut egui::Ui, d: &V1EditorState) {
+    // Validate/parse messages first, then the run's diagnostics.
     for msg in &d.diagnostics {
         ui.colored_label(ui.visuals().error_fg_color, msg);
     }
     if let Some(r) = &d.result {
-        let (label, color) = match r.status {
-            RunStatus::Passed => ("PASSED", egui::Color32::from_rgb(0x49, 0x9C, 0x54)),
-            RunStatus::Failed => ("FAILED", egui::Color32::from_rgb(0xC7, 0x5A, 0x3B)),
-            RunStatus::Error => ("ERROR", ui.visuals().error_fg_color),
-        };
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(label).color(color).strong());
-            if let Some(http) = &r.http {
-                ui.label(format!("{} · {} ms", http.status, http.time_ms));
-            }
-        });
-        for a in &r.assertions {
-            ui.label(format!("{} {}", if a.passed { "✓" } else { "✗" }, a.message));
-        }
-        for (k, v) in &r.runtime {
-            ui.label(RichText::new(format!("→ {k} = {v}")).small().weak());
-        }
         for diag in &r.diagnostics {
-            ui.label(RichText::new(format!("[{}] {}", diag.code, diag.message)).small().weak());
+            let color = if diag.severity == forge_core::reqv1::Severity::Error {
+                ui.visuals().error_fg_color
+            } else {
+                ui.visuals().warn_fg_color
+            };
+            ui.colored_label(color, format!("[{}] {}", diag.code, diag.message));
         }
+    }
+    if d.diagnostics.is_empty() && d.result.as_ref().map(|r| r.diagnostics.is_empty()).unwrap_or(true) {
+        ui.weak("No diagnostics.");
     }
 }
 

@@ -78,11 +78,13 @@ authoring a `*.request.json` with chill store access — the asset store on the
 left (data fixtures browsable to any JSON node, hooks/assertions/extractors/
 generators/mocks), each with an "insert" that drops a ready `ref`/`use`
 snippet into the JSON at the cursor, so you *reference* a stored dataset or
-assertion instead of rewriting it. JSON editor on the right with Validate
-(no-network), Save, and Run (over the bridge, HTTP or `mock`), plus a result
-strip (status, assertions, extracted runtime, diagnostics). Opened from the
-Assets panel's request list ("edit") or "New request". This closes the
-last-mile authoring UX; the format already supported the referencing.
+assertion instead of rewriting it. The right side is a Postman/Bruno-style vertical split (draggable): the
+request JSON on top (toolbar: Validate/Save/mock/environment picker/Run), and
+below it a tabbed results pane — **Result**, **Assertions** (its own pane,
+with a pass/fail count), **Runtime** (extracted vars), **Diagnostics**. Run
+goes over the bridge (HTTP or `mock`). Opened from the Assets panel's request
+list ("edit") or "New request". This closes the last-mile authoring UX; the
+format already supported the referencing.
 
 **Asset store view** (§11): `index.rs` scans a project into a `ProjectIndex`
 — assets grouped by kind, each data asset browsable to any JSON node, a
