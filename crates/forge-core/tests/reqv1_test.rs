@@ -71,7 +71,7 @@ async fn runs_over_http_with_hooks_assertions_and_extractor() {
     let engine = HttpEngine::new();
 
     let result = reqv1::run(
-        &doc, &root, &request_file(), env, &secret, &engine, RunMode::Http, CancellationToken::new(),
+        &doc, &root, &request_file(), env, &secret, &engine, RunMode::Http, CancellationToken::new(), Value::Null,
     )
     .await;
 
@@ -104,6 +104,7 @@ async fn failed_assertion_marks_run_failed() {
     let result = reqv1::run(
         &doc, &project_root(), &request_file(), env, &secret, &engine, RunMode::Http,
         CancellationToken::new(),
+        Value::Null,
     )
     .await;
 
@@ -123,6 +124,7 @@ async fn mock_mode_serves_the_document_mock_and_runs_after_response() {
     let result = reqv1::run(
         &doc, &project_root(), &request_file(), env, &secret, &engine, RunMode::Mock,
         CancellationToken::new(),
+        Value::Null,
     )
     .await;
 
@@ -171,4 +173,60 @@ fn schema_json_matches_the_shipped_schema() {
     )
     .expect("fixture schema");
     assert_eq!(shipped, fixture, "fixture schema drifted from schemas/request-v1.schema.json");
+}
+
+#[tokio::test]
+async fn matrix_runs_once_per_case_with_case_scoped_values() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/users"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&server)
+        .await;
+
+    let file = project_root().join("requests/users/create-cases.request.json");
+    let text = std::fs::read_to_string(&file).expect("read fixture");
+    let doc = reqv1::RequestDocument::parse(&text).expect("parses");
+    let env = json!({ "baseUrl": server.uri() });
+    let engine = HttpEngine::new();
+
+    let results = reqv1::run_matrix(
+        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Http,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("matrix resolves");
+
+    // Two cases in data:create-user-cases#/cases, both expect 201.
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|(_, r)| r.status == RunStatus::Passed), "{results:?}");
+    assert_eq!(results[0].0["case"]["name"], "valid");
+    assert_eq!(results[1].0["case"]["name"], "missingEmail");
+
+    // The server saw two distinct payloads — one per case.
+    let seen = server.received_requests().await.expect("recorded");
+    assert_eq!(seen.len(), 2);
+    let bodies: Vec<Value> =
+        seen.iter().map(|r| serde_json::from_slice(&r.body).unwrap()).collect();
+    assert!(bodies.contains(&json!({ "name": "Alice" })));
+    assert!(bodies.contains(&json!({ "name": "Bob" })));
+}
+
+#[test]
+fn matrix_binding_must_be_an_array() {
+    let doc = reqv1::RequestDocument::parse(
+        r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x"},
+            "matrix":{"case":{"value":42}},
+            "request":{"method":"GET","url":"http://x"}}"#,
+    )
+    .unwrap();
+    let root = project_root();
+    let project = reqv1::load_project(&root).unwrap();
+    let resolver = reqv1::RefResolver::new(&root, &project).unwrap();
+    let store = reqv1::DataStore::new(&resolver);
+    let err = reqv1::matrix::resolve_cases(
+        &doc.matrix, &resolver, &store, &root, &json!({}), &secret,
+    )
+    .unwrap_err();
+    assert!(err.0.iter().any(|d| d.message.contains("must resolve to an array")), "{err:?}");
 }

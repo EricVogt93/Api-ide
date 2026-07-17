@@ -4,3 +4,4 @@
 *.pdb
 .forge-local/
 *.secrets.json
+.env.local

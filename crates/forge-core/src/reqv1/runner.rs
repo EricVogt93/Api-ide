@@ -93,6 +93,18 @@ pub fn validate(
     env: Value,
     secret: &dyn Fn(&str) -> Option<String>,
 ) -> Result<ResolvedRequest, Vec<Diagnostic>> {
+    validate_case(doc, root, request_file, env, secret, Value::Null)
+}
+
+/// [`validate`] for one specific matrix case (`matrix` = the case object).
+pub fn validate_case(
+    doc: &RequestDocument,
+    root: &Path,
+    request_file: &Path,
+    env: Value,
+    secret: &dyn Fn(&str) -> Option<String>,
+    matrix: Value,
+) -> Result<ResolvedRequest, Vec<Diagnostic>> {
     let project = load_project(root).map_err(|d| vec![d])?;
     let resolver = RefResolver::new(root, &project).map_err(|e| e.0)?;
     let store = DataStore::new(&resolver);
@@ -102,7 +114,7 @@ pub fn validate(
         store: &store,
         base_dir,
         env,
-        matrix: Value::Null,
+        matrix,
         secret,
     };
     build_ir(doc, &inp).map_err(|e| e.0)
@@ -119,10 +131,11 @@ pub async fn run(
     engine: &HttpEngine,
     mode: RunMode,
     cancel: CancellationToken,
+    matrix: Value,
 ) -> RunResult {
     let started = std::time::Instant::now();
 
-    let mut ir = match validate(doc, root, request_file, env, secret) {
+    let mut ir = match validate_case(doc, root, request_file, env, secret, matrix) {
         Ok(ir) => ir,
         Err(diags) => {
             return RunResult {

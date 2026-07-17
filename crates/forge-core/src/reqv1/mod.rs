@@ -12,6 +12,7 @@
 pub mod build;
 pub mod diag;
 pub mod ir;
+pub mod matrix;
 pub mod model;
 pub mod pipeline;
 pub mod refs;
@@ -26,6 +27,8 @@ pub use model::{Binding, ProjectConfig, RequestDocument};
 pub use pipeline::{AssertionResult, ResponseView};
 pub use refs::{AssetDescriptor, RefResolver, RefScheme};
 pub use resolve::DataStore;
+pub use matrix::{run_matrix, MatrixCase};
 pub use runner::{
-    load_environment, load_project, run, validate, HttpResultView, RunMode, RunResult, RunStatus,
+    load_environment, load_project, run, validate, validate_case, HttpResultView, RunMode,
+    RunResult, RunStatus,
 };

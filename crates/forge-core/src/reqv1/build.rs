@@ -138,6 +138,17 @@ fn resolve_bindings(
     Ok(Value::Object(resolved))
 }
 
+/// Resolve one binding in isolation (no other bindings in scope). Used by
+/// matrix resolution, where `${bindings.*}` is not available (§13).
+pub fn resolve_single_binding(
+    binding: &Binding,
+    inp: &BuildInputs<'_>,
+) -> Result<Value, Diagnostic> {
+    let empty = Value::Object(Map::new());
+    let mut sink = SecretSink::default();
+    resolve_one_binding(binding, inp, &empty, &mut sink)
+}
+
 fn resolve_one_binding(
     binding: &Binding,
     inp: &BuildInputs<'_>,

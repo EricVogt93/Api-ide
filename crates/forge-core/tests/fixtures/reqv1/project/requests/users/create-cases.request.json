@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../schemas/request-v1.schema.json",
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": { "id": "users.create.cases", "name": "Create user (cases)" },
+  "matrix": {
+    "case": { "ref": "data:create-user-cases#/cases" }
+  },
+  "request": {
+    "method": "POST",
+    "url": "${env.baseUrl}/users",
+    "headers": [ { "name": "Content-Type", "value": "application/json", "enabled": true } ],
+    "body": { "type": "json", "value": "${matrix.case.payload}" }
+  },
+  "pipeline": [
+    { "phase": "afterResponse", "use": "builtin:assert-status@1", "with": { "expected": "${matrix.case.expectedStatus}" } }
+  ]
+}

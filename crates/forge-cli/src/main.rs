@@ -141,11 +141,24 @@ async fn main() {
     std::process::exit(code);
 }
 
-/// A secret provider from process environment: `${secret.API_TOKEN}` reads
-/// `API_TOKEN`. v1 default (§14). A gitignored .env.local loader is a small
-/// later addition on the same boundary.
-fn env_secret_provider(name: &str) -> Option<String> {
-    std::env::var(name).ok()
+/// v1 secret provider (§14): a gitignored `<root>/.env.local` (KEY=value
+/// lines) first, then the process environment. `${secret.API_TOKEN}` reads
+/// either source; .env.local wins on collision (declared order, no implicit
+/// precedence beyond it).
+fn make_secret_provider(root: &Path) -> impl Fn(&str) -> Option<String> {
+    let mut file_vars = std::collections::HashMap::new();
+    if let Ok(text) = std::fs::read_to_string(root.join(".env.local")) {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                file_vars.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    move |name: &str| file_vars.get(name).cloned().or_else(|| std::env::var(name).ok())
 }
 
 fn v1_root(args: &V1Args) -> PathBuf {
@@ -239,32 +252,58 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
 
     let engine = HttpEngine::new();
     let mode = if args.mock { RunMode::Mock } else { RunMode::Http };
-    let result = reqv1::run(
+    let secret = make_secret_provider(&root);
+    let results = match reqv1::run_matrix(
         &doc,
         &root,
         &args.common.request,
         env,
-        &env_secret_provider,
+        &secret,
         &engine,
         mode,
         CancellationToken::new(),
     )
-    .await;
+    .await
+    {
+        Ok(r) => r,
+        Err(errs) => {
+            for d in &errs.0 {
+                let loc = d.instance_path.as_deref().unwrap_or("");
+                eprintln!("  [{}] {} {}", d.code, loc, d.message);
+            }
+            return 2;
+        }
+    };
 
-    if let Some(http) = &result.http {
-        println!("{} — {} ({} ms, {} bytes)", result.request_id, http.status, http.time_ms, http.bytes);
+    let multi = results.len() > 1;
+    let mut worst = RunStatus::Passed;
+    for (case, result) in &results {
+        if multi {
+            println!("--- case {}", serde_json::to_string(case).unwrap_or_default());
+        }
+        if let Some(http) = &result.http {
+            println!(
+                "{} — {} ({} ms, {} bytes)",
+                result.request_id, http.status, http.time_ms, http.bytes
+            );
+        }
+        for a in &result.assertions {
+            println!("  {} {}", if a.passed { "✓" } else { "✗" }, a.message);
+        }
+        for (k, v) in &result.runtime {
+            println!("  → {k} = {v}");
+        }
+        for d in &result.diagnostics {
+            eprintln!("  [{}] {}", d.code, d.message);
+        }
+        println!("{:?}", result.status);
+        worst = match (worst, result.status) {
+            (_, RunStatus::Error) | (RunStatus::Error, _) => RunStatus::Error,
+            (_, RunStatus::Failed) | (RunStatus::Failed, _) => RunStatus::Failed,
+            _ => RunStatus::Passed,
+        };
     }
-    for a in &result.assertions {
-        println!("  {} {}", if a.passed { "✓" } else { "✗" }, a.message);
-    }
-    for (k, v) in &result.runtime {
-        println!("  → {k} = {v}");
-    }
-    for d in &result.diagnostics {
-        eprintln!("  [{}] {}", d.code, d.message);
-    }
-    println!("{:?}", result.status);
-    match result.status {
+    match worst {
         RunStatus::Passed => 0,
         RunStatus::Failed => 1,
         RunStatus::Error => 2,
