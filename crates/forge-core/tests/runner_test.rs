@@ -1354,3 +1354,42 @@ fn resolve_assertions_interpolates_variables_and_leaves_unresolved_verbatim() {
         }
     );
 }
+
+#[tokio::test]
+async fn resolve_loads_workspace_tls_material_and_concatenates_separate_key() {
+    let (dir, mut ws) = dummy_workspace();
+    std::fs::write(dir.path().join("client.crt"), "CERT\n").unwrap();
+    std::fs::write(dir.path().join("client.key"), "KEY\n").unwrap();
+    std::fs::write(dir.path().join("ca.pem"), "CA\n").unwrap();
+    ws.meta.settings.tls = Some(forge_core::model::TlsSettings {
+        client_cert: Some("client.crt".to_string()),
+        client_key: Some("client.key".to_string()),
+        ca_bundle: Some("ca.pem".to_string()),
+    });
+
+    let def = RequestDef::new("R", Method::Get, "http://example.test/");
+    let engine = HttpEngine::new();
+    let resolved = resolve_request(&ws, &def, &Vec::new(), &VarScopes::new(), &engine)
+        .await
+        .expect("resolve should succeed");
+
+    assert_eq!(resolved.client_pem.as_deref(), Some(b"CERT\nKEY\n".as_slice()));
+    assert_eq!(resolved.extra_roots_pem.as_deref(), Some(b"CA\n".as_slice()));
+}
+
+#[tokio::test]
+async fn resolve_fails_clearly_when_a_tls_file_is_missing() {
+    let (_dir, mut ws) = dummy_workspace();
+    ws.meta.settings.tls = Some(forge_core::model::TlsSettings {
+        client_cert: Some("does-not-exist.pem".to_string()),
+        client_key: None,
+        ca_bundle: None,
+    });
+
+    let def = RequestDef::new("R", Method::Get, "http://example.test/");
+    let engine = HttpEngine::new();
+    let err = resolve_request(&ws, &def, &Vec::new(), &VarScopes::new(), &engine)
+        .await
+        .expect_err("missing TLS file must fail resolution");
+    assert!(err.to_string().contains("does-not-exist.pem"), "unexpected error: {err}");
+}

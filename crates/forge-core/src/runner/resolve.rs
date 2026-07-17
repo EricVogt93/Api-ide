@@ -148,6 +148,7 @@ pub async fn resolve_request(
     let max_redirects = def.settings.max_redirects.unwrap_or(ws_settings.max_redirects);
     let verify_tls = def.settings.verify_tls.unwrap_or(ws_settings.verify_tls);
     let proxy = ws_settings.proxy.as_ref().map(|p| p.url.clone());
+    let (client_pem, extra_roots_pem) = load_tls_material(workspace).await?;
 
     Ok(ResolvedRequest {
         method: def.method,
@@ -159,7 +160,46 @@ pub async fn resolve_request(
         max_redirects,
         verify_tls,
         proxy,
+        client_pem,
+        extra_roots_pem,
     })
+}
+
+/// Read the workspace's mTLS client cert/key and extra-CA PEM files. A
+/// separate `client_key` file is concatenated onto the cert PEM, since the
+/// engine consumes one combined buffer.
+async fn load_tls_material(
+    workspace: &Workspace,
+) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), ResolveError> {
+    let Some(tls) = &workspace.meta.settings.tls else { return Ok((None, None)) };
+
+    let read = |path: &str| {
+        let resolved = resolve_body_path(workspace, path);
+        async move {
+            tokio::fs::read(&resolved).await.map_err(|e| {
+                ResolveError::Auth(format!("failed to read TLS file {}: {e}", resolved.display()))
+            })
+        }
+    };
+
+    let client_pem = match (&tls.client_cert, &tls.client_key) {
+        (Some(cert), key) => {
+            let mut pem = read(cert).await?;
+            if let Some(key) = key {
+                if !pem.ends_with(b"\n") {
+                    pem.push(b'\n');
+                }
+                pem.extend(read(key).await?);
+            }
+            Some(pem)
+        }
+        (None, _) => None,
+    };
+    let extra_roots_pem = match &tls.ca_bundle {
+        Some(path) => Some(read(path).await?),
+        None => None,
+    };
+    Ok((client_pem, extra_roots_pem))
 }
 
 /// Interpolate `{{variables}}` in the string-valued parts of assertions

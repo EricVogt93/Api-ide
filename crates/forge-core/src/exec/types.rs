@@ -21,6 +21,10 @@ pub struct ResolvedRequest {
     pub verify_tls: bool,
     /// Explicit proxy URL; `None` = use system/workspace default client.
     pub proxy: Option<String>,
+    /// Client certificate + private key as a combined PEM buffer (mTLS).
+    pub client_pem: Option<Vec<u8>>,
+    /// Extra trusted root CAs as a PEM bundle, on top of the system store.
+    pub extra_roots_pem: Option<Vec<u8>>,
 }
 
 impl ResolvedRequest {
@@ -35,6 +39,8 @@ impl ResolvedRequest {
             max_redirects: 10,
             verify_tls: true,
             proxy: None,
+            client_pem: None,
+            extra_roots_pem: None,
         }
     }
 

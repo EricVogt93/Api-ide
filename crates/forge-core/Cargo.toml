@@ -45,3 +45,6 @@ walkdir.workspace = true
 [dev-dependencies]
 wiremock.workspace = true
 pretty_assertions.workspace = true
+rcgen = "0.14.8"
+tokio-rustls = "0.26.4"
+rustls-pemfile = "2.2.0"

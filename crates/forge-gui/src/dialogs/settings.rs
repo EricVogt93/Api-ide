@@ -7,7 +7,7 @@
 //! persisted to `forge.json` rather than taking effect purely in memory.
 
 use egui::{TextEdit, Ui, Window};
-use forge_core::model::{ProxyConfig, WorkspaceSettings};
+use forge_core::model::{ProxyConfig, TlsSettings, WorkspaceSettings};
 
 use crate::keymap;
 use crate::state::{AppState, StatusMessage};
@@ -48,6 +48,9 @@ struct HttpDraft {
     proxy_url: String,
     proxy_no_proxy: String,
     user_agent: String,
+    tls_client_cert: String,
+    tls_client_key: String,
+    tls_ca_bundle: String,
 }
 
 impl HttpDraft {
@@ -61,6 +64,13 @@ impl HttpDraft {
             proxy_url: s.proxy.as_ref().map(|p| p.url.clone()).unwrap_or_default(),
             proxy_no_proxy: s.proxy.as_ref().map(|p| p.no_proxy.clone()).unwrap_or_default(),
             user_agent: s.user_agent.clone().unwrap_or_default(),
+            tls_client_cert: s
+                .tls
+                .as_ref()
+                .and_then(|t| t.client_cert.clone())
+                .unwrap_or_default(),
+            tls_client_key: s.tls.as_ref().and_then(|t| t.client_key.clone()).unwrap_or_default(),
+            tls_ca_bundle: s.tls.as_ref().and_then(|t| t.ca_bundle.clone()).unwrap_or_default(),
         }
     }
 
@@ -76,6 +86,18 @@ impl HttpDraft {
                 None
             },
             user_agent: if self.user_agent.is_empty() { None } else { Some(self.user_agent.clone()) },
+            tls: {
+                let opt = |s: &str| {
+                    let s = s.trim();
+                    if s.is_empty() { None } else { Some(s.to_string()) }
+                };
+                let tls = TlsSettings {
+                    client_cert: opt(&self.tls_client_cert),
+                    client_key: opt(&self.tls_client_key),
+                    ca_bundle: opt(&self.tls_ca_bundle),
+                };
+                if tls.is_empty() { None } else { Some(tls) }
+            },
         }
     }
 }
@@ -232,6 +254,14 @@ fn http_tab(ui: &mut Ui, draft: &mut HttpDraft) {
     });
 
     ui.add_space(8.0);
+    ui.label("Client certificate (mTLS) — PEM paths, workspace-relative or absolute:");
+    egui::Grid::new("http-tls-grid").num_columns(3).spacing([8.0, 8.0]).show(ui, |ui| {
+        path_row(ui, "Client cert", &mut draft.tls_client_cert, "certs/client.pem");
+        path_row(ui, "Client key", &mut draft.tls_client_key, "(empty if key is in the cert file)");
+        path_row(ui, "Extra CA bundle", &mut draft.tls_ca_bundle, "certs/internal-ca.pem");
+    });
+
+    ui.add_space(8.0);
     ui.checkbox(&mut draft.proxy_enabled, "Use a proxy");
     ui.add_enabled_ui(draft.proxy_enabled, |ui| {
         egui::Grid::new("http-proxy-grid").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
@@ -244,6 +274,18 @@ fn http_tab(ui: &mut Ui, draft: &mut HttpDraft) {
             ui.end_row();
         });
     });
+}
+
+/// One "label / editable path / Browse…" row of the TLS grid.
+fn path_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
+    ui.label(label);
+    ui.add(TextEdit::singleline(value).hint_text(hint).desired_width(260.0));
+    if ui.button("Browse…").clicked() {
+        if let Some(path) = rfd::FileDialog::new().add_filter("PEM", &["pem", "crt", "key"]).pick_file() {
+            *value = path.display().to_string();
+        }
+    }
+    ui.end_row();
 }
 
 fn keymap_tab(ui: &mut Ui) {

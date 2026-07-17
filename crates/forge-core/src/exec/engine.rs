@@ -21,12 +21,23 @@ use crate::model::Method;
 
 /// Identifies a distinct `reqwest::Client` configuration worth caching:
 /// clients are relatively expensive to build (connection pools, TLS
-/// config) so we keep one per `(verify_tls, proxy)` combination rather than
-/// building a fresh one per request.
+/// config) so we keep one per `(verify_tls, proxy, tls material)`
+/// combination rather than building a fresh one per request. TLS material
+/// is keyed by a content hash, so a rotated cert file yields a new client
+/// without holding the PEM bytes in the key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ClientKey {
     verify_tls: bool,
     proxy: Option<String>,
+    tls_fingerprint: u64,
+}
+
+fn tls_fingerprint(client_pem: Option<&[u8]>, extra_roots_pem: Option<&[u8]>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    client_pem.hash(&mut h);
+    extra_roots_pem.hash(&mut h);
+    h.finish()
 }
 
 /// Executes [`ResolvedRequest`]s over HTTP, owning a cookie jar and a small
@@ -68,7 +79,12 @@ impl HttpEngine {
     ) -> Result<ExecutionResult, ExecError> {
         let start_url =
             Url::parse(&req.url).map_err(|e| ExecError::InvalidUrl(format!("{e}: {}", req.url)))?;
-        let client = self.client_for(req.verify_tls, req.proxy.as_deref())?;
+        let client = self.client_for(
+            req.verify_tls,
+            req.proxy.as_deref(),
+            req.client_pem.as_deref(),
+            req.extra_roots_pem.as_deref(),
+        )?;
         let timeout = req.timeout;
 
         match tokio::time::timeout(timeout, self.run(&req, start_url, client, cancel)).await {
@@ -77,10 +93,17 @@ impl HttpEngine {
         }
     }
 
-    fn client_for(&self, verify_tls: bool, proxy: Option<&str>) -> Result<reqwest::Client, ExecError> {
+    fn client_for(
+        &self,
+        verify_tls: bool,
+        proxy: Option<&str>,
+        client_pem: Option<&[u8]>,
+        extra_roots_pem: Option<&[u8]>,
+    ) -> Result<reqwest::Client, ExecError> {
         let key = ClientKey {
             verify_tls,
             proxy: proxy.map(|s| s.to_string()),
+            tls_fingerprint: tls_fingerprint(client_pem, extra_roots_pem),
         };
 
         if let Some(client) = self.lock_clients().get(&key) {
@@ -100,6 +123,18 @@ impl HttpEngine {
 
         if !key.verify_tls {
             builder = builder.danger_accept_invalid_certs(true);
+        }
+        if let Some(pem) = client_pem {
+            let identity = reqwest::Identity::from_pem(pem)
+                .map_err(|e| ExecError::Http(format!("invalid client certificate/key PEM: {e}")))?;
+            builder = builder.identity(identity);
+        }
+        if let Some(pem) = extra_roots_pem {
+            let certs = reqwest::Certificate::from_pem_bundle(pem)
+                .map_err(|e| ExecError::Http(format!("invalid CA bundle PEM: {e}")))?;
+            for cert in certs {
+                builder = builder.add_root_certificate(cert);
+            }
         }
         if let Some(proxy_url) = &key.proxy {
             let proxy = reqwest::Proxy::all(proxy_url)
