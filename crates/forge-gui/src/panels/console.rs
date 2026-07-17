@@ -266,9 +266,23 @@ fn connect(state: &mut AppState, bridge: &Bridge) {
     });
     state.console.active_conn = Some(conn_id);
 
+    // Workspace mTLS/CA settings apply to protocol sessions too.
+    let tls = match &state.workspace {
+        Some(ws) => {
+            match forge_core::protocols::TlsMaterial::from_settings(&ws.root, ws.meta.settings.tls.as_ref()) {
+                Ok(material) => material,
+                Err(e) => {
+                    state.status = Some(StatusMessage::error(format!("TLS settings: {e}")));
+                    return;
+                }
+            }
+        }
+        None => forge_core::protocols::TlsMaterial::default(),
+    };
+
     match protocol {
-        Protocol::Ws => bridge.send(Cmd::WsConnect { conn_id, url, headers }),
-        Protocol::Sse => bridge.send(Cmd::SseSubscribe { conn_id, url, headers }),
+        Protocol::Ws => bridge.send(Cmd::WsConnect { conn_id, url, headers, tls }),
+        Protocol::Sse => bridge.send(Cmd::SseSubscribe { conn_id, url, headers, tls }),
     }
 }
 

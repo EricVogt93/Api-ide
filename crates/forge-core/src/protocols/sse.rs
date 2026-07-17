@@ -52,8 +52,27 @@ impl Drop for SseSession {
 
 /// Issues a `GET` request to `url` (with `Accept: text/event-stream`) and
 /// streams the response as SSE events.
-pub async fn subscribe(url: &str, headers: &[(String, String)]) -> Result<SseSession, ProtocolError> {
-    let client = reqwest::Client::new();
+pub async fn subscribe(
+    url: &str,
+    headers: &[(String, String)],
+    tls: &super::TlsMaterial,
+) -> Result<SseSession, ProtocolError> {
+    let mut builder = reqwest::Client::builder();
+    if let Some(pem) = &tls.client_pem {
+        let identity = reqwest::Identity::from_pem(pem)
+            .map_err(|e| ProtocolError::Connect(format!("invalid client certificate/key PEM: {e}")))?;
+        builder = builder.identity(identity);
+    }
+    if let Some(pem) = &tls.extra_roots_pem {
+        let certs = reqwest::Certificate::from_pem_bundle(pem)
+            .map_err(|e| ProtocolError::Connect(format!("invalid CA bundle PEM: {e}")))?;
+        for cert in certs {
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+    let client = builder
+        .build()
+        .map_err(|e| ProtocolError::Connect(format!("failed to build HTTP client: {e}")))?;
     let mut request = client
         .get(url)
         .header(reqwest::header::ACCEPT, "text/event-stream");

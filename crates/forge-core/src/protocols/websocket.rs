@@ -67,7 +67,11 @@ impl Drop for WsSession {
 
 /// Connects to `url`, sending `headers` as additional request headers
 /// during the handshake.
-pub async fn connect(url: &str, headers: &[(String, String)]) -> Result<WsSession, ProtocolError> {
+pub async fn connect(
+    url: &str,
+    headers: &[(String, String)],
+    tls: &super::TlsMaterial,
+) -> Result<WsSession, ProtocolError> {
     let mut request = url
         .into_client_request()
         .map_err(|e| ProtocolError::Connect(e.to_string()))?;
@@ -80,9 +84,20 @@ pub async fn connect(url: &str, headers: &[(String, String)]) -> Result<WsSessio
         request.headers_mut().insert(header_name, header_value);
     }
 
-    let (mut ws_stream, _response) = tokio_tungstenite::connect_async(request)
-        .await
-        .map_err(|e| ProtocolError::Connect(e.to_string()))?;
+    // Only build a custom TLS connector when the workspace configured
+    // client-cert / extra-CA material; otherwise keep the default stack.
+    let connector = if tls.is_empty() {
+        None
+    } else {
+        Some(tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(
+            super::rustls_client_config(tls)?,
+        )))
+    };
+
+    let (mut ws_stream, _response) =
+        tokio_tungstenite::connect_async_tls_with_config(request, None, false, connector)
+            .await
+            .map_err(|e| ProtocolError::Connect(e.to_string()))?;
 
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<WsOutgoing>();
     let (events_tx, events_rx) = mpsc::unbounded_channel::<WsEvent>();

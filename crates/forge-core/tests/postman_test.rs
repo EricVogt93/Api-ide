@@ -3,7 +3,7 @@
 
 use forge_core::convert::{parse_postman, parse_postman_environment, ImportedItem};
 use forge_core::model::{
-    ApiKeyPlacement, AuthConfig, BodyDef, Method, ParamKind, PartContent, RawLanguage,
+    ApiKeyPlacement, AuthConfig, BodyDef, Method, ParamKind, PartContent,
 };
 
 const COLLECTION: &str = include_str!("fixtures/postman_collection.json");

@@ -48,7 +48,7 @@ async fn websocket_connect_echo_and_close() {
     });
 
     let url = format!("ws://{addr}/");
-    let mut session = connect(&url, &[]).await.expect("client connect");
+    let mut session = connect(&url, &[], &Default::default()).await.expect("client connect");
 
     let first = session.events.recv().await.expect("connected event");
     assert!(matches!(first, WsEvent::Connected), "got {first:?}");
@@ -105,7 +105,7 @@ async fn sse_subscribe_parses_events_then_closes() {
     });
 
     let url = format!("http://{addr}/events");
-    let mut session = subscribe(&url, &[]).await.expect("subscribe");
+    let mut session = subscribe(&url, &[], &Default::default()).await.expect("subscribe");
 
     let open = session.events.recv().await.expect("open event");
     assert!(matches!(open, SseEvent::Open), "got {open:?}");

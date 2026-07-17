@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use forge_core::exec::{HttpEngine, StoredCookie};
-use forge_core::protocols::{sse, websocket, SseEvent, WsEvent, WsOutgoing};
+use forge_core::protocols::{sse, websocket, SseEvent, TlsMaterial, WsEvent, WsOutgoing};
 use forge_core::runner::{self, CancellationToken, RunEvent, RunOptions, RunScope};
 use forge_core::store::Workspace;
 
@@ -20,13 +20,13 @@ pub enum Cmd {
     Run { run_id: u64, workspace: Box<Workspace>, scope: RunScope, options: RunOptions },
     Cancel { run_id: u64 },
     /// Open a WebSocket connection, forwarding events back as `Evt::Ws`.
-    WsConnect { conn_id: u64, url: String, headers: Vec<(String, String)> },
+    WsConnect { conn_id: u64, url: String, headers: Vec<(String, String)>, tls: TlsMaterial },
     /// Send a text message over an open WebSocket connection.
     WsSend { conn_id: u64, msg: String },
     /// Request a clean close of a WebSocket connection.
     WsClose { conn_id: u64 },
     /// Subscribe to an SSE stream, forwarding events back as `Evt::Sse`.
-    SseSubscribe { conn_id: u64, url: String, headers: Vec<(String, String)> },
+    SseSubscribe { conn_id: u64, url: String, headers: Vec<(String, String)>, tls: TlsMaterial },
     /// Stop consuming an SSE stream.
     SseClose { conn_id: u64 },
     /// Compile .proto files and call a unary gRPC method; the outcome comes
@@ -203,12 +203,12 @@ fn bridge_main(
                         ctx.request_repaint();
                     });
                 }
-                Cmd::WsConnect { conn_id, url, headers } => {
+                Cmd::WsConnect { conn_id, url, headers, tls } => {
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     let ws_conns = ws_conns.clone();
                     tokio::spawn(async move {
-                        match websocket::connect(&url, &headers).await {
+                        match websocket::connect(&url, &headers, &tls).await {
                             Ok(mut session) => {
                                 ws_conns.lock().unwrap_or_else(|p| p.into_inner()).insert(conn_id, session.outgoing.clone());
                                 while let Some(event) = session.events.recv().await {
@@ -238,14 +238,14 @@ fn bridge_main(
                         let _ = tx.send(WsOutgoing::Close);
                     }
                 }
-                Cmd::SseSubscribe { conn_id, url, headers } => {
+                Cmd::SseSubscribe { conn_id, url, headers, tls } => {
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     let sse_cancels = sse_cancels.clone();
                     let cancel = CancellationToken::new();
                     sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).insert(conn_id, cancel.clone());
                     tokio::spawn(async move {
-                        match sse::subscribe(&url, &headers).await {
+                        match sse::subscribe(&url, &headers, &tls).await {
                             Ok(mut session) => loop {
                                 tokio::select! {
                                     _ = cancel.cancelled() => break,
