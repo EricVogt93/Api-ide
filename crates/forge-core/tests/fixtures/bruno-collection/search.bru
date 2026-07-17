@@ -1,0 +1,23 @@
+meta {
+  name: Search
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/graphql
+  body: graphql
+}
+
+auth:awsv4 {
+  accessKeyId: AKIA123
+}
+
+body:graphql {
+  query Charges($after: String) {
+    charges(after: $after) { id }
+  }
+}
+
+body:graphql:vars {
+  { "after": null }
+}

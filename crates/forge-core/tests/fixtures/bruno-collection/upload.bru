@@ -1,0 +1,15 @@
+meta {
+  name: Upload Receipt
+  seq: 3
+}
+
+put {
+  url: {{baseUrl}}/v1/receipts
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(/tmp/receipt.pdf) @contentType(application/pdf)
+  note: Q3 receipt
+}

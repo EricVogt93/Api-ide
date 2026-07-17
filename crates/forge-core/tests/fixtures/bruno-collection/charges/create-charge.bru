@@ -1,0 +1,50 @@
+meta {
+  name: Create Charge
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/charges
+  body: json
+  auth: inherit
+}
+
+headers {
+  Content-Type: application/json
+  ~X-Debug: 1
+}
+
+params:query {
+  expand: customer
+  ~dryRun: true
+}
+
+body:json {
+  {
+    "amount": 1250,
+    "currency": "eur"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.currency: eq eur
+  res.responseTime: lte 2000
+  res.body.weird: isJson
+}
+
+vars:post-response {
+  chargeId: res.body.id
+  fullBody: res.body
+  ~ignored: res.body.x
+  weird: res.headers.etag
+}
+
+script:post-response {
+  bru.setVar("x", res.body.x);
+}
+
+docs {
+  Creates a charge.
+}

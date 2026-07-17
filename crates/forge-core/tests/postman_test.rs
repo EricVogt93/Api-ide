@@ -1,7 +1,7 @@
 //! Integration tests for the Postman collection / environment importers,
 //! driven by a realistic v2.1 export fixture.
 
-use forge_core::convert::{parse_postman, parse_postman_environment, PostmanItem};
+use forge_core::convert::{parse_postman, parse_postman_environment, ImportedItem};
 use forge_core::model::{
     ApiKeyPlacement, AuthConfig, BodyDef, Method, ParamKind, PartContent, RawLanguage,
 };
@@ -28,7 +28,7 @@ fn imports_collection_metadata_variables_and_auth() {
 fn imports_folder_tree_with_folder_level_auth() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
 
-    let PostmanItem::Folder { name, description, auth, items } = &import.items[0] else {
+    let ImportedItem::Folder { name, description, auth, items } = &import.items[0] else {
         panic!("first item should be the Charges folder");
     };
     assert_eq!(name, "Charges");
@@ -47,8 +47,8 @@ fn imports_folder_tree_with_folder_level_auth() {
 #[test]
 fn imports_request_with_headers_query_params_and_json_body() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
-    let PostmanItem::Folder { items, .. } = &import.items[0] else { panic!("folder") };
-    let PostmanItem::Request(def) = &items[0] else { panic!("request") };
+    let ImportedItem::Folder { items, .. } = &import.items[0] else { panic!("folder") };
+    let ImportedItem::Request(def) = &items[0] else { panic!("request") };
 
     assert_eq!(def.name, "Create Charge");
     assert_eq!(def.method, Method::Post);
@@ -75,8 +75,8 @@ fn imports_request_with_headers_query_params_and_json_body() {
 #[test]
 fn imports_path_variables_as_path_params() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
-    let PostmanItem::Folder { items, .. } = &import.items[0] else { panic!("folder") };
-    let PostmanItem::Request(def) = &items[1] else { panic!("request") };
+    let ImportedItem::Folder { items, .. } = &import.items[0] else { panic!("folder") };
+    let ImportedItem::Request(def) = &items[1] else { panic!("request") };
 
     assert_eq!(def.name, "Get Charge");
     assert_eq!(def.url, "{{baseUrl}}/v1/charges/:chargeId");
@@ -89,7 +89,7 @@ fn imports_path_variables_as_path_params() {
 #[test]
 fn imports_basic_auth_and_urlencoded_body() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
-    let PostmanItem::Request(def) = &import.items[1] else { panic!("request") };
+    let ImportedItem::Request(def) = &import.items[1] else { panic!("request") };
 
     assert_eq!(def.name, "Login");
     assert_eq!(
@@ -105,7 +105,7 @@ fn imports_basic_auth_and_urlencoded_body() {
 #[test]
 fn imports_oauth2_client_credentials_and_multipart_body() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
-    let PostmanItem::Request(def) = &import.items[2] else { panic!("request") };
+    let ImportedItem::Request(def) = &import.items[2] else { panic!("request") };
 
     assert_eq!(def.name, "Upload Receipt");
     assert_eq!(
@@ -130,7 +130,7 @@ fn imports_oauth2_client_credentials_and_multipart_body() {
 #[test]
 fn imports_graphql_body_and_drops_unsupported_auth_with_a_note() {
     let import = parse_postman(COLLECTION).expect("fixture should parse");
-    let PostmanItem::Request(def) = &import.items[3] else { panic!("request") };
+    let ImportedItem::Request(def) = &import.items[3] else { panic!("request") };
 
     assert_eq!(def.name, "Search");
     assert_eq!(def.auth, AuthConfig::None, "unsupported ntlm auth should drop to None");

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use egui::Window;
 
 use forge_core::convert::{
-    parse_postman, parse_postman_environment, PostmanError, PostmanImport, PostmanItem,
+    parse_postman, parse_postman_environment, PostmanError, ImportedCollection, ImportedItem,
 };
 use forge_core::model::{Environment, FolderMeta, SecretValues};
 use forge_core::store::{
@@ -20,7 +20,7 @@ use crate::state::{AppState, StatusMessage};
 
 /// What the picked file turned out to contain.
 enum Parsed {
-    Collection(PostmanImport),
+    Collection(ImportedCollection),
     Environment(Environment, SecretValues),
 }
 
@@ -198,9 +198,9 @@ fn do_import(workspace: &Workspace, dialog: &mut PostmanImportState) -> Result<S
     }
 }
 
-fn import_collection(
+pub(crate) fn import_collection(
     workspace: &Workspace,
-    import: &PostmanImport,
+    import: &ImportedCollection,
     name: &str,
 ) -> Result<(), String> {
     let col_dir = create_collection(&workspace.root, name).map_err(|e| e.to_string())?;
@@ -218,15 +218,15 @@ fn import_collection(
 
 /// Write folders/requests into `dir`, returning the child entry names in
 /// Postman order for the parent's `order` array.
-fn write_items(dir: &Path, items: &[PostmanItem]) -> Result<Vec<String>, String> {
+fn write_items(dir: &Path, items: &[ImportedItem]) -> Result<Vec<String>, String> {
     let mut order = Vec::new();
     for item in items {
         match item {
-            PostmanItem::Request(def) => {
+            ImportedItem::Request(def) => {
                 let file = create_request(dir, def).map_err(|e| e.to_string())?;
                 order.push(file_name(&file));
             }
-            PostmanItem::Folder { name, description, auth, items } => {
+            ImportedItem::Folder { name, description, auth, items } => {
                 let sub = create_folder(dir, name).map_err(|e| e.to_string())?;
                 let sub_order = write_items(&sub, items)?;
                 let meta = FolderMeta {
@@ -248,7 +248,7 @@ fn file_name(path: &Path) -> String {
     path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-fn reload_workspace(state: &mut AppState) {
+pub(crate) fn reload_workspace(state: &mut AppState) {
     let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else { return };
     match Workspace::load(&root) {
         Ok(ws) => state.workspace = Some(ws),

@@ -5,7 +5,7 @@
 //! path params, all body modes, basic/bearer/apikey/oauth2 auth, `{{var}}`
 //! syntax is shared verbatim). Postman-only features that can't be mapped —
 //! `pm.*` scripts, saved example responses, unsupported auth types — are
-//! dropped and reported in [`PostmanImport::skipped`] so the caller can show
+//! dropped and reported in [`ImportedCollection::skipped`] so the caller can show
 //! an honest summary instead of pretending a lossless import.
 
 use std::collections::BTreeMap;
@@ -29,27 +29,27 @@ pub enum PostmanError {
 
 /// Result of parsing a Postman collection file.
 #[derive(Debug)]
-pub struct PostmanImport {
+pub struct ImportedCollection {
     pub name: String,
     pub description: String,
     /// Collection-level `{{variables}}` (name → current/initial value).
     pub variables: BTreeMap<String, String>,
     /// Collection-level auth (`Inherit` when absent).
     pub auth: AuthConfig,
-    pub items: Vec<PostmanItem>,
+    pub items: Vec<ImportedItem>,
     /// Human-readable notes about dropped Postman-only features.
     pub skipped: Vec<String>,
 }
 
-impl PostmanImport {
+impl ImportedCollection {
     /// Total number of requests across the whole tree.
     pub fn request_count(&self) -> usize {
-        fn count(items: &[PostmanItem]) -> usize {
+        fn count(items: &[ImportedItem]) -> usize {
             items
                 .iter()
                 .map(|i| match i {
-                    PostmanItem::Request(_) => 1,
-                    PostmanItem::Folder { items, .. } => count(items),
+                    ImportedItem::Request(_) => 1,
+                    ImportedItem::Folder { items, .. } => count(items),
                 })
                 .sum()
         }
@@ -58,18 +58,18 @@ impl PostmanImport {
 }
 
 #[derive(Debug)]
-pub enum PostmanItem {
+pub enum ImportedItem {
     Folder {
         name: String,
         description: String,
         auth: AuthConfig,
-        items: Vec<PostmanItem>,
+        items: Vec<ImportedItem>,
     },
     Request(Box<RequestDef>),
 }
 
 /// Parse a Postman Collection v2.0/v2.1 JSON document.
-pub fn parse_postman(text: &str) -> Result<PostmanImport, PostmanError> {
+pub fn parse_postman(text: &str) -> Result<ImportedCollection, PostmanError> {
     let root: Value = serde_json::from_str(text)?;
     let info = &root["info"];
     let name = info["name"].as_str().unwrap_or_default().to_string();
@@ -92,7 +92,7 @@ pub fn parse_postman(text: &str) -> Result<PostmanImport, PostmanError> {
 
     let auth = parse_auth(&root["auth"], "collection", &mut skipped);
 
-    Ok(PostmanImport {
+    Ok(ImportedCollection {
         name,
         description: description_text(&info["description"]),
         variables,
@@ -139,7 +139,7 @@ pub fn parse_postman_environment(text: &str) -> Result<(Environment, SecretValue
 // Item tree
 // ---------------------------------------------------------------------
 
-fn parse_items(items: &Value, path: &str, skipped: &mut Vec<String>) -> Vec<PostmanItem> {
+fn parse_items(items: &Value, path: &str, skipped: &mut Vec<String>) -> Vec<ImportedItem> {
     let Some(arr) = items.as_array() else { return Vec::new() };
     let mut out = Vec::new();
     for item in arr {
@@ -149,14 +149,14 @@ fn parse_items(items: &Value, path: &str, skipped: &mut Vec<String>) -> Vec<Post
 
         if item["item"].is_array() {
             let auth = parse_auth(&item["auth"], &item_path, skipped);
-            out.push(PostmanItem::Folder {
+            out.push(ImportedItem::Folder {
                 description: description_text(&item["description"]),
                 auth,
                 items: parse_items(&item["item"], &item_path, skipped),
                 name,
             });
         } else if item["request"].is_object() || item["request"].is_string() {
-            out.push(PostmanItem::Request(Box::new(parse_request(item, &item_path, skipped))));
+            out.push(ImportedItem::Request(Box::new(parse_request(item, &item_path, skipped))));
         } else {
             skipped.push(format!("{item_path}: unrecognized item, skipped"));
         }

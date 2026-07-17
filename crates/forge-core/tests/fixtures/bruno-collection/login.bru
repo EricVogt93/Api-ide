@@ -1,0 +1,20 @@
+meta {
+  name: Login
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/oauth/login
+  body: form-urlencoded
+  auth: basic
+}
+
+auth:basic {
+  username: {{user}}
+  password: {{pass}}
+}
+
+body:form-urlencoded {
+  grant_type: password
+  ~otp: 000000
+}

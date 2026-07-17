@@ -269,6 +269,10 @@ impl ForgeApp {
                     self.state.dialogs.postman_import.open();
                     ui.close();
                 }
+                if ui.button("Import Bruno...").clicked() {
+                    self.state.dialogs.bruno_import.open();
+                    ui.close();
+                }
                 ui.separator();
                 if ui.add(Self::action_button(ui.ctx(), ActionId::OpenSettings)).clicked() {
                     self.state.dialogs.settings.open = true;
