@@ -1,0 +1,11 @@
+{
+  "$schema": "../../../schemas/request-v1.schema.json",
+  "formatVersion": 1, "kind": "request",
+  "meta": { "id": "seq.b", "name": "Me" },
+  "request": { "method": "GET", "url": "${env.baseUrl}/me",
+    "headers": [ { "name": "Authorization", "value": "Bearer ${runtime.authToken}", "enabled": true } ] },
+  "pipeline": [
+    { "phase": "afterResponse", "use": "builtin:assert-status@1", "with": { "expected": 200 } },
+    { "phase": "afterResponse", "use": "builtin:assert-schema@1", "with": { "schema": { "type": "object", "required": ["user"], "properties": { "user": { "type": "string" } } } } }
+  ]
+}

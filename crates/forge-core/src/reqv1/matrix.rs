@@ -41,7 +41,7 @@ pub fn resolve_cases(
     let mut errors = Vec::new();
     for (name, binding) in matrix {
         let empty = Value::Object(Map::new());
-        let inp = BuildInputs { resolver, store, base_dir, env: env.clone(), matrix: empty, secret };
+        let inp = BuildInputs { resolver, store, base_dir, env: env.clone(), matrix: empty, runtime: Value::Object(Default::default()), secret };
         match super::build::resolve_single_binding(binding, &inp) {
             Ok(Value::Array(items)) => arrays.push((name.clone(), items)),
             Ok(other) => errors.push(

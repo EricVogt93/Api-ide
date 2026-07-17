@@ -138,6 +138,25 @@ pub fn run_after_response(
             let expected = with.get("value").cloned();
             Ok((vec![assert_json_path(res, path, op, expected)], BTreeMap::new()))
         }
+        "assert-schema" => {
+            let schema = with.get("schema").cloned().unwrap_or(Value::Null);
+            let r = match res.json() {
+                None => AssertionResult::fail(
+                    "response body is not JSON".to_string(),
+                    Value::Bool(true),
+                    Value::Bool(false),
+                ),
+                Some(body) => match crate::assert::schema::validate(&schema, &body) {
+                    Ok(()) => AssertionResult::pass("body matches JSON Schema"),
+                    Err(errors) => AssertionResult::fail(
+                        format!("body does not match schema: {}", errors.join("; ")),
+                        Value::Null,
+                        Value::Array(errors.into_iter().map(Value::from).collect()),
+                    ),
+                },
+            };
+            Ok((vec![r], BTreeMap::new()))
+        }
         "assert-header" => {
             let hname = with.get("name").and_then(Value::as_str).unwrap_or_default();
             let expected = with.get("value").and_then(Value::as_str);

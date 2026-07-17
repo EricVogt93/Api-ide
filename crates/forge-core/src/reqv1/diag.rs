@@ -102,6 +102,12 @@ impl Diagnostic {
         self
     }
 
+    /// Downgrade to info severity (e.g. "skipped, not an error").
+    pub fn info(mut self) -> Self {
+        self.severity = Severity::Info;
+        self
+    }
+
     pub fn is_error(&self) -> bool {
         self.severity == Severity::Error
     }

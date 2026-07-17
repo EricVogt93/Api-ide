@@ -282,3 +282,134 @@ async fn js_dynamic_mock_serves_and_assertions_run_against_it() {
     assert_eq!(result.http.as_ref().unwrap().status, 201);
     assert_eq!(result.runtime.get("userId"), Some(&json!("u-mock")));
 }
+
+#[tokio::test]
+async fn runtime_threads_from_one_request_to_the_next_in_a_sequence() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/login"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "token": "tok-xyz" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer tok-xyz"))   // came from request A's extract
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "user": "alice" })))
+        .mount(&server)
+        .await;
+
+    let root = project_root();
+    let a = root.join("requests/users/seq-a.request.json");
+    let b = root.join("requests/users/seq-b.request.json");
+    let env = json!({ "baseUrl": server.uri() });
+    let engine = HttpEngine::new();
+
+    let results = reqv1::run_sequence(
+        &[a, b], &root, env, &secret, &engine, RunMode::Http, CancellationToken::new(),
+    )
+    .await;
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].status, RunStatus::Passed, "{:?}", results[0].diagnostics);
+    assert_eq!(results[0].runtime.get("authToken"), Some(&json!("tok-xyz")));
+    // Request B only passes if ${runtime.authToken} reached it AND the
+    // assert-schema builtin validated {user:"alice"}.
+    assert_eq!(results[1].status, RunStatus::Passed, "{:?}", results[1].diagnostics);
+    assert!(results[1].assertions.iter().all(|a| a.passed), "{:?}", results[1].assertions);
+}
+
+#[tokio::test]
+async fn on_error_and_finally_phases_run() {
+    // A request whose afterResponse assertion always fails is not an "error"
+    // (it's Failed) — so drive an actual error via a hook that can't resolve.
+    // Simplest real error: point at a dead server so the send fails.
+    let doc = reqv1::RequestDocument::parse(
+        r#"{
+          "formatVersion": 1, "kind": "request",
+          "meta": { "id": "err", "name": "err" },
+          "request": { "method": "GET", "url": "${env.baseUrl}/x" },
+          "pipeline": [
+            { "phase": "onError", "use": "project:hooks/on-error-mark" },
+            { "phase": "finally", "use": "project:hooks/finally-mark" }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    // A port nothing listens on -> send fails -> onError + finally run.
+    let env = json!({ "baseUrl": "http://127.0.0.1:9" });
+    let engine = HttpEngine::new();
+    // Write the doc to the fixture project so project: refs resolve.
+    let file = project_root().join("requests/users/err.request.json");
+    std::fs::write(&file, serde_json::to_string(&doc_json()).unwrap()).ok();
+
+    let result = reqv1::run(
+        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Http,
+        CancellationToken::new(), Value::Null,
+    )
+    .await;
+    let _ = std::fs::remove_file(&file);
+
+    assert_eq!(result.status, RunStatus::Error);
+    // onError asset recorded the error; finally asset always ran.
+    assert_eq!(result.runtime.get("errored"), Some(&json!(true)));
+    assert_eq!(result.runtime.get("finallyRan"), Some(&json!(true)));
+    let msg = result.runtime.get("errorMsg").and_then(|v| v.as_str()).unwrap_or_default();
+    assert!(!msg.is_empty(), "onError asset should receive ctx.error");
+}
+
+fn doc_json() -> Value {
+    json!({
+      "formatVersion": 1, "kind": "request",
+      "meta": { "id": "err", "name": "err" },
+      "request": { "method": "GET", "url": "${env.baseUrl}/x" },
+      "pipeline": [
+        { "phase": "onError", "use": "project:hooks/on-error-mark" },
+        { "phase": "finally", "use": "project:hooks/finally-mark" }
+      ]
+    })
+}
+
+#[tokio::test]
+async fn assert_schema_builtin_validates_response_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/users"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "json": { "name": "Alice", "email": "alice@example.com" }
+        })))
+        .mount(&server)
+        .await;
+
+    // Inline document exercising assert-schema pass and fail.
+    let doc = reqv1::RequestDocument::parse(
+        r#"{
+          "formatVersion": 1, "kind": "request",
+          "meta": { "id": "sch", "name": "sch" },
+          "request": { "method": "POST", "url": "${env.baseUrl}/users",
+            "headers": [ { "name": "Content-Type", "value": "application/json", "enabled": true } ],
+            "body": { "type": "json", "value": { "x": 1 } } },
+          "pipeline": [
+            { "phase": "afterResponse", "use": "builtin:assert-schema@1",
+              "with": { "schema": { "type": "object", "required": ["json"],
+                "properties": { "json": { "type": "object", "required": ["name"],
+                  "properties": { "name": { "type": "string" } } } } } } },
+            { "phase": "afterResponse", "use": "builtin:assert-schema@1",
+              "with": { "schema": { "type": "object", "required": ["missing"] } } }
+          ]
+        }"#,
+    )
+    .unwrap();
+    let env = json!({ "baseUrl": server.uri() });
+    let engine = HttpEngine::new();
+    let result = reqv1::run(
+        &doc, &project_root(), &request_file(), env, &secret, &engine, RunMode::Http,
+        CancellationToken::new(), Value::Null,
+    )
+    .await;
+
+    assert_eq!(result.assertions.len(), 2, "{:?}", result.assertions);
+    assert!(result.assertions[0].passed, "matching schema should pass: {:?}", result.assertions[0]);
+    assert!(!result.assertions[1].passed, "missing-required schema should fail");
+    assert_eq!(result.status, RunStatus::Failed);
+}

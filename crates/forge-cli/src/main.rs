@@ -59,9 +59,17 @@ struct V1Args {
 
 #[derive(Args)]
 struct V1RunArgs {
-    #[command(flatten)]
-    common: V1Args,
-    /// Serve the document's mock instead of sending over HTTP.
+    /// One or more `*.request.json` documents. Multiple files run as a
+    /// sequence, threading extracted `${runtime.*}` forward.
+    #[arg(required = true)]
+    requests: Vec<PathBuf>,
+    /// Project root (holds project.json); defaults to walking up from the first request.
+    #[arg(long)]
+    root: Option<PathBuf>,
+    /// Environment name under environments/.
+    #[arg(long = "env")]
+    env: Option<String>,
+    /// Serve each document's mock instead of sending over HTTP.
     #[arg(long)]
     mock: bool,
 }
@@ -222,18 +230,23 @@ fn make_secret_provider(root: &Path) -> impl Fn(&str) -> Option<String> {
 }
 
 fn v1_root(args: &V1Args) -> PathBuf {
-    if let Some(root) = &args.root {
-        return root.clone();
+    v1_root_for(&args.request, args.root.as_deref())
+}
+
+/// Project root: the explicit override, else the nearest ancestor of
+/// `request` containing a project.json, else the request's directory.
+fn v1_root_for(request: &Path, root_override: Option<&Path>) -> PathBuf {
+    if let Some(root) = root_override {
+        return root.to_path_buf();
     }
-    // Walk up from the request file to the nearest project.json.
-    let mut dir = args.request.parent().map(Path::to_path_buf);
+    let mut dir = request.parent().map(Path::to_path_buf);
     while let Some(d) = dir {
         if d.join("project.json").exists() {
             return d;
         }
         dir = d.parent().map(Path::to_path_buf);
     }
-    args.request.parent().unwrap_or(Path::new(".")).to_path_buf()
+    request.parent().unwrap_or(Path::new(".")).to_path_buf()
 }
 
 fn cmd_validate(args: &V1Args) -> i32 {
@@ -284,62 +297,58 @@ fn cmd_validate(args: &V1Args) -> i32 {
 
 async fn cmd_run_v1(args: V1RunArgs) -> i32 {
     use forge_core::exec::HttpEngine;
-    use forge_core::reqv1::{self, RunMode, RunStatus};
+    use forge_core::reqv1::{self, RunMode, RunResult, RunStatus};
     use forge_core::runner::CancellationToken;
 
-    let root = v1_root(&args.common);
-    let text = match std::fs::read_to_string(&args.common.request) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("error: cannot read {}: {e}", args.common.request.display());
-            return 2;
-        }
-    };
-    let doc = match reqv1::RequestDocument::parse(&text) {
-        Ok(d) => d,
-        Err(e) => {
-            eprintln!("error: invalid request document: {e}");
-            return 2;
-        }
-    };
-    let env = match reqv1::load_environment(&root, args.common.env.as_deref()) {
+    let first = &args.requests[0];
+    let root = v1_root_for(first, args.root.as_deref());
+    let env = match reqv1::load_environment(&root, args.env.as_deref()) {
         Ok(e) => e,
         Err(d) => {
             eprintln!("error: {}", d.message);
             return 2;
         }
     };
-
     let engine = HttpEngine::new();
     let mode = if args.mock { RunMode::Mock } else { RunMode::Http };
     let secret = make_secret_provider(&root);
-    let results = match reqv1::run_matrix(
-        &doc,
-        &root,
-        &args.common.request,
-        env,
-        &secret,
-        &engine,
-        mode,
-        CancellationToken::new(),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(errs) => {
-            for d in &errs.0 {
-                let loc = d.instance_path.as_deref().unwrap_or("");
-                eprintln!("  [{}] {} {}", d.code, loc, d.message);
+
+    // Multiple files run as a sequence (runtime threaded forward); a single
+    // file goes through run_matrix so matrix documents expand.
+    let results: Vec<RunResult> = if args.requests.len() > 1 {
+        reqv1::run_sequence(&args.requests, &root, env, &secret, &engine, mode, CancellationToken::new()).await
+    } else {
+        let text = match std::fs::read_to_string(first) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("error: cannot read {}: {e}", first.display());
+                return 2;
             }
-            return 2;
+        };
+        let doc = match reqv1::RequestDocument::parse(&text) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error: invalid request document: {e}");
+                return 2;
+            }
+        };
+        match reqv1::run_matrix(&doc, &root, first, env, &secret, &engine, mode, CancellationToken::new()).await {
+            Ok(cases) => cases.into_iter().map(|(_, r)| r).collect(),
+            Err(errs) => {
+                for d in &errs.0 {
+                    let loc = d.instance_path.as_deref().unwrap_or("");
+                    eprintln!("  [{}] {} {}", d.code, loc, d.message);
+                }
+                return 2;
+            }
         }
     };
 
     let multi = results.len() > 1;
     let mut worst = RunStatus::Passed;
-    for (case, result) in &results {
+    for result in &results {
         if multi {
-            println!("--- case {}", serde_json::to_string(case).unwrap_or_default());
+            println!("--- {}", result.request_id);
         }
         if let Some(http) = &result.http {
             println!(

@@ -61,6 +61,17 @@ Since landed (originally deferred, all additive):
   body? }`, with assertions running against the produced response.
 - **`.env.local` secret provider** in the CLI (file first, process env
   fallback — the §14 declared order).
+- **All four pipeline phases**: `onError` (runs only when the run errored,
+  with `ctx.error`) and `finally` (always, for teardown/always-checks) now
+  execute instead of being silently ignored. Reaction assets may assert or
+  extract; builtins that need a response are skipped with an info note when
+  none exists.
+- **Runtime threading + sequences** (§9): `${runtime.*}` resolves from
+  earlier requests, and `run_sequence` runs a list of request files in order,
+  carrying each request's extracted runtime to the next. CLI `run-v1` takes
+  multiple files.
+- **`builtin:assert-schema@1`**: validates the response body against an
+  inline JSON Schema (reuses the crate's `jsonschema` validator).
 
 **Asset store view** (§11): `index.rs` scans a project into a `ProjectIndex`
 — assets grouped by kind, each data asset browsable to any JSON node, a

@@ -93,10 +93,15 @@ pub fn validate(
     env: Value,
     secret: &dyn Fn(&str) -> Option<String>,
 ) -> Result<ResolvedRequest, Vec<Diagnostic>> {
-    validate_case(doc, root, request_file, env, secret, Value::Null)
+    validate_case(doc, root, request_file, env, secret, Value::Null, empty_object())
 }
 
-/// [`validate`] for one specific matrix case (`matrix` = the case object).
+fn empty_object() -> Value {
+    Value::Object(Default::default())
+}
+
+/// [`validate`] for one specific matrix case (`matrix` = the case object)
+/// and incoming `runtime` (from earlier requests in a sequence).
 pub fn validate_case(
     doc: &RequestDocument,
     root: &Path,
@@ -104,6 +109,7 @@ pub fn validate_case(
     env: Value,
     secret: &dyn Fn(&str) -> Option<String>,
     matrix: Value,
+    runtime: Value,
 ) -> Result<ResolvedRequest, Vec<Diagnostic>> {
     let project = load_project(root).map_err(|d| vec![d])?;
     let resolver = RefResolver::new(root, &project).map_err(|e| e.0)?;
@@ -115,6 +121,7 @@ pub fn validate_case(
         base_dir,
         env,
         matrix,
+        runtime,
         secret,
     };
     build_ir(doc, &inp).map_err(|e| e.0)
@@ -133,9 +140,29 @@ pub async fn run(
     cancel: CancellationToken,
     matrix: Value,
 ) -> RunResult {
+    run_with_runtime(doc, root, request_file, env, secret, engine, mode, cancel, matrix, empty_object()).await
+}
+
+/// [`run`] plus incoming runtime (`${runtime.*}` from earlier requests in a
+/// sequence). Runs all four pipeline phases: beforeRequest → send/mock →
+/// afterResponse, then onError (only if the run errored) and finally
+/// (always). See §9.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_with_runtime(
+    doc: &RequestDocument,
+    root: &Path,
+    request_file: &Path,
+    env: Value,
+    secret: &dyn Fn(&str) -> Option<String>,
+    engine: &HttpEngine,
+    mode: RunMode,
+    cancel: CancellationToken,
+    matrix: Value,
+    runtime_in: Value,
+) -> RunResult {
     let started = std::time::Instant::now();
 
-    let mut ir = match validate_case(doc, root, request_file, env, secret, matrix) {
+    let mut ir = match validate_case(doc, root, request_file, env, secret, matrix, runtime_in) {
         Ok(ir) => ir,
         Err(diags) => {
             return RunResult {
@@ -151,6 +178,9 @@ pub async fn run(
     };
 
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut assertions: Vec<AssertionResult> = Vec::new();
+    let mut runtime: BTreeMap<String, Value> = BTreeMap::new();
+    let mut error: Option<String> = None;
 
     // --- beforeRequest hooks ---
     for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::BeforeRequest) {
@@ -161,70 +191,71 @@ pub async fn run(
         };
         match outcome {
             Ok(patch) => apply_patch(&mut ir, patch.headers, patch.url, &mut diagnostics),
-            Err(d) => diagnostics.push(d),
-        }
-    }
-
-    // --- send or mock ---
-    let response = match mode {
-        RunMode::Mock => match &ir.mock.clone() {
-            Some(m) => mock_response(m, &ir, &mut diagnostics),
-            None => {
-                diagnostics.push(Diagnostic::new(
-                    Code::HttpError,
-                    "mock mode requested but the document has no mock",
-                ));
-                None
-            }
-        },
-        RunMode::Http => match send(&ir, engine, cancel).await {
-            Ok(r) => Some(r),
             Err(d) => {
+                error.get_or_insert_with(|| d.message.clone());
                 diagnostics.push(d);
-                None
             }
-        },
-    };
-
-    let Some(response) = response else {
-        return finish(&ir, RunStatus::Error, None, Vec::new(), BTreeMap::new(), diagnostics, started);
-    };
-
-    // --- afterResponse assertions + extractors ---
-    let mut assertions = Vec::new();
-    let mut runtime: BTreeMap<String, Value> = BTreeMap::new();
-    for entry in ir.pipeline.iter().filter(|e| e.phase == PipelinePhase::AfterResponse) {
-        let outcome = if is_project_asset(entry) {
-            run_js_after(entry, &ir, &response)
-        } else {
-            run_after_response(entry, &response)
-        };
-        match outcome {
-            Ok((results, extracted)) => {
-                assertions.extend(results);
-                for (k, v) in extracted {
-                    if runtime.insert(k.clone(), v).is_some() {
-                        diagnostics.push(
-                            Diagnostic::new(
-                                Code::PipelineConflict,
-                                format!("runtime key {k:?} written by more than one extractor"),
-                            )
-                            .with_ref(&entry.asset.raw),
-                        );
-                    }
-                }
-            }
-            Err(d) => diagnostics.push(d),
         }
     }
 
-    let http = Some(HttpResultView {
-        status: response.status,
-        time_ms: response.time_ms,
-        bytes: response.body.len(),
+    // --- send or mock (skipped if a beforeRequest hook already errored) ---
+    let response = if error.is_some() {
+        None
+    } else {
+        match mode {
+            RunMode::Mock => match &ir.mock.clone() {
+                Some(m) => mock_response(m, &ir, &mut diagnostics),
+                None => {
+                    let d = Diagnostic::new(
+                        Code::HttpError,
+                        "mock mode requested but the document has no mock",
+                    );
+                    error = Some(d.message.clone());
+                    diagnostics.push(d);
+                    None
+                }
+            },
+            RunMode::Http => match send(&ir, engine, cancel).await {
+                Ok(r) => Some(r),
+                Err(d) => {
+                    error = Some(d.message.clone());
+                    diagnostics.push(d);
+                    None
+                }
+            },
+        }
+    };
+
+    // --- afterResponse assertions + extractors (only with a response) ---
+    if let Some(response) = &response {
+        for entry in ir.pipeline.iter().filter(|e| e.phase == PipelinePhase::AfterResponse) {
+            let outcome = reaction_asset(entry, &ir, Some(response), None);
+            merge_reaction(outcome, entry, &mut assertions, &mut runtime, &mut diagnostics, &mut error);
+        }
+    }
+
+    // --- onError: only when the run errored (§9) ---
+    if error.is_some() {
+        let err = error.clone();
+        for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::OnError) {
+            let outcome = reaction_asset(entry, &ir, response.as_ref(), err.as_deref());
+            merge_reaction(outcome, entry, &mut assertions, &mut runtime, &mut diagnostics, &mut error);
+        }
+    }
+
+    // --- finally: always (§9), for teardown/always-checks ---
+    for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::Finally) {
+        let outcome = reaction_asset(entry, &ir, response.as_ref(), error.as_deref());
+        merge_reaction(outcome, entry, &mut assertions, &mut runtime, &mut diagnostics, &mut error);
+    }
+
+    let http = response.as_ref().map(|r| HttpResultView {
+        status: r.status,
+        time_ms: r.time_ms,
+        bytes: r.body.len(),
     });
     let has_asset_error = diagnostics.iter().any(Diagnostic::is_error);
-    let status = if has_asset_error {
+    let status = if has_asset_error || error.is_some() || response.is_none() {
         RunStatus::Error
     } else if assertions.iter().any(|a| !a.passed) {
         RunStatus::Failed
@@ -232,6 +263,127 @@ pub async fn run(
         RunStatus::Passed
     };
     finish(&ir, status, http, assertions, runtime, diagnostics, started)
+}
+
+/// Run a sequence of request files in order, threading extracted runtime
+/// forward: request N's `extract-*` results are visible to request N+1 as
+/// `${runtime.*}` (§9). Each file runs with a fresh matrix (no matrix), but
+/// the accumulated runtime persists. `root` is the shared project root.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sequence(
+    files: &[std::path::PathBuf],
+    root: &Path,
+    env: Value,
+    secret: &dyn Fn(&str) -> Option<String>,
+    engine: &HttpEngine,
+    mode: RunMode,
+    cancel: CancellationToken,
+) -> Vec<RunResult> {
+    let mut runtime = empty_object();
+    let mut results = Vec::with_capacity(files.len());
+    for file in files {
+        let started = std::time::Instant::now();
+        let doc = match std::fs::read_to_string(file)
+            .map_err(|e| e.to_string())
+            .and_then(|t| RequestDocument::parse(&t).map_err(|e| e.to_string()))
+        {
+            Ok(d) => d,
+            Err(msg) => {
+                results.push(RunResult {
+                    request_id: file.display().to_string(),
+                    status: RunStatus::Error,
+                    http: None,
+                    assertions: Vec::new(),
+                    runtime: BTreeMap::new(),
+                    diagnostics: vec![Diagnostic::new(Code::InvalidAssetInput, msg)],
+                    duration_ms: started.elapsed().as_millis() as u64,
+                });
+                continue;
+            }
+        };
+        let result = run_with_runtime(
+            &doc,
+            root,
+            file,
+            env.clone(),
+            secret,
+            engine,
+            mode,
+            cancel.clone(),
+            Value::Null,
+            runtime.clone(),
+        )
+        .await;
+        // Thread this request's runtime forward to the next.
+        if let Value::Object(map) = &mut runtime {
+            for (k, v) in &result.runtime {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+        results.push(result);
+    }
+    results
+}
+
+/// Run one afterResponse/onError/finally asset. Builtins need a response;
+/// without one they are skipped with an info note. JS assets always run,
+/// receiving the response (if any) and error (onError/finally).
+fn reaction_asset(
+    entry: &super::ir::ResolvedPipelineEntry,
+    ir: &ResolvedRequest,
+    response: Option<&ResponseView>,
+    error: Option<&str>,
+) -> Result<(Vec<AssertionResult>, BTreeMap<String, Value>), Diagnostic> {
+    if is_project_asset(entry) {
+        run_js_after(entry, ir, response, error)
+    } else {
+        match response {
+            Some(r) => run_after_response(entry, r),
+            None => Err(Diagnostic::new(
+                Code::AssetError,
+                format!(
+                    "builtin {:?} skipped: no response available in this phase",
+                    entry.asset.raw
+                ),
+            )
+            .info()
+            .with_ref(&entry.asset.raw)),
+        }
+    }
+}
+
+/// Fold one reaction result into the accumulators (assertions, runtime with
+/// conflict warnings, diagnostics, and the first error seen).
+fn merge_reaction(
+    outcome: Result<(Vec<AssertionResult>, BTreeMap<String, Value>), Diagnostic>,
+    entry: &super::ir::ResolvedPipelineEntry,
+    assertions: &mut Vec<AssertionResult>,
+    runtime: &mut BTreeMap<String, Value>,
+    diagnostics: &mut Vec<Diagnostic>,
+    error: &mut Option<String>,
+) {
+    match outcome {
+        Ok((results, extracted)) => {
+            assertions.extend(results);
+            for (k, v) in extracted {
+                if runtime.insert(k.clone(), v).is_some() {
+                    diagnostics.push(
+                        Diagnostic::new(
+                            Code::PipelineConflict,
+                            format!("runtime key {k:?} written by more than one extractor"),
+                        )
+                        .with_ref(&entry.asset.raw),
+                    );
+                }
+            }
+        }
+        Err(d) => {
+            if d.is_error() {
+                error.get_or_insert_with(|| d.message.clone());
+            }
+            diagnostics.push(d);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -304,19 +456,23 @@ fn run_js_hook(
 fn run_js_after(
     entry: &super::ir::ResolvedPipelineEntry,
     ir: &ResolvedRequest,
-    response: &ResponseView,
+    response: Option<&ResponseView>,
+    error: Option<&str>,
 ) -> Result<(Vec<AssertionResult>, BTreeMap<String, Value>), Diagnostic> {
-    let body_json = response.json().unwrap_or(Value::Null);
+    let response_ctx = response.map(|response| {
+        serde_json::json!({
+            "status": response.status,
+            "headers": response.headers.iter().map(|(k, v)| serde_json::json!({"name": k, "value": v})).collect::<Vec<_>>(),
+            "body": response.json().unwrap_or(Value::Null),
+            "bodyText": response.text(),
+            "timeMs": response.time_ms,
+        })
+    });
     let ctx = serde_json::json!({
         "request": request_ctx(ir),
         "bindings": ir.bindings,
-        "response": {
-            "status": response.status,
-            "headers": response.headers.iter().map(|(k, v)| serde_json::json!({"name": k, "value": v})).collect::<Vec<_>>(),
-            "body": body_json,
-            "bodyText": response.text(),
-            "timeMs": response.time_ms,
-        },
+        "response": response_ctx,
+        "error": error,
     });
     let out = super::jshost::run_js_asset(&entry.asset.address, &ctx, &entry.input)
         .map_err(|d| d.with_ref(&entry.asset.raw))?;

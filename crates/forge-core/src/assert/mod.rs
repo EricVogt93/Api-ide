@@ -4,7 +4,7 @@ mod eval;
 mod extract;
 mod generate;
 mod outcome;
-mod schema;
+pub mod schema;
 
 pub use eval::*;
 pub use extract::*;

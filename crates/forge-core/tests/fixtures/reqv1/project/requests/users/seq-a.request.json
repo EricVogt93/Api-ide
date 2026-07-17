@@ -1,0 +1,12 @@
+{
+  "$schema": "../../../schemas/request-v1.schema.json",
+  "formatVersion": 1, "kind": "request",
+  "meta": { "id": "seq.a", "name": "Login" },
+  "request": { "method": "POST", "url": "${env.baseUrl}/login",
+    "headers": [ { "name": "Content-Type", "value": "application/json", "enabled": true } ],
+    "body": { "type": "json", "value": { "u": "alice" } } },
+  "pipeline": [
+    { "phase": "afterResponse", "use": "builtin:assert-status@1", "with": { "expected": 200 } },
+    { "phase": "afterResponse", "use": "builtin:extract-json-path@1", "with": { "path": "$.token", "target": "authToken" } }
+  ]
+}

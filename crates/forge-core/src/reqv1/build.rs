@@ -25,6 +25,9 @@ pub struct BuildInputs<'a> {
     pub env: Value,
     /// One matrix case (object), or Null when not a matrix run.
     pub matrix: Value,
+    /// Runtime values carried in from earlier requests in a sequence
+    /// (`${runtime.*}`). Empty object for a standalone run.
+    pub runtime: Value,
     pub secret: &'a dyn Fn(&str) -> Option<String>,
 }
 
@@ -43,12 +46,11 @@ pub fn build_ir(doc: &RequestDocument, inp: &BuildInputs<'_>) -> Result<Resolved
         }
     };
 
-    let empty = Value::Object(Map::new());
     let scopes = Scopes {
         env: &inp.env,
         bindings: &bindings,
         matrix: &inp.matrix,
-        runtime: &empty,
+        runtime: &inp.runtime,
         secret: inp.secret,
     };
 
@@ -155,12 +157,11 @@ fn resolve_one_binding(
     resolved_bindings: &Value,
     sink: &mut SecretSink,
 ) -> Result<Value, Diagnostic> {
-    let empty = Value::Object(Map::new());
     let scopes = Scopes {
         env: &inp.env,
         bindings: resolved_bindings,
         matrix: &inp.matrix,
-        runtime: &empty,
+        runtime: &inp.runtime,
         secret: inp.secret,
     };
     match binding {
