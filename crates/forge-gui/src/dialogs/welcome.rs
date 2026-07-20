@@ -21,7 +21,12 @@ struct RecentWorkspaces {
 
 fn recents_file() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(".config").join("forge").join("recent.json"))
+    Some(
+        PathBuf::from(home)
+            .join(".config")
+            .join("forge")
+            .join("recent.json"),
+    )
 }
 
 fn load_recents_from(file: &Path) -> Vec<String> {
@@ -33,7 +38,9 @@ fn load_recents_from(file: &Path) -> Vec<String> {
 }
 
 fn load_recents() -> Vec<String> {
-    recents_file().map(|f| load_recents_from(&f)).unwrap_or_default()
+    recents_file()
+        .map(|f| load_recents_from(&f))
+        .unwrap_or_default()
 }
 
 /// Push `path` to the front of `recents`, removing any earlier occurrence
@@ -73,11 +80,17 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
 
         ui.horizontal(|ui| {
             ui.add_space((ui.available_width() - 264.0).max(0.0) / 2.0);
-            if ui.add_sized([120.0, 32.0], egui::Button::new("Open Workspace...")).clicked() {
+            if ui
+                .add_sized([120.0, 32.0], egui::Button::new("Open Workspace..."))
+                .clicked()
+            {
                 super::open_workspace(state);
             }
             ui.add_space(8.0);
-            if ui.add_sized([120.0, 32.0], egui::Button::new("New Workspace...")).clicked() {
+            if ui
+                .add_sized([120.0, 32.0], egui::Button::new("New Workspace..."))
+                .clicked()
+            {
                 super::new_workspace(state);
             }
         });

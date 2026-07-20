@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use egui::{Ui, Window};
 
 use forge_core::model::SuiteHooks;
-use forge_core::store::{save_collection_meta, save_folder_meta, Workspace, COLLECTION_FILE, FOLDER_FILE};
+use forge_core::store::{
+    save_collection_meta, save_folder_meta, Workspace, COLLECTION_FILE, FOLDER_FILE,
+};
 
 use crate::panels::request_editor::language_combo;
 use crate::state::{AppState, StatusMessage};
@@ -35,7 +37,11 @@ impl HooksEditorState {
     /// Open the editor for the collection or folder at `dir`, loading its
     /// current hooks as the initial draft.
     pub fn open(&mut self, dir: PathBuf, is_collection: bool, hooks: SuiteHooks) {
-        self.target = Some(Target { dir, is_collection, draft: hooks });
+        self.target = Some(Target {
+            dir,
+            is_collection,
+            draft: hooks,
+        });
     }
 
     fn is_open(&self) -> bool {
@@ -60,26 +66,59 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
         .default_size([560.0, 520.0])
         .open(&mut window_open)
         .show(ctx, |ui| {
-            let Some(target) = state.dialogs.hooks_editor.target.as_mut() else { return };
+            let Some(target) = state.dialogs.hooks_editor.target.as_mut() else {
+                return;
+            };
 
             ui.label(format!(
                 "Hooks for {} \"{}\"",
-                if target.is_collection { "collection" } else { "folder" },
-                target.dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                if target.is_collection {
+                    "collection"
+                } else {
+                    "folder"
+                },
+                target
+                    .dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
             ));
             ui.add_space(4.0);
             language_combo(ui, "hooks-editor-lang", &mut target.draft.language);
             ui.add_space(6.0);
 
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                hook_field(ui, "hooks-before-all", "Before All (once per run)", &mut target.draft.before_all);
-                ui.add_space(6.0);
-                hook_field(ui, "hooks-before-each", "Before Each request", &mut target.draft.before_each);
-                ui.add_space(6.0);
-                hook_field(ui, "hooks-after-each", "After Each request", &mut target.draft.after_each);
-                ui.add_space(6.0);
-                hook_field(ui, "hooks-after-all", "After All (once per run)", &mut target.draft.after_all);
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("hooks_editor-sa-1")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    hook_field(
+                        ui,
+                        "hooks-before-all",
+                        "Before All (once per run)",
+                        &mut target.draft.before_all,
+                    );
+                    ui.add_space(6.0);
+                    hook_field(
+                        ui,
+                        "hooks-before-each",
+                        "Before Each request",
+                        &mut target.draft.before_each,
+                    );
+                    ui.add_space(6.0);
+                    hook_field(
+                        ui,
+                        "hooks-after-each",
+                        "After Each request",
+                        &mut target.draft.after_each,
+                    );
+                    ui.add_space(6.0);
+                    hook_field(
+                        ui,
+                        "hooks-after-all",
+                        "After All (once per run)",
+                        &mut target.draft.after_all,
+                    );
+                });
 
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -119,8 +158,9 @@ fn hook_field(ui: &mut Ui, id_salt: &str, label: &str, hook: &mut Option<String>
 fn persist(dir: &Path, is_collection: bool, hooks: &SuiteHooks) -> Result<(), String> {
     if is_collection {
         let meta_path = dir.join(COLLECTION_FILE);
-        let mut meta = forge_core::store::load_json::<forge_core::model::CollectionMeta>(&meta_path)
-            .map_err(|e| e.to_string())?;
+        let mut meta =
+            forge_core::store::load_json::<forge_core::model::CollectionMeta>(&meta_path)
+                .map_err(|e| e.to_string())?;
         meta.hooks = hooks.clone();
         save_collection_meta(dir, &meta).map_err(|e| e.to_string())
     } else {
@@ -133,7 +173,9 @@ fn persist(dir: &Path, is_collection: bool, hooks: &SuiteHooks) -> Result<(), St
 }
 
 fn reload_workspace(state: &mut AppState) {
-    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else { return };
+    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else {
+        return;
+    };
     match Workspace::load(&root) {
         Ok(ws) => state.workspace = Some(ws),
         Err(e) => state.status = Some(StatusMessage::error(e.to_string())),

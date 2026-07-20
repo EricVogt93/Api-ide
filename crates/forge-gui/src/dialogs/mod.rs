@@ -19,8 +19,8 @@ pub mod openapi_import;
 pub mod postman_import;
 pub mod search;
 pub mod settings;
-pub mod v1_editor;
 pub mod snippet_export;
+pub mod v1_editor;
 pub mod welcome;
 
 use forge_core::store::Workspace;
@@ -126,11 +126,17 @@ pub fn open_workspace(state: &mut AppState) {
 /// the Welcome pane's "New Workspace..." button.
 pub fn new_workspace(state: &mut AppState) {
     if let Some(path) = rfd::FileDialog::new().pick_folder() {
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Workspace".to_string());
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Workspace".to_string());
         match Workspace::create(&path, &name) {
             Ok(ws) => {
                 state.pending_workspace = Some(ws);
-                state.status = Some(StatusMessage::info(format!("Created workspace at {}", path.display())));
+                state.status = Some(StatusMessage::info(format!(
+                    "Created workspace at {}",
+                    path.display()
+                )));
                 welcome::remember_recent(&path);
             }
             Err(e) => state.status = Some(StatusMessage::error(e.to_string())),

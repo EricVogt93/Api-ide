@@ -128,7 +128,9 @@ pub fn parse_postman_environment(text: &str) -> Result<(Environment, SecretValue
     let mut env = Environment::new(name);
     let mut secrets = SecretValues::new();
     for v in values {
-        let Some(key) = v["key"].as_str() else { continue };
+        let Some(key) = v["key"].as_str() else {
+            continue;
+        };
         // Postman keeps disabled variables in the file; import them too —
         // dropping them silently would lose data the user can still see in
         // Postman's UI.
@@ -150,11 +152,17 @@ pub fn parse_postman_environment(text: &str) -> Result<(Environment, SecretValue
 // ---------------------------------------------------------------------
 
 fn parse_items(items: &Value, path: &str, skipped: &mut Vec<String>) -> Vec<ImportedItem> {
-    let Some(arr) = items.as_array() else { return Vec::new() };
+    let Some(arr) = items.as_array() else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for item in arr {
         let name = item["name"].as_str().unwrap_or("Unnamed").to_string();
-        let item_path = if path.is_empty() { name.clone() } else { format!("{path}/{name}") };
+        let item_path = if path.is_empty() {
+            name.clone()
+        } else {
+            format!("{path}/{name}")
+        };
 
         if item["item"].is_array() {
             let auth = parse_auth(&item["auth"], &item_path, skipped);
@@ -166,7 +174,9 @@ fn parse_items(items: &Value, path: &str, skipped: &mut Vec<String>) -> Vec<Impo
                 name,
             });
         } else if item["request"].is_object() || item["request"].is_string() {
-            out.push(ImportedItem::Request(Box::new(parse_request(item, &item_path, skipped))));
+            out.push(ImportedItem::Request(Box::new(parse_request(
+                item, &item_path, skipped,
+            ))));
         } else {
             skipped.push(format!("{item_path}: unrecognized item, skipped"));
         }
@@ -185,7 +195,9 @@ fn parse_request(item: &Value, path: &str, skipped: &mut Vec<String>) -> Request
 
     let method_str = req["method"].as_str().unwrap_or("GET");
     let method = Method::parse(method_str).unwrap_or_else(|| {
-        skipped.push(format!("{path}: unsupported method {method_str}, imported as GET"));
+        skipped.push(format!(
+            "{path}: unsupported method {method_str}, imported as GET"
+        ));
         Method::Get
     });
 
@@ -196,7 +208,9 @@ fn parse_request(item: &Value, path: &str, skipped: &mut Vec<String>) -> Request
 
     if let Some(headers) = req["header"].as_array() {
         for h in headers {
-            let Some(key) = h["key"].as_str() else { continue };
+            let Some(key) = h["key"].as_str() else {
+                continue;
+            };
             def.headers.push(KeyValue {
                 key: key.to_string(),
                 value: value_as_string(&h["value"]),
@@ -289,7 +303,9 @@ fn parse_url(url: &Value) -> (String, Vec<Param>) {
 
     if let Some(query) = url["query"].as_array() {
         for q in query {
-            let Some(key) = q["key"].as_str() else { continue };
+            let Some(key) = q["key"].as_str() else {
+                continue;
+            };
             params.push(Param {
                 kv: KeyValue {
                     key: key.to_string(),
@@ -303,7 +319,9 @@ fn parse_url(url: &Value) -> (String, Vec<Param>) {
     }
     if let Some(vars) = url["variable"].as_array() {
         for v in vars {
-            let Some(key) = v["key"].as_str() else { continue };
+            let Some(key) = v["key"].as_str() else {
+                continue;
+            };
             params.push(Param {
                 kv: KeyValue {
                     key: key.to_string(),
@@ -329,12 +347,24 @@ fn parse_body(body: &Value, path: &str, skipped: &mut Vec<String>) -> BodyDef {
         None => BodyDef::None,
         Some("raw") => {
             let text = body["raw"].as_str().unwrap_or_default().to_string();
-            match body["options"]["raw"]["language"].as_str().unwrap_or("text") {
+            match body["options"]["raw"]["language"]
+                .as_str()
+                .unwrap_or("text")
+            {
                 "json" => BodyDef::Json { text },
                 "xml" => BodyDef::Xml { text },
-                "html" => BodyDef::Raw { text, language: RawLanguage::Html },
-                "yaml" => BodyDef::Raw { text, language: RawLanguage::Yaml },
-                _ => BodyDef::Raw { text, language: RawLanguage::Text },
+                "html" => BodyDef::Raw {
+                    text,
+                    language: RawLanguage::Html,
+                },
+                "yaml" => BodyDef::Raw {
+                    text,
+                    language: RawLanguage::Yaml,
+                },
+                _ => BodyDef::Raw {
+                    text,
+                    language: RawLanguage::Text,
+                },
             }
         }
         Some("urlencoded") => BodyDef::FormUrlencoded {
@@ -344,7 +374,9 @@ fn parse_body(body: &Value, path: &str, skipped: &mut Vec<String>) -> BodyDef {
             let mut parts = Vec::new();
             if let Some(rows) = body["formdata"].as_array() {
                 for row in rows {
-                    let Some(key) = row["key"].as_str() else { continue };
+                    let Some(key) = row["key"].as_str() else {
+                        continue;
+                    };
                     let content = if row["type"].as_str() == Some("file") {
                         // `src` is a string or (multi-file) array; take the first.
                         let src = row["src"]
@@ -358,7 +390,9 @@ fn parse_body(body: &Value, path: &str, skipped: &mut Vec<String>) -> BodyDef {
                             .unwrap_or_default();
                         PartContent::File { path: src }
                     } else {
-                        PartContent::Text { value: value_as_string(&row["value"]) }
+                        PartContent::Text {
+                            value: value_as_string(&row["value"]),
+                        }
                     };
                     parts.push(MultipartPart {
                         name: key.to_string(),
@@ -371,22 +405,32 @@ fn parse_body(body: &Value, path: &str, skipped: &mut Vec<String>) -> BodyDef {
             BodyDef::Multipart { parts }
         }
         Some("graphql") => BodyDef::GraphQl {
-            query: body["graphql"]["query"].as_str().unwrap_or_default().to_string(),
-            variables: body["graphql"]["variables"].as_str().unwrap_or_default().to_string(),
+            query: body["graphql"]["query"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            variables: body["graphql"]["variables"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             operation_name: None,
         },
         Some("file") => BodyDef::Binary {
             path: body["file"]["src"].as_str().unwrap_or_default().to_string(),
         },
         Some(other) => {
-            skipped.push(format!("{path}: unsupported body mode '{other}', body dropped"));
+            skipped.push(format!(
+                "{path}: unsupported body mode '{other}', body dropped"
+            ));
             BodyDef::None
         }
     }
 }
 
 fn kv_rows(rows: &Value) -> Vec<KeyValue> {
-    let Some(arr) = rows.as_array() else { return Vec::new() };
+    let Some(arr) = rows.as_array() else {
+        return Vec::new();
+    };
     arr.iter()
         .filter_map(|row| {
             let key = row["key"].as_str()?;
@@ -413,9 +457,18 @@ fn parse_auth(auth: &Value, path: &str, skipped: &mut Vec<String>) -> AuthConfig
 
     match kind {
         "noauth" => AuthConfig::None,
-        "basic" => AuthConfig::Basic { username: get("username"), password: get("password") },
-        "bearer" => AuthConfig::Bearer { token: get("token"), prefix: None },
-        "digest" => AuthConfig::Digest { username: get("username"), password: get("password") },
+        "basic" => AuthConfig::Basic {
+            username: get("username"),
+            password: get("password"),
+        },
+        "bearer" => AuthConfig::Bearer {
+            token: get("token"),
+            prefix: None,
+        },
+        "digest" => AuthConfig::Digest {
+            username: get("username"),
+            password: get("password"),
+        },
         "ntlm" => AuthConfig::Ntlm {
             username: get("username"),
             password: get("password"),
@@ -426,7 +479,11 @@ fn parse_auth(auth: &Value, path: &str, skipped: &mut Vec<String>) -> AuthConfig
             secret_key: get("secretKey"),
             session_token: {
                 let t = get("sessionToken");
-                if t.is_empty() { None } else { Some(t) }
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t)
+                }
             },
             region: get("region"),
             service: get("service"),
@@ -463,7 +520,11 @@ fn parse_auth(auth: &Value, path: &str, skipped: &mut Vec<String>) -> AuthConfig
                     client_id: get("clientId"),
                     client_secret: {
                         let s = get("clientSecret");
-                        if s.is_empty() { None } else { Some(s) }
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s)
+                        }
                     },
                     scopes,
                     redirect_port: None,
@@ -478,7 +539,9 @@ fn parse_auth(auth: &Value, path: &str, skipped: &mut Vec<String>) -> AuthConfig
             }
         }
         other => {
-            skipped.push(format!("{path}: auth type '{other}' not supported, auth dropped"));
+            skipped.push(format!(
+                "{path}: auth type '{other}' not supported, auth dropped"
+            ));
             AuthConfig::None
         }
     }

@@ -1,4 +1,11 @@
 {
   "format": 1,
-  "name": "Demo"
+  "name": "Demo",
+  "settings": {
+    "timeoutMs": 30000,
+    "followRedirects": true,
+    "maxRedirects": 10,
+    "verifyTls": true,
+    "openapiUrl": "specs/petstore.json"
+  }
 }

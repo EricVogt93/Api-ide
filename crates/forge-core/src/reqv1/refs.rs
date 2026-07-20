@@ -65,7 +65,10 @@ impl RefResolver {
             if !abs.starts_with(&root) {
                 return Err(Errors::one(
                     Code::PathEscape,
-                    format!("alias {alias:?} points outside the project root: {}", abs.display()),
+                    format!(
+                        "alias {alias:?} points outside the project root: {}",
+                        abs.display()
+                    ),
                 ));
             }
             let is_dir = target.ends_with('/')
@@ -80,7 +83,11 @@ impl RefResolver {
         // Longest alias first so the most specific prefix wins.
         prefix.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.len()));
 
-        Ok(Self { root, exact, prefix })
+        Ok(Self {
+            root,
+            exact,
+            prefix,
+        })
     }
 
     /// Parse and resolve `raw` (a ref appearing in `base_dir`'s document).
@@ -115,7 +122,9 @@ impl RefResolver {
             });
         }
 
-        let abs = self.resolve_address(addr, base_dir).map_err(|d| d.with_ref(raw))?;
+        let abs = self
+            .resolve_address(addr, base_dir)
+            .map_err(|d| d.with_ref(raw))?;
         let abs = canonicalize_lenient(&abs);
         if !abs.starts_with(&self.root) {
             return Err(Diagnostic::new(
@@ -166,11 +175,18 @@ impl RefResolver {
         }
         // A scheme-looking address (`x:y`) that matched no alias is a bad alias.
         if addr.contains(':') && !addr.contains('/') {
-            return Err(Diagnostic::new(Code::InvalidAlias, format!("unknown alias {addr:?}")));
+            return Err(Diagnostic::new(
+                Code::InvalidAlias,
+                format!("unknown alias {addr:?}"),
+            ));
         }
         // Otherwise a relative (or absolute) path from the request file.
         let p = Path::new(addr);
-        Ok(if p.is_absolute() { p.to_path_buf() } else { base_dir.join(normalize_rel(addr)) })
+        Ok(if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            base_dir.join(normalize_rel(addr))
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -271,7 +287,9 @@ mod tests {
     fn prefix_alias_infers_ts_extension_and_version() {
         let dir = tempfile::tempdir().unwrap();
         let r = resolver(dir.path());
-        let d = r.resolve("project:assertions/user-created@2", dir.path()).unwrap();
+        let d = r
+            .resolve("project:assertions/user-created@2", dir.path())
+            .unwrap();
         assert!(d.address.ends_with("user-created.ts"), "{}", d.address);
         assert_eq!(d.version, Some(2));
     }
@@ -288,7 +306,9 @@ mod tests {
     fn backslash_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let r = resolver(dir.path());
-        let err = r.resolve("assets\\data\\users.json", dir.path()).unwrap_err();
+        let err = r
+            .resolve("assets\\data\\users.json", dir.path())
+            .unwrap_err();
         assert_eq!(err.code, Code::InvalidAlias.as_str());
     }
 

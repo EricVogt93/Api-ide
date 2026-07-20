@@ -18,7 +18,11 @@ pub struct Environment {
 
 impl Environment {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { format: crate::FORMAT_VERSION, name: name.into(), variables: BTreeMap::new() }
+        Self {
+            format: crate::FORMAT_VERSION,
+            name: name.into(),
+            variables: BTreeMap::new(),
+        }
     }
 }
 
@@ -36,11 +40,19 @@ pub struct EnvVar {
 
 impl EnvVar {
     pub fn plain(value: impl Into<String>) -> Self {
-        Self { value: Some(value.into()), secret: false, description: String::new() }
+        Self {
+            value: Some(value.into()),
+            secret: false,
+            description: String::new(),
+        }
     }
 
     pub fn secret() -> Self {
-        Self { value: None, secret: true, description: String::new() }
+        Self {
+            value: None,
+            secret: true,
+            description: String::new(),
+        }
     }
 }
 

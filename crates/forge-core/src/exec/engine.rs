@@ -30,6 +30,7 @@ use crate::model::Method;
 struct ClientKey {
     verify_tls: bool,
     proxy: Option<String>,
+    no_proxy: Option<String>,
     tls_fingerprint: u64,
     /// NTLM authenticates the TCP connection, so its clients are isolated
     /// (own pool, at most one idle connection) and pinned to HTTP/1.1 —
@@ -87,6 +88,7 @@ impl HttpEngine {
         let client = self.client_for(
             req.verify_tls,
             req.proxy.as_deref(),
+            req.no_proxy.as_deref(),
             req.client_pem.as_deref(),
             req.extra_roots_pem.as_deref(),
             req.ntlm.is_some(),
@@ -99,10 +101,11 @@ impl HttpEngine {
         }
     }
 
-    fn client_for(
+    pub(crate) fn client_for(
         &self,
         verify_tls: bool,
         proxy: Option<&str>,
+        no_proxy: Option<&str>,
         client_pem: Option<&[u8]>,
         extra_roots_pem: Option<&[u8]>,
         ntlm: bool,
@@ -110,6 +113,9 @@ impl HttpEngine {
         let key = ClientKey {
             verify_tls,
             proxy: proxy.map(|s| s.to_string()),
+            no_proxy: no_proxy
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
             tls_fingerprint: tls_fingerprint(client_pem, extra_roots_pem),
             ntlm,
         };
@@ -148,8 +154,11 @@ impl HttpEngine {
             }
         }
         if let Some(proxy_url) = &key.proxy {
-            let proxy = reqwest::Proxy::all(proxy_url)
+            let mut proxy = reqwest::Proxy::all(proxy_url)
                 .map_err(|e| ExecError::Http(format!("invalid proxy {proxy_url:?}: {e}")))?;
+            if let Some(no_proxy) = &key.no_proxy {
+                proxy = proxy.no_proxy(reqwest::NoProxy::from_string(no_proxy));
+            }
             builder = builder.proxy(proxy);
         }
 
@@ -162,7 +171,9 @@ impl HttpEngine {
     }
 
     fn lock_clients(&self) -> std::sync::MutexGuard<'_, HashMap<ClientKey, reqwest::Client>> {
-        self.clients.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.clients
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     async fn run(
@@ -190,7 +201,13 @@ impl HttpEngine {
             let jar_pairs = self.cookies.matching(&current_url);
             let mut leg_headers = merge_cookie_header(&current_headers, &jar_pairs);
             if let Some(sigv4) = &req.sigv4 {
-                apply_sigv4(&mut leg_headers, sigv4, current_method, &current_url, &current_body)?;
+                apply_sigv4(
+                    &mut leg_headers,
+                    sigv4,
+                    current_method,
+                    &current_url,
+                    &current_body,
+                )?;
             }
             let header_map = header_map_from_pairs(&leg_headers)?;
             let request_bytes =
@@ -307,7 +324,8 @@ impl HttpEngine {
                         // header is not, so it must be stripped here too —
                         // same reasoning as `Authorization`.
                         current_headers.retain(|(k, _)| {
-                            !k.eq_ignore_ascii_case("authorization") && !k.eq_ignore_ascii_case("cookie")
+                            !k.eq_ignore_ascii_case("authorization")
+                                && !k.eq_ignore_ascii_case("cookie")
                         });
                     }
 
@@ -326,7 +344,12 @@ impl HttpEngine {
             let response_headers: Vec<(String, String)> = response
                 .headers()
                 .iter()
-                .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+                .map(|(k, v)| {
+                    (
+                        k.as_str().to_string(),
+                        String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                    )
+                })
                 .collect();
             let cookies_set: Vec<String> = response
                 .headers()
@@ -428,11 +451,16 @@ fn ntlm_authenticate(
     let message = ntlmclient::Message::try_from(challenge_bytes.as_slice())
         .map_err(|e| ExecError::Http(format!("invalid NTLM challenge: {e:?}")))?;
     let ntlmclient::Message::Challenge(challenge) = message else {
-        return Err(ExecError::Http("server did not send an NTLM challenge".to_string()));
+        return Err(ExecError::Http(
+            "server did not send an NTLM challenge".to_string(),
+        ));
     };
 
-    let target_info: Vec<u8> =
-        challenge.target_information.iter().flat_map(|entry| entry.to_bytes()).collect();
+    let target_info: Vec<u8> = challenge
+        .target_information
+        .iter()
+        .flat_map(|entry| entry.to_bytes())
+        .collect();
     // NTLMv2 timestamps are Windows FILETIME: 100ns ticks since 1601-01-01.
     let now_filetime = (Utc::now().timestamp() + 11_644_473_600) * 10_000_000;
     let response = ntlmclient::respond_challenge_ntlm_v2(
@@ -691,7 +719,9 @@ async fn apply_body(
     match body {
         ResolvedBody::None => Ok(builder),
         ResolvedBody::Bytes { content_type, data } => {
-            let has_content_type = headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+            let has_content_type = headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
             let builder = if !has_content_type {
                 if let Some(ct) = content_type {
                     builder.header(CONTENT_TYPE, ct.as_str())
@@ -707,7 +737,9 @@ async fn apply_body(
             // The `form` reqwest feature isn't enabled in this workspace,
             // so the `application/x-www-form-urlencoded` body is built by
             // hand instead of via `RequestBuilder::form`.
-            let has_content_type = headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+            let has_content_type = headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
             let builder = if has_content_type {
                 builder
             } else {
@@ -761,7 +793,9 @@ fn approx_request_bytes(
             .iter()
             .map(|p| match &p.data {
                 PartData::Text(t) => t.len(),
-                PartData::File(path) => std::fs::metadata(path).map(|m| m.len() as usize).unwrap_or(0),
+                PartData::File(path) => std::fs::metadata(path)
+                    .map(|m| m.len() as usize)
+                    .unwrap_or(0),
             })
             .sum(),
     };
@@ -814,7 +848,10 @@ mod tests {
     #[test]
     fn merges_jar_cookies_with_existing_header() {
         let user = vec![("Cookie".to_string(), "a=1".to_string())];
-        let jar = vec![("b".to_string(), "2".to_string()), ("a".to_string(), "override".to_string())];
+        let jar = vec![
+            ("b".to_string(), "2".to_string()),
+            ("a".to_string(), "override".to_string()),
+        ];
         let merged = merge_cookie_header(&user, &jar);
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].0, "Cookie");

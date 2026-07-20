@@ -74,12 +74,22 @@ impl VarScopes {
         for (name, var) in &env.variables {
             if var.secret {
                 if let Some(value) = secrets.get(name) {
-                    self.environment
-                        .insert(name.clone(), EnvEntry { value: value.clone(), secret: true });
+                    self.environment.insert(
+                        name.clone(),
+                        EnvEntry {
+                            value: value.clone(),
+                            secret: true,
+                        },
+                    );
                 }
             } else if let Some(value) = &var.value {
-                self.environment
-                    .insert(name.clone(), EnvEntry { value: value.clone(), secret: false });
+                self.environment.insert(
+                    name.clone(),
+                    EnvEntry {
+                        value: value.clone(),
+                        secret: false,
+                    },
+                );
             }
         }
         self
@@ -87,7 +97,8 @@ impl VarScopes {
 
     /// Merge in the owning collection's variables.
     pub fn with_collection(mut self, vars: &BTreeMap<String, String>) -> Self {
-        self.collection.extend(vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.collection
+            .extend(vars.iter().map(|(k, v)| (k.clone(), v.clone())));
         self
     }
 
@@ -126,7 +137,11 @@ impl VarScopes {
     /// full priority chain. `name` should already be trimmed of whitespace.
     pub fn lookup(&self, name: &str) -> Option<ResolvedVar> {
         if let Some(value) = dynamic::resolve(name) {
-            return Some(ResolvedVar { value, secret: false, origin: VarOrigin::Dynamic });
+            return Some(ResolvedVar {
+                value,
+                secret: false,
+                origin: VarOrigin::Dynamic,
+            });
         }
         if let Some(value) = self.iteration.get(name) {
             return Some(ResolvedVar {
@@ -183,7 +198,10 @@ mod tests {
     }
 
     fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]

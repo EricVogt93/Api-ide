@@ -174,7 +174,10 @@ fn select(root: &Value, path: &str) -> Option<Value> {
 }
 
 fn missing(expr: &str) -> Diagnostic {
-    Diagnostic::new(Code::MissingVariable, format!("variable ${{{expr}}} is not defined"))
+    Diagnostic::new(
+        Code::MissingVariable,
+        format!("variable ${{{expr}}} is not defined"),
+    )
 }
 
 /// Coerce a resolved value for embedding inside a larger string (§8 table).
@@ -215,21 +218,30 @@ mod tests {
 
     #[test]
     fn whole_expression_preserves_number_type() {
-        let out = run(json!("${bindings.timeout}"), json!({ "timeout": 5000 }), json!({})).unwrap();
+        let out = run(
+            json!("${bindings.timeout}"),
+            json!({ "timeout": 5000 }),
+            json!({}),
+        )
+        .unwrap();
         assert_eq!(out, json!(5000));
     }
 
     #[test]
     fn whole_expression_preserves_object() {
         let user = json!({ "name": "Alice", "email": "a@x" });
-        let out = run(json!("${bindings.user}"), json!({ "user": user.clone() }), json!({})).unwrap();
+        let out = run(
+            json!("${bindings.user}"),
+            json!({ "user": user.clone() }),
+            json!({}),
+        )
+        .unwrap();
         assert_eq!(out, user);
     }
 
     #[test]
     fn embedded_expression_coerces_to_string() {
-        let out =
-            run(json!("id=${bindings.n}!"), json!({ "n": 42 }), json!({})).unwrap();
+        let out = run(json!("id=${bindings.n}!"), json!({ "n": 42 }), json!({})).unwrap();
         assert_eq!(out, json!("id=42!"));
     }
 
@@ -281,7 +293,12 @@ mod tests {
 
     #[test]
     fn object_into_string_errors() {
-        let err = run(json!("x=${bindings.o}"), json!({ "o": { "a": 1 } }), json!({})).unwrap_err();
+        let err = run(
+            json!("x=${bindings.o}"),
+            json!({ "o": { "a": 1 } }),
+            json!({}),
+        )
+        .unwrap_err();
         assert_eq!(err.code, Code::StructuredInString.as_str());
     }
 
@@ -305,8 +322,7 @@ mod tests {
             secret: &secret,
         };
         let mut sink = SecretSink::default();
-        let out =
-            interpolate(&json!("Bearer ${secret.apiToken}"), &scopes, &mut sink).unwrap();
+        let out = interpolate(&json!("Bearer ${secret.apiToken}"), &scopes, &mut sink).unwrap();
         assert_eq!(out, json!("Bearer s3cr3t"));
         assert_eq!(sink.values, vec!["s3cr3t".to_string()]);
     }

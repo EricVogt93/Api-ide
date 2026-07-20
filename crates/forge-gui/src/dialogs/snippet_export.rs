@@ -35,8 +35,20 @@ impl Target {
 
     fn render(&self, def: &RequestDef) -> String {
         match self {
-            Target::CurlMultiline => to_curl(def, &CurlExportOptions { multiline: true, long_flags: false }),
-            Target::CurlOneLine => to_curl(def, &CurlExportOptions { multiline: false, long_flags: false }),
+            Target::CurlMultiline => to_curl(
+                def,
+                &CurlExportOptions {
+                    multiline: true,
+                    long_flags: false,
+                },
+            ),
+            Target::CurlOneLine => to_curl(
+                def,
+                &CurlExportOptions {
+                    multiline: false,
+                    long_flags: false,
+                },
+            ),
             Target::Snippet(lang) => generate(def, *lang),
         }
     }
@@ -54,7 +66,11 @@ pub struct SnippetExportState {
 
 impl Default for SnippetExportState {
     fn default() -> Self {
-        Self { open: false, target: Target::CurlMultiline, def: None }
+        Self {
+            open: false,
+            target: Target::CurlMultiline,
+            def: None,
+        }
     }
 }
 
@@ -93,7 +109,11 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                     .selected_text(state.dialogs.snippet_export.target.label())
                     .show_ui(ui, |ui| {
                         for target in Target::all() {
-                            ui.selectable_value(&mut state.dialogs.snippet_export.target, target, target.label());
+                            ui.selectable_value(
+                                &mut state.dialogs.snippet_export.target,
+                                target,
+                                target.label(),
+                            );
                         }
                     });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -106,15 +126,17 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
             ui.separator();
 
             preview = state.dialogs.snippet_export.target.render(&def);
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                let mut text = preview.clone();
-                ui.add(
-                    TextEdit::multiline(&mut text)
-                        .desired_width(f32::INFINITY)
-                        .font(egui::FontSelection::from(egui::FontId::monospace(12.0)))
-                        .interactive(false),
-                );
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("snippet_export-sa-1")
+                .show(ui, |ui| {
+                    let mut text = preview.clone();
+                    ui.add(
+                        TextEdit::multiline(&mut text)
+                            .desired_width(f32::INFINITY)
+                            .font(egui::FontSelection::from(egui::FontId::monospace(14.0)))
+                            .interactive(false),
+                    );
+                });
         });
 
     if copy_clicked {

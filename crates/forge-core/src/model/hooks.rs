@@ -73,7 +73,10 @@ mod tests {
     fn empty_hooks_are_omitted_and_legacy_meta_parses() {
         let meta = CollectionMeta::new("C");
         let json = serde_json::to_string(&meta).expect("serialize");
-        assert!(!json.contains("hooks"), "empty hooks must be omitted: {json}");
+        assert!(
+            !json.contains("hooks"),
+            "empty hooks must be omitted: {json}"
+        );
 
         let folder: FolderMeta = serde_json::from_str(r#"{"name":"F"}"#).expect("deserialize");
         assert!(folder.hooks.is_empty());
@@ -81,7 +84,10 @@ mod tests {
 
     #[test]
     fn hooks_with_only_language_set_still_count_as_empty() {
-        let hooks = SuiteHooks { language: ScriptLang::Js, ..Default::default() };
+        let hooks = SuiteHooks {
+            language: ScriptLang::Js,
+            ..Default::default()
+        };
         assert!(hooks.is_empty());
     }
 }

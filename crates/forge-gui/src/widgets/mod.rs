@@ -10,7 +10,11 @@ use egui::{Color32, Stroke, Ui};
 /// A flat, IntelliJ-style underlined tab strip. Draws `tabs` as a row of
 /// selectable labels, underlining the active one; returns `true` if the
 /// selection changed this frame.
-pub fn underline_tabs<T: Copy + PartialEq>(ui: &mut Ui, tabs: &[(T, &str)], selected: &mut T) -> bool {
+pub fn underline_tabs<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    tabs: &[(T, &str)],
+    selected: &mut T,
+) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
@@ -50,6 +54,7 @@ pub fn underline_tabs<T: Copy + PartialEq>(ui: &mut Ui, tabs: &[(T, &str)], sele
 /// future cookie/history tool window row status marker.
 #[allow(dead_code)]
 pub fn dot(ui: &mut Ui, color: Color32, radius: f32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(radius * 2.0, radius * 2.0), egui::Sense::hover());
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(radius * 2.0, radius * 2.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), radius, color);
 }

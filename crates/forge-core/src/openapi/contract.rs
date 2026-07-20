@@ -30,11 +30,17 @@ pub fn contract_checks(op: &SpecOperation, status: Option<u16>) -> Vec<Check> {
 
     let mut checks = Vec::new();
     if let Some(code) = status {
-        checks.push(Check::StatusCode { op: NumberOp::Eq, value: code });
+        checks.push(Check::StatusCode {
+            op: NumberOp::Eq,
+            value: code,
+        });
     } else if let Some(class) = status_class_of(&resp.status) {
         checks.push(Check::StatusClass { class });
     } else if let Ok(code) = resp.status.parse::<u16>() {
-        checks.push(Check::StatusCode { op: NumberOp::Eq, value: code });
+        checks.push(Check::StatusCode {
+            op: NumberOp::Eq,
+            value: code,
+        });
     }
     // A "default" response has no fixed status to assert on.
 
@@ -42,7 +48,9 @@ pub fn contract_checks(op: &SpecOperation, status: Option<u16>) -> Vec<Check> {
         checks.push(Check::ContentType { value: ct.clone() });
     }
     if let Some(schema) = &resp.schema {
-        checks.push(Check::JsonSchema { schema: scrub_schema(schema.clone()) });
+        checks.push(Check::JsonSchema {
+            schema: scrub_schema(schema.clone()),
+        });
     }
     checks
 }
@@ -53,14 +61,21 @@ fn find_response_for_status(op: &SpecOperation, code: u16) -> Option<&SpecRespon
         return Some(r);
     }
     let class_pat = format!("{}XX", code / 100);
-    if let Some(r) = op.responses.iter().find(|r| r.status.eq_ignore_ascii_case(&class_pat)) {
+    if let Some(r) = op
+        .responses
+        .iter()
+        .find(|r| r.status.eq_ignore_ascii_case(&class_pat))
+    {
         return Some(r);
     }
     op.responses.iter().find(|r| r.status == "default")
 }
 
 fn lowest_2xx(op: &SpecOperation) -> Option<&SpecResponse> {
-    op.responses.iter().filter(|r| is_2xx(&r.status)).min_by_key(|r| status_sort_key(&r.status))
+    op.responses
+        .iter()
+        .filter(|r| is_2xx(&r.status))
+        .min_by_key(|r| status_sort_key(&r.status))
 }
 
 fn is_2xx(status: &str) -> bool {
@@ -102,7 +117,10 @@ pub fn scrub_schema(schema: Value) -> Value {
                     "discriminator" | "xml" | "example" | "externalDocs" => {}
                     "properties" | "patternProperties" => {
                         if let Value::Object(inner) = v {
-                            let scrubbed = inner.into_iter().map(|(pk, pv)| (pk, scrub_schema(pv))).collect();
+                            let scrubbed = inner
+                                .into_iter()
+                                .map(|(pk, pv)| (pk, scrub_schema(pv)))
+                                .collect();
                             out.insert(k, Value::Object(scrubbed));
                         } else {
                             out.insert(k, v);
@@ -113,7 +131,10 @@ pub fn scrub_schema(schema: Value) -> Value {
                     }
                     "allOf" | "oneOf" | "anyOf" => {
                         if let Value::Array(arr) = v {
-                            out.insert(k, Value::Array(arr.into_iter().map(scrub_schema).collect()));
+                            out.insert(
+                                k,
+                                Value::Array(arr.into_iter().map(scrub_schema).collect()),
+                            );
                         } else {
                             out.insert(k, v);
                         }
@@ -207,7 +228,8 @@ mod tests {
 
     #[test]
     fn contract_checks_emit_status_content_type_schema() {
-        let schema = serde_json::json!({"type": "object", "properties": {"id": {"type": "integer"}}});
+        let schema =
+            serde_json::json!({"type": "object", "properties": {"id": {"type": "integer"}}});
         let op = op_with_responses(vec![SpecResponse {
             status: "200".into(),
             content_type: Some("application/json".into()),
@@ -215,7 +237,13 @@ mod tests {
         }]);
         let checks = contract_checks(&op, None);
         assert_eq!(checks.len(), 3);
-        assert!(matches!(checks[0], Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+        assert!(matches!(
+            checks[0],
+            Check::StatusCode {
+                op: NumberOp::Eq,
+                value: 200
+            }
+        ));
         assert!(matches!(&checks[1], Check::ContentType { value } if value == "application/json"));
         assert!(matches!(&checks[2], Check::JsonSchema { .. }));
     }
@@ -279,7 +307,10 @@ mod tests {
             }
         });
         let scrubbed = scrub_schema(schema);
-        assert_eq!(scrubbed["properties"]["tag"]["type"], serde_json::json!(["string", "null"]));
+        assert_eq!(
+            scrubbed["properties"]["tag"]["type"],
+            serde_json::json!(["string", "null"])
+        );
         assert_eq!(
             scrubbed["properties"]["list"]["items"]["type"],
             serde_json::json!(["integer", "null"])
@@ -301,8 +332,14 @@ mod tests {
         assert!(scrubbed.get("nullable").is_none());
 
         let good = serde_json::json!({"id": 1});
-        assert!(jsonschema::is_valid(&scrubbed, &good), "expected non-null conforming body to validate");
-        assert!(jsonschema::is_valid(&scrubbed, &Value::Null), "expected null to still validate");
+        assert!(
+            jsonschema::is_valid(&scrubbed, &good),
+            "expected non-null conforming body to validate"
+        );
+        assert!(
+            jsonschema::is_valid(&scrubbed, &Value::Null),
+            "expected null to still validate"
+        );
 
         let bad = serde_json::json!({"id": "not-a-number"});
         assert!(!jsonschema::is_valid(&scrubbed, &bad));

@@ -11,7 +11,7 @@ use egui_extras::{Column, TableBuilder};
 use forge_core::exec::StoredCookie;
 
 use crate::bridge::{Bridge, Cmd};
-use crate::state::AppState;
+use crate::state::{AppState, StatusMessage};
 
 /// Where a workspace's cookie jar is persisted, under `.forge-local/`.
 pub fn cookies_path(root: &Path) -> PathBuf {
@@ -30,76 +30,93 @@ pub struct CookiesUiState {
 /// Render the Cookies tool window.
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
     if !state.cookies_ui.requested {
-        bridge.send(Cmd::ListCookies);
-        state.cookies_ui.requested = true;
+        match bridge.send(Cmd::ListCookies) {
+            Ok(()) => state.cookies_ui.requested = true,
+            Err(error) => state.status = Some(StatusMessage::error(error)),
+        }
     }
 
     ui.horizontal(|ui| {
         if ui.button("Refresh").clicked() {
-            bridge.send(Cmd::ListCookies);
+            if let Err(error) = bridge.send(Cmd::ListCookies) {
+                state.status = Some(StatusMessage::error(error));
+            }
         }
         if ui.button("Clear all").clicked() {
-            bridge.send(Cmd::ClearCookies);
+            if let Err(error) = bridge.send(Cmd::ClearCookies) {
+                state.status = Some(StatusMessage::error(error));
+            }
         }
     });
     ui.separator();
 
     let mut remove: Option<(String, String)> = None;
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        TableBuilder::new(ui)
-            .id_salt("cookies-table")
-            .striped(true)
-            .column(Column::auto().at_least(140.0).resizable(true))
-            .column(Column::auto().at_least(70.0).resizable(true))
-            .column(Column::auto().at_least(100.0).resizable(true))
-            .column(Column::remainder().at_least(120.0))
-            .column(Column::auto().at_least(150.0))
-            .column(Column::auto().at_least(50.0))
-            .column(Column::auto().at_least(60.0))
-            .column(Column::exact(28.0))
-            .header(20.0, |mut header| {
-                for label in ["Domain", "Path", "Name", "Value", "Expires", "Secure", "HttpOnly", ""] {
-                    header.col(|ui| {
-                        ui.strong(label);
-                    });
-                }
-            })
-            .body(|mut body| {
-                for c in &state.cookies_ui.rows {
-                    body.row(20.0, |mut row| {
-                        row.col(|ui| {
-                            ui.monospace(&c.domain);
+    egui::ScrollArea::vertical()
+        .id_salt("cookies-sa-1")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            TableBuilder::new(ui)
+                .id_salt("cookies-table")
+                .striped(true)
+                .column(Column::auto().at_least(140.0).resizable(true))
+                .column(Column::auto().at_least(70.0).resizable(true))
+                .column(Column::auto().at_least(100.0).resizable(true))
+                .column(Column::remainder().at_least(120.0))
+                .column(Column::auto().at_least(150.0))
+                .column(Column::auto().at_least(50.0))
+                .column(Column::auto().at_least(60.0))
+                .column(Column::exact(28.0))
+                .header(20.0, |mut header| {
+                    for label in [
+                        "Domain", "Path", "Name", "Value", "Expires", "Secure", "HttpOnly", "",
+                    ] {
+                        header.col(|ui| {
+                            ui.strong(label);
                         });
-                        row.col(|ui| {
-                            ui.monospace(&c.path);
+                    }
+                })
+                .body(|mut body| {
+                    for c in &state.cookies_ui.rows {
+                        body.row(20.0, |mut row| {
+                            row.col(|ui| {
+                                ui.monospace(&c.domain);
+                            });
+                            row.col(|ui| {
+                                ui.monospace(&c.path);
+                            });
+                            row.col(|ui| {
+                                ui.monospace(&c.name);
+                            });
+                            row.col(|ui| {
+                                ui.monospace(truncate(&c.value, 40));
+                            });
+                            row.col(|ui| {
+                                ui.label(
+                                    c.expires
+                                        .map(|e| e.to_rfc3339())
+                                        .unwrap_or_else(|| "session".to_string()),
+                                );
+                            });
+                            row.col(|ui| {
+                                ui.label(if c.secure { "yes" } else { "no" });
+                            });
+                            row.col(|ui| {
+                                ui.label(if c.http_only { "yes" } else { "no" });
+                            });
+                            row.col(|ui| {
+                                if ui.small_button("\u{2715}").clicked() {
+                                    remove = Some((c.domain.clone(), c.name.clone()));
+                                }
+                            });
                         });
-                        row.col(|ui| {
-                            ui.monospace(&c.name);
-                        });
-                        row.col(|ui| {
-                            ui.monospace(truncate(&c.value, 40));
-                        });
-                        row.col(|ui| {
-                            ui.label(c.expires.map(|e| e.to_rfc3339()).unwrap_or_else(|| "session".to_string()));
-                        });
-                        row.col(|ui| {
-                            ui.label(if c.secure { "yes" } else { "no" });
-                        });
-                        row.col(|ui| {
-                            ui.label(if c.http_only { "yes" } else { "no" });
-                        });
-                        row.col(|ui| {
-                            if ui.small_button("\u{2715}").clicked() {
-                                remove = Some((c.domain.clone(), c.name.clone()));
-                            }
-                        });
-                    });
-                }
-            });
-    });
+                    }
+                });
+        });
 
     if let Some((domain, name)) = remove {
-        bridge.send(Cmd::RemoveCookie { domain, name });
+        if let Err(error) = bridge.send(Cmd::RemoveCookie { domain, name }) {
+            state.status = Some(StatusMessage::error(error));
+        }
     }
 }
 

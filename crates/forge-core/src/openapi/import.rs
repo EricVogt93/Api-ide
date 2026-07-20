@@ -77,16 +77,15 @@ const HTTP_METHODS: &[(&str, Method)] = &[
 pub fn parse_spec(text: &str) -> Result<ParsedSpec, OpenApiError> {
     let raw: Value = match serde_json::from_str::<Value>(text) {
         Ok(v) => v,
-        Err(json_err) => serde_yaml_ng::from_str::<Value>(text)
-            .map_err(|yaml_err| {
-                OpenApiError::Parse(format!(
-                    "not valid JSON ({json_err}) or YAML ({yaml_err})"
-                ))
-            })?,
+        Err(json_err) => serde_yaml_ng::from_str::<Value>(text).map_err(|yaml_err| {
+            OpenApiError::Parse(format!("not valid JSON ({json_err}) or YAML ({yaml_err})"))
+        })?,
     };
 
     let Value::Object(_) = &raw else {
-        return Err(OpenApiError::Parse("document root must be an object".into()));
+        return Err(OpenApiError::Parse(
+            "document root must be an object".into(),
+        ));
     };
 
     let openapi_version = raw
@@ -94,8 +93,7 @@ pub fn parse_spec(text: &str) -> Result<ParsedSpec, OpenApiError> {
         .and_then(Value::as_str)
         .ok_or_else(|| {
             OpenApiError::Unsupported(
-                "missing 'openapi' field (Swagger 2.0 and other formats are not supported)"
-                    .into(),
+                "missing 'openapi' field (Swagger 2.0 and other formats are not supported)".into(),
             )
         })?
         .to_string();
@@ -140,7 +138,13 @@ pub fn parse_spec(text: &str) -> Result<ParsedSpec, OpenApiError> {
 
     let operations = extract_operations(&raw);
 
-    Ok(ParsedSpec { title, version, servers, operations, raw })
+    Ok(ParsedSpec {
+        title,
+        version,
+        servers,
+        operations,
+        raw,
+    })
 }
 
 fn extract_operations(raw: &Value) -> Vec<SpecOperation> {
@@ -153,7 +157,9 @@ fn extract_operations(raw: &Value) -> Vec<SpecOperation> {
 
     for (path, path_item_raw) in paths {
         let path_item = resolve_refs(raw, path_item_raw, 0);
-        let Some(path_item_obj) = path_item.as_object() else { continue };
+        let Some(path_item_obj) = path_item.as_object() else {
+            continue;
+        };
 
         let path_level_params: Vec<Value> = path_item_obj
             .get("parameters")
@@ -162,18 +168,27 @@ fn extract_operations(raw: &Value) -> Vec<SpecOperation> {
             .unwrap_or_default();
 
         for (method_name, method) in HTTP_METHODS {
-            let Some(op_raw) = path_item_obj.get(*method_name) else { continue };
-            let Some(op) = op_raw.as_object() else { continue };
+            let Some(op_raw) = path_item_obj.get(*method_name) else {
+                continue;
+            };
+            let Some(op) = op_raw.as_object() else {
+                continue;
+            };
 
-            let op_level_params: Vec<Value> =
-                op.get("parameters").and_then(Value::as_array).cloned().unwrap_or_default();
+            let op_level_params: Vec<Value> = op
+                .get("parameters")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             let merged_params = merge_params(&path_level_params, &op_level_params);
 
             let mut path_params = Vec::new();
             let mut query_params = Vec::new();
             let mut header_params = Vec::new();
             for p in &merged_params {
-                let Some(name) = p.get("name").and_then(Value::as_str) else { continue };
+                let Some(name) = p.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
                 let required = p.get("required").and_then(Value::as_bool).unwrap_or(false);
                 match p.get("in").and_then(Value::as_str) {
                     Some("path") => path_params.push(name.to_string()),
@@ -183,15 +198,22 @@ fn extract_operations(raw: &Value) -> Vec<SpecOperation> {
                 }
             }
 
-            let summary = op.get("summary").and_then(Value::as_str).unwrap_or_default().to_string();
+            let summary = op
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             let tags = op
                 .get("tags")
                 .and_then(Value::as_array)
-                .map(|arr| arr.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|t| t.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
 
-            let (request_content_type, request_schema, request_example) =
-                extract_request_body(op);
+            let (request_content_type, request_schema, request_example) = extract_request_body(op);
 
             let responses = extract_responses(op);
 
@@ -220,13 +242,22 @@ fn extract_operations(raw: &Value) -> Vec<SpecOperation> {
 fn merge_params(path_level: &[Value], op_level: &[Value]) -> Vec<Value> {
     let key_of = |p: &Value| {
         (
-            p.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
-            p.get("in").and_then(Value::as_str).unwrap_or_default().to_string(),
+            p.get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            p.get("in")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
         )
     };
     let op_keys: HashSet<(String, String)> = op_level.iter().map(key_of).collect();
-    let mut merged: Vec<Value> =
-        path_level.iter().filter(|p| !op_keys.contains(&key_of(p))).cloned().collect();
+    let mut merged: Vec<Value> = path_level
+        .iter()
+        .filter(|p| !op_keys.contains(&key_of(p)))
+        .cloned()
+        .collect();
     merged.extend(op_level.iter().cloned());
     merged
 }
@@ -240,10 +271,18 @@ fn pick_content_type(content: &serde_json::Map<String, Value>) -> Option<String>
     content.keys().next().cloned()
 }
 
-fn extract_request_body(op: &serde_json::Map<String, Value>) -> (Option<String>, Option<Value>, Option<Value>) {
-    let Some(rb) = op.get("requestBody") else { return (None, None, None) };
-    let Some(content) = rb.get("content").and_then(Value::as_object) else { return (None, None, None) };
-    let Some(ct) = pick_content_type(content) else { return (None, None, None) };
+fn extract_request_body(
+    op: &serde_json::Map<String, Value>,
+) -> (Option<String>, Option<Value>, Option<Value>) {
+    let Some(rb) = op.get("requestBody") else {
+        return (None, None, None);
+    };
+    let Some(content) = rb.get("content").and_then(Value::as_object) else {
+        return (None, None, None);
+    };
+    let Some(ct) = pick_content_type(content) else {
+        return (None, None, None);
+    };
     let media = content.get(&ct);
     let schema = media.and_then(|m| m.get("schema")).cloned();
     let example = media
@@ -269,14 +308,19 @@ fn extract_responses(op: &serde_json::Map<String, Value>) -> Vec<SpecResponse> {
         .iter()
         .map(|(status, resp)| {
             let content = resp.get("content").and_then(Value::as_object);
-            let (content_type, schema) = match content.and_then(|c| pick_content_type(c).map(|ct| (c, ct))) {
-                Some((c, ct)) => {
-                    let schema = c.get(&ct).and_then(|m| m.get("schema")).cloned();
-                    (Some(ct), schema)
-                }
-                None => (None, None),
-            };
-            SpecResponse { status: status.clone(), content_type, schema }
+            let (content_type, schema) =
+                match content.and_then(|c| pick_content_type(c).map(|ct| (c, ct))) {
+                    Some((c, ct)) => {
+                        let schema = c.get(&ct).and_then(|m| m.get("schema")).cloned();
+                        (Some(ct), schema)
+                    }
+                    None => (None, None),
+                };
+            SpecResponse {
+                status: status.clone(),
+                content_type,
+                schema,
+            }
         })
         .collect()
 }
@@ -371,8 +415,92 @@ pub fn resolve_refs(root: &Value, node: &Value, depth: u32) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(arr) => Value::Array(arr.iter().map(|v| resolve_refs(root, v, depth)).collect()),
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(|v| resolve_refs(root, v, depth)).collect())
+        }
         other => other.clone(),
+    }
+}
+
+/// Extract the path component of a request URL for matching against spec
+/// path templates: strips a leading `{{variable}}` (typically the base URL),
+/// then `scheme://host`, then the query string.
+pub fn url_to_path(url: &str) -> String {
+    let mut s = url.trim();
+    // Strip a leading {{var}} (and any adjoined scheme it expands to).
+    if let Some(rest) = s.strip_prefix("{{") {
+        if let Some(end) = rest.find("}}") {
+            s = &rest[end + 2..];
+        }
+    }
+    // Strip scheme://host.
+    if let Some(p) = s.find("://") {
+        let after = &s[p + 3..];
+        s = match after.find('/') {
+            Some(i) => &after[i..],
+            None => "/",
+        };
+    }
+    let s = s.split('?').next().unwrap_or(s);
+    if s.is_empty() {
+        "/".to_string()
+    } else if s.starts_with('/') {
+        s.to_string()
+    } else {
+        format!("/{s}")
+    }
+}
+
+/// Does a concrete request path match an OpenAPI path template?
+/// Template segments in `{braces}` match any single segment.
+pub fn path_matches_template(template: &str, path: &str) -> bool {
+    let t: Vec<&str> = template
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let p: Vec<&str> = path
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    t.len() == p.len()
+        && t.iter().zip(&p).all(|(ts, ps)| {
+            (ts.starts_with('{') && ts.ends_with('}')) || ts == ps || ps.contains("{{")
+        })
+}
+
+impl ParsedSpec {
+    /// Find the operation matching `method` + a request `url` (which may
+    /// contain a `{{baseUrl}}` prefix and `{{variables}}` in segments).
+    pub fn find_operation(&self, method: Method, url: &str) -> Option<&SpecOperation> {
+        let path = url_to_path(url);
+        self.operations
+            .iter()
+            .find(|op| op.method == method && path_matches_template(&op.path, &path))
+    }
+
+    /// Does any operation (any method) match this URL's path?
+    pub fn any_path_matches(&self, url: &str) -> bool {
+        let path = url_to_path(url);
+        self.operations
+            .iter()
+            .any(|op| path_matches_template(&op.path, &path))
+    }
+
+    /// Operations whose path or summary contains `query`
+    /// (case-insensitive); everything when `query` is empty.
+    pub fn suggest(&self, query: &str) -> Vec<&SpecOperation> {
+        let q = url_to_path(query).to_lowercase();
+        let q = q.trim_start_matches('/');
+        self.operations
+            .iter()
+            .filter(|op| {
+                q.is_empty()
+                    || op.path.to_lowercase().contains(q)
+                    || op.summary.to_lowercase().contains(q)
+            })
+            .collect()
     }
 }
 
@@ -400,8 +528,48 @@ mod tests {
     fn parses_json_petstore() {
         let spec = parse_spec(&petstore_json()).expect("parse");
         assert_eq!(spec.title, "Petstore");
-        assert!(spec.servers.contains(&"https://api.example.com/v1".to_string()));
+        assert!(spec
+            .servers
+            .contains(&"https://api.example.com/v1".to_string()));
         assert!(!spec.operations.is_empty());
+    }
+
+    #[test]
+    fn url_to_path_strips_var_scheme_host_query() {
+        assert_eq!(url_to_path("{{baseUrl}}/pets/1?x=2"), "/pets/1");
+        assert_eq!(url_to_path("https://api.example.com/v1/pets"), "/v1/pets");
+        assert_eq!(url_to_path("https://api.example.com"), "/");
+        assert_eq!(url_to_path("/pets"), "/pets");
+        assert_eq!(url_to_path("pets"), "/pets");
+    }
+
+    #[test]
+    fn template_matching_handles_braces_and_vars() {
+        assert!(path_matches_template("/pets/{petId}", "/pets/42"));
+        assert!(path_matches_template("/pets", "/pets"));
+        assert!(!path_matches_template("/pets", "/pets/42"));
+        // A {{variable}} segment in the request URL matches any template seg.
+        assert!(path_matches_template("/pets/literal", "/pets/{{id}}"));
+    }
+
+    #[test]
+    fn find_operation_and_suggest_work_on_petstore() {
+        let spec = parse_spec(&petstore_json()).expect("parse");
+        let get = spec
+            .operations
+            .iter()
+            .find(|o| o.method == Method::Get)
+            .expect("a GET op");
+        let url = format!(
+            "{{{{baseUrl}}}}{}",
+            get.path.replace('{', "{{").replace('}', "}}")
+        );
+        assert!(spec.find_operation(get.method, &url).is_some(), "{url}");
+        assert!(spec.any_path_matches(&url));
+        assert!(!spec.suggest("").is_empty());
+        assert!(spec
+            .find_operation(get.method, "{{baseUrl}}/definitely/not/there")
+            .is_none());
     }
 
     #[test]
@@ -419,7 +587,11 @@ mod tests {
             .iter()
             .find(|o| o.id == "getPetById")
             .expect("getPetById operation");
-        let schema = get_pet.responses.iter().find(|r| r.status == "200").unwrap();
+        let schema = get_pet
+            .responses
+            .iter()
+            .find(|r| r.status == "200")
+            .unwrap();
         let schema = schema.schema.as_ref().expect("schema");
         // The $ref to #/components/schemas/Pet must be inlined.
         assert!(schema.get("$ref").is_none());
@@ -430,12 +602,22 @@ mod tests {
     #[test]
     fn extracts_params() {
         let spec = parse_spec(&petstore_json()).expect("parse");
-        let get_pet = spec.operations.iter().find(|o| o.id == "getPetById").unwrap();
+        let get_pet = spec
+            .operations
+            .iter()
+            .find(|o| o.id == "getPetById")
+            .unwrap();
         assert_eq!(get_pet.path_params, vec!["petId".to_string()]);
 
         let list_pets = spec.operations.iter().find(|o| o.id == "listPets").unwrap();
-        assert!(list_pets.query_params.iter().any(|(n, req)| n == "limit" && !req));
-        assert!(list_pets.query_params.iter().any(|(n, req)| n == "tag" && !req));
+        assert!(list_pets
+            .query_params
+            .iter()
+            .any(|(n, req)| n == "limit" && !req));
+        assert!(list_pets
+            .query_params
+            .iter()
+            .any(|(n, req)| n == "tag" && !req));
     }
 
     #[test]
@@ -511,7 +693,10 @@ mod tests {
         assert_eq!(spec.title, "T31");
         let op = &spec.operations[0];
         let schema = op.responses[0].schema.as_ref().unwrap();
-        assert_eq!(schema.get("type").unwrap(), &serde_json::json!(["string", "null"]));
+        assert_eq!(
+            schema.get("type").unwrap(),
+            &serde_json::json!(["string", "null"])
+        );
     }
 
     #[test]

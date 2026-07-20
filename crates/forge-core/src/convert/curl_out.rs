@@ -1,6 +1,8 @@
 //! Render a [`RequestDef`] as a curl command line.
 
-use crate::convert::common::{append_query, enabled_headers, graphql_json_body, has_header, query_pairs, shell_quote};
+use crate::convert::common::{
+    append_query, enabled_headers, graphql_json_body, has_header, query_pairs, shell_quote,
+};
 use crate::model::{ApiKeyPlacement, AuthConfig, BodyDef, PartContent, RequestDef};
 
 /// Options controlling how [`to_curl`] renders a command.
@@ -14,7 +16,10 @@ pub struct CurlExportOptions {
 
 impl Default for CurlExportOptions {
     fn default() -> Self {
-        Self { multiline: true, long_flags: false }
+        Self {
+            multiline: true,
+            long_flags: false,
+        }
     }
 }
 
@@ -36,30 +41,53 @@ pub fn to_curl(def: &RequestDef, opts: &CurlExportOptions) -> String {
     match &def.auth {
         AuthConfig::Basic { username, password } => {
             let flag = if opts.long_flags { "--user" } else { "-u" };
-            auth_chunk =
-                Some(format!("{flag} {}", shell_quote(&format!("{username}:{password}"))));
+            auth_chunk = Some(format!(
+                "{flag} {}",
+                shell_quote(&format!("{username}:{password}"))
+            ));
         }
         AuthConfig::Bearer { token, prefix } => {
             let prefix = prefix.clone().unwrap_or_else(|| "Bearer".to_string());
             headers.push(("Authorization".to_string(), format!("{prefix} {token}")));
         }
-        AuthConfig::ApiKey { key, value, placement } => match placement {
+        AuthConfig::ApiKey {
+            key,
+            value,
+            placement,
+        } => match placement {
             ApiKeyPlacement::Header => headers.push((key.clone(), value.clone())),
             ApiKeyPlacement::Query => query.push((key.clone(), value.clone())),
         },
         AuthConfig::Digest { username, password } => {
-            let flag = if opts.long_flags { "--digest --user" } else { "--digest -u" };
-            auth_chunk =
-                Some(format!("{flag} {}", shell_quote(&format!("{username}:{password}"))));
+            let flag = if opts.long_flags {
+                "--digest --user"
+            } else {
+                "--digest -u"
+            };
+            auth_chunk = Some(format!(
+                "{flag} {}",
+                shell_quote(&format!("{username}:{password}"))
+            ));
         }
-        AuthConfig::Ntlm { username, password, domain } => {
-            let flag = if opts.long_flags { "--ntlm --user" } else { "--ntlm -u" };
+        AuthConfig::Ntlm {
+            username,
+            password,
+            domain,
+        } => {
+            let flag = if opts.long_flags {
+                "--ntlm --user"
+            } else {
+                "--ntlm -u"
+            };
             let user = if domain.is_empty() {
                 username.clone()
             } else {
                 format!("{domain}\\{username}")
             };
-            auth_chunk = Some(format!("{flag} {}", shell_quote(&format!("{user}:{password}"))));
+            auth_chunk = Some(format!(
+                "{flag} {}",
+                shell_quote(&format!("{user}:{password}"))
+            ));
         }
         AuthConfig::None | AuthConfig::Inherit => {}
         // OAuth2 flows need a live token exchange and SigV4 a computed
@@ -99,7 +127,11 @@ pub fn to_curl(def: &RequestDef, opts: &CurlExportOptions) -> String {
                 body_chunks.push(format!("{flag} {}", shell_quote(&value)));
             }
         }
-        BodyDef::GraphQl { query: gql_query, variables, operation_name } => {
+        BodyDef::GraphQl {
+            query: gql_query,
+            variables,
+            operation_name,
+        } => {
             if !has_header(&headers, "content-type") {
                 headers.push(("Content-Type".to_string(), "application/json".to_string()));
             }
@@ -107,7 +139,10 @@ pub fn to_curl(def: &RequestDef, opts: &CurlExportOptions) -> String {
             body_chunks.push(format!("--data-raw {}", shell_quote(&json)));
         }
         BodyDef::Binary { path } => {
-            body_chunks.push(format!("--data-binary {}", shell_quote(&format!("@{path}"))));
+            body_chunks.push(format!(
+                "--data-binary {}",
+                shell_quote(&format!("@{path}"))
+            ));
         }
     }
 
@@ -116,17 +151,28 @@ pub fn to_curl(def: &RequestDef, opts: &CurlExportOptions) -> String {
     chunks.push(format!("{method_flag} {}", def.method.as_str()));
     chunks.push(shell_quote(&url));
     for (k, v) in &headers {
-        chunks.push(format!("{header_flag} {}", shell_quote(&format!("{k}: {v}"))));
+        chunks.push(format!(
+            "{header_flag} {}",
+            shell_quote(&format!("{k}: {v}"))
+        ));
     }
     if let Some(auth_chunk) = auth_chunk {
         chunks.push(auth_chunk);
     }
     chunks.extend(body_chunks);
     if def.settings.follow_redirects == Some(true) {
-        chunks.push(if opts.long_flags { "--location".to_string() } else { "-L".to_string() });
+        chunks.push(if opts.long_flags {
+            "--location".to_string()
+        } else {
+            "-L".to_string()
+        });
     }
     if def.settings.verify_tls == Some(false) {
-        chunks.push(if opts.long_flags { "--insecure".to_string() } else { "-k".to_string() });
+        chunks.push(if opts.long_flags {
+            "--insecure".to_string()
+        } else {
+            "-k".to_string()
+        });
     }
 
     let sep = if opts.multiline { " \\\n  " } else { " " };
@@ -141,16 +187,31 @@ mod tests {
 
     fn sample() -> RequestDef {
         let mut def = RequestDef::new("Create user", Method::Post, "https://api.example.com/users");
-        def.headers.push(KeyValue::new("Content-Type", "application/json"));
-        def.auth = AuthConfig::Basic { username: "alice".into(), password: "s3cret".into() };
-        def.body = BodyDef::Json { text: r#"{"name":"Ada"}"#.to_string() };
-        def.params.push(Param { kv: KeyValue::new("verbose", "1"), kind: ParamKind::Query });
+        def.headers
+            .push(KeyValue::new("Content-Type", "application/json"));
+        def.auth = AuthConfig::Basic {
+            username: "alice".into(),
+            password: "s3cret".into(),
+        };
+        def.body = BodyDef::Json {
+            text: r#"{"name":"Ada"}"#.to_string(),
+        };
+        def.params.push(Param {
+            kv: KeyValue::new("verbose", "1"),
+            kind: ParamKind::Query,
+        });
         def
     }
 
     #[test]
     fn emits_expected_flags() {
-        let out = to_curl(&sample(), &CurlExportOptions { multiline: false, long_flags: false });
+        let out = to_curl(
+            &sample(),
+            &CurlExportOptions {
+                multiline: false,
+                long_flags: false,
+            },
+        );
         assert!(out.starts_with("curl -X POST "));
         assert!(out.contains("'https://api.example.com/users?verbose=1'"));
         assert!(out.contains("-H 'Content-Type: application/json'"));
@@ -166,7 +227,13 @@ mod tests {
 
     #[test]
     fn long_flags_option() {
-        let out = to_curl(&sample(), &CurlExportOptions { multiline: false, long_flags: true });
+        let out = to_curl(
+            &sample(),
+            &CurlExportOptions {
+                multiline: false,
+                long_flags: true,
+            },
+        );
         assert!(out.contains("--request POST"));
         assert!(out.contains("--header 'Content-Type: application/json'"));
         assert!(out.contains("--user 'alice:s3cret'"));
@@ -175,8 +242,17 @@ mod tests {
     #[test]
     fn escapes_single_quotes_in_body() {
         let mut def = sample();
-        def.body = BodyDef::Raw { text: "it's a test".into(), language: Default::default() };
-        let out = to_curl(&def, &CurlExportOptions { multiline: false, long_flags: false });
+        def.body = BodyDef::Raw {
+            text: "it's a test".into(),
+            language: Default::default(),
+        };
+        let out = to_curl(
+            &def,
+            &CurlExportOptions {
+                multiline: false,
+                long_flags: false,
+            },
+        );
         assert!(out.contains(r#"'it'"'"'s a test'"#));
     }
 
@@ -185,7 +261,13 @@ mod tests {
         let mut def = sample();
         def.settings.follow_redirects = Some(true);
         def.settings.verify_tls = Some(false);
-        let out = to_curl(&def, &CurlExportOptions { multiline: false, long_flags: false });
+        let out = to_curl(
+            &def,
+            &CurlExportOptions {
+                multiline: false,
+                long_flags: false,
+            },
+        );
         assert!(out.contains(" -L"));
         assert!(out.contains(" -k"));
     }
@@ -193,12 +275,22 @@ mod tests {
     #[test]
     fn roundtrip_preserves_method_url_headers_body() {
         let def = sample();
-        let curl = to_curl(&def, &CurlExportOptions { multiline: true, long_flags: false });
+        let curl = to_curl(
+            &def,
+            &CurlExportOptions {
+                multiline: true,
+                long_flags: false,
+            },
+        );
         let reparsed = parse_curl(&curl).expect("roundtrip should parse");
         assert_eq!(reparsed.method, def.method);
         assert_eq!(reparsed.url, "https://api.example.com/users?verbose=1");
         assert_eq!(
-            reparsed.headers.iter().find(|h| h.key == "Content-Type").map(|h| h.value.clone()),
+            reparsed
+                .headers
+                .iter()
+                .find(|h| h.key == "Content-Type")
+                .map(|h| h.value.clone()),
             Some("application/json".to_string())
         );
         match (&reparsed.body, &def.body) {

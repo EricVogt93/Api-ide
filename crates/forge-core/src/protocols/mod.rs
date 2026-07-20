@@ -32,10 +32,16 @@ impl TlsMaterial {
         root: &std::path::Path,
         tls: Option<&crate::model::TlsSettings>,
     ) -> std::io::Result<Self> {
-        let Some(tls) = tls else { return Ok(Self::default()) };
+        let Some(tls) = tls else {
+            return Ok(Self::default());
+        };
         let read = |p: &str| {
             let path = std::path::Path::new(p);
-            let resolved = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+            let resolved = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                root.join(path)
+            };
             std::fs::read(resolved)
         };
         let client_pem = match (&tls.client_cert, &tls.client_key) {
@@ -55,7 +61,10 @@ impl TlsMaterial {
             Some(path) => Some(read(path)?),
             None => None,
         };
-        Ok(Self { client_pem, extra_roots_pem })
+        Ok(Self {
+            client_pem,
+            extra_roots_pem,
+        })
     }
 }
 
@@ -72,9 +81,8 @@ pub(crate) fn rustls_client_config(
     };
     if let Some(pem) = &material.extra_roots_pem {
         for cert in CertificateDer::pem_slice_iter(pem) {
-            let cert = cert.map_err(|e| {
-                ProtocolError::Connect(format!("invalid CA bundle PEM: {e:?}"))
-            })?;
+            let cert =
+                cert.map_err(|e| ProtocolError::Connect(format!("invalid CA bundle PEM: {e:?}")))?;
             roots
                 .add(cert)
                 .map_err(|e| ProtocolError::Connect(format!("invalid CA certificate: {e}")))?;

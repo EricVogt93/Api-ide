@@ -49,7 +49,10 @@ pub enum AuthConfig {
         /// Loopback port for the redirect listener; 0 = ephemeral.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         redirect_port: Option<u16>,
-        #[serde(default = "super::default_true", skip_serializing_if = "super::is_true")]
+        #[serde(
+            default = "super::default_true",
+            skip_serializing_if = "super::is_true"
+        )]
         pkce: bool,
     },
     /// HTTP Digest auth (RFC 7616): the engine answers the server's 401

@@ -113,7 +113,10 @@ impl Method {
     }
 
     pub fn parse(s: &str) -> Option<Method> {
-        Method::ALL.iter().copied().find(|m| m.as_str().eq_ignore_ascii_case(s))
+        Method::ALL
+            .iter()
+            .copied()
+            .find(|m| m.as_str().eq_ignore_ascii_case(s))
     }
 
     pub fn has_body_by_default(&self) -> bool {
@@ -202,10 +205,16 @@ mod tests {
 
     #[test]
     fn scripts_default_language_is_rhai_and_omitted_from_json() {
-        let scripts = Scripts { pre_request: Some("x".to_string()), ..Default::default() };
+        let scripts = Scripts {
+            pre_request: Some("x".to_string()),
+            ..Default::default()
+        };
         assert_eq!(scripts.language, ScriptLang::Rhai);
         let json = serde_json::to_string(&scripts).expect("serialize");
-        assert!(!json.contains("language"), "default language must be omitted: {json}");
+        assert!(
+            !json.contains("language"),
+            "default language must be omitted: {json}"
+        );
         // Legacy documents without a language field parse as Rhai.
         let back: Scripts = serde_json::from_str(r#"{"preRequest":"x"}"#).expect("deserialize");
         assert_eq!(back.language, ScriptLang::Rhai);

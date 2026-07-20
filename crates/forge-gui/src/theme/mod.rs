@@ -17,8 +17,21 @@ pub enum ThemeKind {
 }
 
 /// Shared New-UI spacing polish applied by both theme builders: more air
-/// between widgets, larger paddings, comfortable menus.
+/// between widgets, larger paddings, comfortable menus. Also bumps every
+/// default text style +2px (13px body baseline reads too small on hidpi).
 pub(crate) fn polish_spacing(style: &mut egui::Style) {
+    for font in style.text_styles.values_mut() {
+        font.size += 2.0;
+    }
+    // Tool windows snap open/closed instantly, IntelliJ-style — egui's
+    // default size-lerp reads as sluggish since frames only repaint on input.
+    style.animation_time = 0.0;
+    // Debug builds: egui paints red outlines over every widget whose auto-id
+    // shifted between the two layout passes of a frame (panel toggles resize
+    // the editor, whose size-dependent branches then reorder auto-ids). The
+    // frame freezes on screen until the next input, so users see a "red
+    // skeleton". Purely cosmetic diagnostics — off.
+    style.debug.warn_if_rect_changes_id = false;
     let s = &mut style.spacing;
     s.item_spacing = egui::vec2(8.0, 6.0);
     s.button_padding = egui::vec2(10.0, 5.0);

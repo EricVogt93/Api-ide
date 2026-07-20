@@ -12,7 +12,11 @@ use super::import::SpecOperation;
 /// body derived from the request example or schema. No assertions attached.
 pub fn operation_to_request(op: &SpecOperation) -> RequestDef {
     let url = format!("{{{{baseUrl}}}}{}", convert_path(&op.path));
-    let name = if !op.summary.is_empty() { op.summary.clone() } else { op.id.clone() };
+    let name = if !op.summary.is_empty() {
+        op.summary.clone()
+    } else {
+        op.id.clone()
+    };
     let description = format!("{} {}", op.method.as_str(), op.path);
 
     let mut req = RequestDef::new(name, op.method, url);
@@ -27,7 +31,10 @@ pub fn operation_to_request(op: &SpecOperation) -> RequestDef {
     for (name, required) in &op.query_params {
         let mut kv = KeyValue::new(name.clone(), String::new());
         kv.enabled = *required;
-        req.params.push(Param { kv, kind: ParamKind::Query });
+        req.params.push(Param {
+            kv,
+            kind: ParamKind::Query,
+        });
     }
     for (name, _required) in &op.header_params {
         let mut kv = KeyValue::new(name.clone(), String::new());
@@ -36,9 +43,13 @@ pub fn operation_to_request(op: &SpecOperation) -> RequestDef {
     }
 
     req.body = if let Some(example) = &op.request_example {
-        BodyDef::Json { text: pretty_json(example) }
+        BodyDef::Json {
+            text: pretty_json(example),
+        }
     } else if let Some(schema) = &op.request_schema {
-        BodyDef::Json { text: pretty_json(&example_from_schema(schema, 0)) }
+        BodyDef::Json {
+            text: pretty_json(&example_from_schema(schema, 0)),
+        }
     } else {
         BodyDef::None
     };
@@ -78,7 +89,9 @@ pub fn example_from_schema(schema: &Value, depth: u32) -> Value {
     if depth > 6 {
         return Value::Null;
     }
-    let Some(obj) = schema.as_object() else { return Value::Null };
+    let Some(obj) = schema.as_object() else {
+        return Value::Null;
+    };
 
     if let Some(example) = obj.get("example") {
         return example.clone();
@@ -110,7 +123,9 @@ pub fn example_from_schema(schema: &Value, depth: u32) -> Value {
 
     let schema_type = obj.get("type").and_then(schema_type_name);
 
-    if schema_type.as_deref() == Some("object") || (schema_type.is_none() && obj.contains_key("properties")) {
+    if schema_type.as_deref() == Some("object")
+        || (schema_type.is_none() && obj.contains_key("properties"))
+    {
         return build_object_example(obj, depth);
     }
 
@@ -198,13 +213,20 @@ mod tests {
             request_content_type: None,
             request_schema: None,
             request_example: None,
-            responses: vec![SpecResponse { status: "200".into(), content_type: None, schema: None }],
+            responses: vec![SpecResponse {
+                status: "200".into(),
+                content_type: None,
+                schema: None,
+            }],
         }
     }
 
     #[test]
     fn convert_path_uses_colon_params() {
-        assert_eq!(convert_path("/pets/{petId}/tags/{tagId}"), "/pets/:petId/tags/:tagId");
+        assert_eq!(
+            convert_path("/pets/{petId}/tags/{tagId}"),
+            "/pets/:petId/tags/:tagId"
+        );
     }
 
     #[test]
@@ -280,9 +302,18 @@ mod tests {
             }
         });
         let example = example_from_schema(&schema, 0);
-        assert_eq!(example["id"], Value::String("00000000-0000-0000-0000-000000000000".into()));
-        assert_eq!(example["createdAt"], Value::String("2024-01-01T00:00:00Z".into()));
-        assert_eq!(example["owner"]["email"], Value::String("user@example.com".into()));
+        assert_eq!(
+            example["id"],
+            Value::String("00000000-0000-0000-0000-000000000000".into())
+        );
+        assert_eq!(
+            example["createdAt"],
+            Value::String("2024-01-01T00:00:00Z".into())
+        );
+        assert_eq!(
+            example["owner"]["email"],
+            Value::String("user@example.com".into())
+        );
         assert_eq!(example["tags"], serde_json::json!(["string"]));
         assert_eq!(example["active"], Value::Bool(true));
     }
@@ -290,7 +321,10 @@ mod tests {
     #[test]
     fn example_from_schema_prefers_explicit_example() {
         let schema = serde_json::json!({"type": "string", "example": "hello"});
-        assert_eq!(example_from_schema(&schema, 0), Value::String("hello".into()));
+        assert_eq!(
+            example_from_schema(&schema, 0),
+            Value::String("hello".into())
+        );
     }
 
     #[test]

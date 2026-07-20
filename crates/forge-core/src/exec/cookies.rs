@@ -197,12 +197,15 @@ impl CookieJar {
     }
 
     fn lock_entries(&self) -> std::sync::MutexGuard<'_, HashMap<CookieKey, StoredEntry>> {
-        self.entries.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn purge_expired(&self) {
         let now = Utc::now();
-        self.lock_entries().retain(|_, entry| entry.expires.is_none_or(|e| e > now));
+        self.lock_entries()
+            .retain(|_, entry| entry.expires.is_none_or(|e| e > now));
     }
 }
 
@@ -277,7 +280,10 @@ mod tests {
     #[test]
     fn domain_cookie_matches_subdomain() {
         let jar = CookieJar::new();
-        jar.store(&url("https://example.com/"), "sid=abc123; Domain=example.com");
+        jar.store(
+            &url("https://example.com/"),
+            "sid=abc123; Domain=example.com",
+        );
         assert_eq!(
             jar.matching(&url("https://sub.example.com/")),
             vec![("sid".to_string(), "abc123".to_string())]
@@ -328,7 +334,10 @@ mod tests {
     #[test]
     fn json_round_trip() {
         let jar = CookieJar::new();
-        jar.store(&url("https://example.com/"), "a=1; Domain=example.com; Secure; HttpOnly");
+        jar.store(
+            &url("https://example.com/"),
+            "a=1; Domain=example.com; Secure; HttpOnly",
+        );
         let json = jar.to_json();
         let restored = CookieJar::from_json(&json).expect("valid json");
         let cookies = restored.matching(&url("https://example.com/"));

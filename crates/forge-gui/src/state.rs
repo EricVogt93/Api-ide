@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use forge_core::history::HistoryStore;
-use forge_core::model::RequestDef;
+use forge_core::model::{Method, RequestDef};
 use forge_core::runner::{RequestOutcome, RunOptions, RunScope};
 use forge_core::store::Workspace;
 
@@ -21,17 +21,15 @@ use crate::panels::test_results::RunLog;
 use crate::theme::ThemeKind;
 use crate::widgets::response_view::ResponseViewState;
 
-/// Which sub-tab of the request editor is active.
+/// Which sub-tab of the request editor is active. Consolidated: `Params` is
+/// the combined "Request" tab (query params + headers + auth), `Assertions`
+/// is the combined "Tests" tab (assertions + extract + scripts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RequestSubTab {
     #[default]
     Params,
-    Headers,
-    Auth,
     Body,
     Assertions,
-    Extract,
-    Scripts,
     Settings,
 }
 
@@ -48,9 +46,12 @@ pub struct Tab {
     pub response: Option<RequestOutcome>,
     pub sub_tab: RequestSubTab,
     pub response_state: ResponseViewState,
-    /// Vertical splitter ratio between the request editor and the response
-    /// view, in `0.0..=1.0` (fraction given to the top/request side).
+    /// Splitter ratio between the request editor and the response view, in
+    /// `0.0..=1.0` (fraction given to the request side).
     pub split_ratio: f32,
+    /// `false` = request/response stacked (request on top); `true` = side by
+    /// side (request on the left).
+    pub split_horizontal: bool,
     /// Set to the bridge run id while a Send initiated from this specific
     /// tab is in flight; cleared when its `RequestFinished`/`RunFailed`
     /// event arrives.
@@ -59,14 +60,20 @@ pub struct Tab {
 
 impl Tab {
     pub fn new(rel_id: impl Into<String>, def: RequestDef) -> Self {
+        // Relay opens body-bearing methods on the Body tab, others on Params.
+        let sub_tab = match def.method {
+            Method::Post | Method::Put | Method::Patch => RequestSubTab::Body,
+            _ => RequestSubTab::Params,
+        };
         Self {
             rel_id: rel_id.into(),
             def,
             dirty: false,
             response: None,
-            sub_tab: RequestSubTab::default(),
+            sub_tab,
             response_state: ResponseViewState::default(),
             split_ratio: 0.55,
+            split_horizontal: false,
             run_id: None,
         }
     }
@@ -86,11 +93,19 @@ pub struct StatusMessage {
 
 impl StatusMessage {
     pub fn info(text: impl Into<String>) -> Self {
-        Self { text: text.into(), is_error: false, created: Instant::now() }
+        Self {
+            text: text.into(),
+            is_error: false,
+            created: Instant::now(),
+        }
     }
 
     pub fn error(text: impl Into<String>) -> Self {
-        Self { text: text.into(), is_error: true, created: Instant::now() }
+        Self {
+            text: text.into(),
+            is_error: true,
+            created: Instant::now(),
+        }
     }
 
     /// Toasts fade out after this long.
@@ -161,7 +176,6 @@ pub struct AppState {
     pub show_collections: bool,
     pub show_environment: bool,
     pub show_assets: bool,
-    pub show_bottom: bool,
     pub run_state: RunState,
     pub status: Option<StatusMessage>,
     pub collections: CollectionsUiState,
@@ -182,6 +196,16 @@ pub struct AppState {
     pub cookies_ui: CookiesUiState,
     /// reqv1 asset-store browser (left tool window).
     pub assets: crate::panels::assets::AssetsState,
+    /// Parsed OpenAPI spec powering editor assistance, fetched from the
+    /// workspace's `settings.openapi_url` (see `ForgeApp::ui`).
+    pub openapi: Option<forge_core::openapi::ParsedSpec>,
+    /// The `openapi_url` the current `openapi`/fetch belongs to; a change in
+    /// settings triggers a refetch.
+    pub openapi_source: Option<String>,
+    /// Last OpenAPI fetch/parse error, surfaced in the log.
+    pub openapi_error: Option<String>,
+    /// Cached git snapshot for the collections tree + status bar.
+    pub git: crate::git::GitState,
     /// Embedded terminal (bottom tool window).
     pub terminal: TerminalState,
     /// Application event log (bottom tool window).
@@ -208,9 +232,11 @@ impl Default for AppState {
             active_env: None,
             theme: ThemeKind::default(),
             show_collections: true,
-            show_environment: true,
+            // Relay has no right-hand environment panel — the environment
+            // lives in the top-bar pill. Keep the tool window available via
+            // the stripe / View menu, just closed by default.
+            show_environment: false,
             show_assets: false,
-            show_bottom: true,
             run_state: RunState::default(),
             status: None,
             collections: CollectionsUiState::default(),
@@ -222,9 +248,13 @@ impl Default for AppState {
             console: ConsoleState::default(),
             cookies_ui: CookiesUiState::default(),
             assets: crate::panels::assets::AssetsState::default(),
+            openapi: None,
+            openapi_source: None,
+            openapi_error: None,
+            git: crate::git::GitState::default(),
             terminal: TerminalState::default(),
             log: EventLog::default(),
-            editor_font_size: 13.0,
+            editor_font_size: 15.0,
             dialogs: DialogManager::default(),
             pending_workspace: None,
             next_run_id: 0,

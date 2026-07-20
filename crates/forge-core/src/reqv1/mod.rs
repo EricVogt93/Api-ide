@@ -28,13 +28,13 @@ pub use build::{build_ir, BuildInputs};
 pub use diag::{Code, Diagnostic, Errors, Severity};
 pub use index::{AssetEntry, AssetKind, ProjectIndex};
 pub use ir::{ResolvedBody, ResolvedHeader, ResolvedRequest};
+pub use lock::Lockfile;
+pub use matrix::{run_matrix, MatrixCase};
+pub use mock::{MockRoute, MockServerConfig};
 pub use model::{Binding, ProjectConfig, RequestDocument};
 pub use pipeline::{AssertionResult, ResponseView};
 pub use refs::{AssetDescriptor, RefResolver, RefScheme};
 pub use resolve::DataStore;
-pub use lock::Lockfile;
-pub use matrix::{run_matrix, MatrixCase};
-pub use mock::{serve_mock, MockRoute, MockServerConfig};
 pub use runner::{
     load_environment, load_project, run, run_sequence, run_with_runtime, validate, validate_case,
     HttpResultView, RunMode, RunResult, RunStatus,

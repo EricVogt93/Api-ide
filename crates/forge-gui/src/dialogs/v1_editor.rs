@@ -52,17 +52,21 @@ enum ResultTab {
 
 impl V1EditorState {
     /// Open the editor on `file` (an existing document). Rescans its project.
-    pub fn open_file(&mut self, file: PathBuf, active_env: Option<String>) {
-        self.text = std::fs::read_to_string(&file).unwrap_or_default();
+    pub fn open_file(&mut self, file: PathBuf, active_env: Option<String>) -> Result<(), String> {
+        let text = std::fs::read_to_string(&file)
+            .map_err(|error| format!("failed to read {}: {error}", file.display()))?;
+        self.text = text;
         self.root = Some(project_root_of(&file));
         self.env_name = active_env;
-        self.load_index();
         self.file = Some(file);
         self.dirty = false;
         self.result = None;
-        self.diagnostics.clear();
-        if self.split_ratio <= 0.0 { self.split_ratio = 0.6; }
+        self.diagnostics = self.load_index().err().into_iter().collect();
+        if self.split_ratio <= 0.0 {
+            self.split_ratio = 0.6;
+        }
         self.open = true;
+        Ok(())
     }
 
     /// Open a new, unsaved skeleton request in `root`.
@@ -70,17 +74,24 @@ impl V1EditorState {
         self.text = SKELETON.to_string();
         self.root = Some(root);
         self.env_name = active_env;
-        self.load_index();
         self.file = None;
         self.dirty = true;
         self.result = None;
-        self.diagnostics.clear();
-        if self.split_ratio <= 0.0 { self.split_ratio = 0.6; }
+        self.diagnostics = self.load_index().err().into_iter().collect();
+        if self.split_ratio <= 0.0 {
+            self.split_ratio = 0.6;
+        }
         self.open = true;
     }
 
-    fn load_index(&mut self) {
-        self.index = self.root.as_ref().and_then(|r| ProjectIndex::scan(r).ok());
+    fn load_index(&mut self) -> Result<(), String> {
+        self.index = match self.root.as_ref() {
+            Some(root) => Some(
+                ProjectIndex::scan(root)
+                    .map_err(|diagnostic| format!("asset index: {}", diagnostic.message))?,
+            ),
+            None => None,
+        };
         // Default to the first environment if none is chosen, so ${env.*}
         // resolves out of the box.
         if self.env_name.is_none() {
@@ -88,6 +99,7 @@ impl V1EditorState {
                 self.env_name = index.environments.first().cloned();
             }
         }
+        Ok(())
     }
 
     /// Route a bridge `Evt::V1Run` outcome.
@@ -141,7 +153,12 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                 ui.label(
                     d.file
                         .as_ref()
-                        .map(|f| f.file_name().unwrap_or_default().to_string_lossy().into_owned())
+                        .map(|f| {
+                            f.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned()
+                        })
                         .unwrap_or_else(|| "unsaved".to_string()),
                 );
                 if d.dirty {
@@ -154,10 +171,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                 // --- left: store palette ---
                 cols[0].label(RichText::new("Asset store — insert a reference").strong());
                 cols[0].weak("Click “insert” to drop a ref/use snippet at the cursor.");
-                egui::ScrollArea::vertical().id_salt("v1-palette").auto_shrink([false, false]).show(
-                    &mut cols[0],
-                    |ui| palette(ui, d, &mut insert_snippet),
-                );
+                egui::ScrollArea::vertical()
+                    .id_salt("v1-palette")
+                    .auto_shrink([false, false])
+                    .show(&mut cols[0], |ui| palette(ui, d, &mut insert_snippet));
 
                 // --- right: split view (request top / results bottom) ---
                 let ui = &mut cols[1];
@@ -175,8 +192,11 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                         }
                         ui.checkbox(&mut d.mock, "mock");
                         // Environment picker (drives ${env.*}).
-                        let envs: Vec<String> =
-                            d.index.as_ref().map(|i| i.environments.clone()).unwrap_or_default();
+                        let envs: Vec<String> = d
+                            .index
+                            .as_ref()
+                            .map(|i| i.environments.clone())
+                            .unwrap_or_default();
                         let selected = d.env_name.clone().unwrap_or_else(|| "(none)".to_string());
                         egui::ComboBox::from_id_salt("v1-env")
                             .selected_text(selected)
@@ -187,31 +207,38 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                                 }
                             });
                         let can_run = !d.in_flight && d.root.is_some();
-                        if ui.add_enabled(can_run, egui::Button::new("▶ Run")).clicked() {
+                        if ui
+                            .add_enabled(can_run, egui::Button::new("▶ Run"))
+                            .clicked()
+                        {
                             run_now(d, bridge);
                         }
                         if d.in_flight {
                             ui.spinner();
                         }
                     });
-                    let output = egui::ScrollArea::vertical().id_salt("v1-json").auto_shrink([false, false]).show(ui, |ui| {
-                        let out = TextEdit::multiline(&mut d.text)
-                            .code_editor()
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(18)
-                            .show(ui);
-                        if out.response.changed() {
-                            d.dirty = true;
-                        }
-                        out
-                    });
+                    let output = egui::ScrollArea::vertical()
+                        .id_salt("v1-json")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let out = TextEdit::multiline(&mut d.text)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(18)
+                                .show(ui);
+                            if out.response.changed() {
+                                d.dirty = true;
+                            }
+                            out
+                        });
                     if let Some(range) = output.inner.cursor_range {
                         d.cursor_byte = byte_offset(&d.text, range);
                     }
                 });
 
                 // Draggable splitter.
-                let splitter = ui.allocate_response(egui::vec2(ui.available_width(), 6.0), egui::Sense::drag());
+                let splitter = ui
+                    .allocate_response(egui::vec2(ui.available_width(), 6.0), egui::Sense::drag());
                 ui.painter().hline(
                     splitter.rect.x_range(),
                     splitter.rect.center().y,
@@ -225,9 +252,12 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                 }
 
                 // Bottom: tabbed results — assertions get their own pane.
-                ui.allocate_ui(egui::vec2(ui.available_width(), ui.available_height()), |ui| {
-                    results_pane(ui, d);
-                });
+                ui.allocate_ui(
+                    egui::vec2(ui.available_width(), ui.available_height()),
+                    |ui| {
+                        results_pane(ui, d);
+                    },
+                );
             });
         });
 
@@ -265,7 +295,11 @@ fn palette_row(
     expanded: &mut std::collections::HashSet<String>,
     insert: &mut Option<String>,
 ) {
-    let base_ref = asset.alias.clone().or_else(|| asset.prefix_ref.clone()).unwrap_or_else(|| asset.rel_path.clone());
+    let base_ref = asset
+        .alias
+        .clone()
+        .or_else(|| asset.prefix_ref.clone())
+        .unwrap_or_else(|| asset.rel_path.clone());
     let browsable = asset.kind == AssetKind::Data && asset.data.is_some();
 
     ui.horizontal(|ui| {
@@ -285,23 +319,39 @@ fn palette_row(
         ui.label(name).on_hover_text(&base_ref);
         // Insert the whole-asset snippet (a binding for data, a pipeline
         // entry for executables) — the chill primitive.
-        if ui.small_button("insert").on_hover_text("drop a snippet at the cursor").clicked() {
+        if ui
+            .small_button("insert")
+            .on_hover_text("drop a snippet at the cursor")
+            .clicked()
+        {
             *insert = Some(snippet_for(asset, &base_ref));
         }
     });
 
     if browsable && expanded.contains(&asset.rel_path) {
         if let Some(data) = &asset.data {
-            ui.indent(&asset.rel_path, |ui| json_nodes(ui, &base_ref, "", data, insert));
+            ui.indent(&asset.rel_path, |ui| {
+                json_nodes(ui, &base_ref, "", data, insert)
+            });
         }
     }
 }
 
-fn json_nodes(ui: &mut egui::Ui, base_ref: &str, pointer: &str, node: &serde_json::Value, insert: &mut Option<String>) {
+fn json_nodes(
+    ui: &mut egui::Ui,
+    base_ref: &str,
+    pointer: &str,
+    node: &serde_json::Value,
+    insert: &mut Option<String>,
+) {
     use serde_json::Value;
     let children: Vec<(String, &Value)> = match node {
         Value::Object(m) => m.iter().map(|(k, v)| (escape_ptr(k), v)).collect(),
-        Value::Array(a) => a.iter().enumerate().map(|(i, v)| (i.to_string(), v)).collect(),
+        Value::Array(a) => a
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i.to_string(), v))
+            .collect(),
         _ => return,
     };
     for (key, value) in children {
@@ -315,7 +365,11 @@ fn json_nodes(ui: &mut egui::Ui, base_ref: &str, pointer: &str, node: &serde_jso
                 other => format!("{key}: {}", short(other)),
             };
             ui.label(RichText::new(label).monospace().small());
-            if ui.small_button("insert").on_hover_text(full.clone()).clicked() {
+            if ui
+                .small_button("insert")
+                .on_hover_text(full.clone())
+                .clicked()
+            {
                 *insert = Some(format!("{{ \"ref\": \"{full}\" }}"));
             }
         });
@@ -350,10 +404,18 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState) {
     let (passed, total) = d
         .result
         .as_ref()
-        .map(|r| (r.assertions.iter().filter(|a| a.passed).count(), r.assertions.len()))
+        .map(|r| {
+            (
+                r.assertions.iter().filter(|a| a.passed).count(),
+                r.assertions.len(),
+            )
+        })
         .unwrap_or((0, 0));
-    let assertions_label =
-        if total > 0 { format!("Assertions ({passed}/{total})") } else { "Assertions".to_string() };
+    let assertions_label = if total > 0 {
+        format!("Assertions ({passed}/{total})")
+    } else {
+        "Assertions".to_string()
+    };
 
     ui.horizontal(|ui| {
         let mut tab = |ui: &mut egui::Ui, which: ResultTab, label: &str| {
@@ -368,14 +430,15 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState) {
     });
     ui.separator();
 
-    egui::ScrollArea::vertical().id_salt("v1-results").auto_shrink([false, false]).show(ui, |ui| {
-        match d.result_tab {
+    egui::ScrollArea::vertical()
+        .id_salt("v1-results")
+        .auto_shrink([false, false])
+        .show(ui, |ui| match d.result_tab {
             ResultTab::Result => result_summary(ui, d),
             ResultTab::Assertions => assertions_pane(ui, d),
             ResultTab::Runtime => runtime_pane(ui, d),
             ResultTab::Diagnostics => diagnostics_pane(ui, d),
-        }
-    });
+        });
 }
 
 fn result_summary(ui: &mut egui::Ui, d: &V1EditorState) {
@@ -391,10 +454,16 @@ fn result_summary(ui: &mut egui::Ui, d: &V1EditorState) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).color(color).strong());
         if let Some(http) = &r.http {
-            ui.label(format!("{} · {} ms · {} bytes", http.status, http.time_ms, http.bytes));
+            ui.label(format!(
+                "{} · {} ms · {} bytes",
+                http.status, http.time_ms, http.bytes
+            ));
         }
     });
-    let (passed, total) = (r.assertions.iter().filter(|a| a.passed).count(), r.assertions.len());
+    let (passed, total) = (
+        r.assertions.iter().filter(|a| a.passed).count(),
+        r.assertions.len(),
+    );
     if total > 0 {
         ui.label(format!("{passed}/{total} assertion(s) passed"));
     }
@@ -464,7 +533,12 @@ fn diagnostics_pane(ui: &mut egui::Ui, d: &V1EditorState) {
             ui.colored_label(color, format!("[{}] {}", diag.code, diag.message));
         }
     }
-    if d.diagnostics.is_empty() && d.result.as_ref().map(|r| r.diagnostics.is_empty()).unwrap_or(true) {
+    if d.diagnostics.is_empty()
+        && d.result
+            .as_ref()
+            .map(|r| r.diagnostics.is_empty())
+            .unwrap_or(true)
+    {
         ui.weak("No diagnostics.");
     }
 }
@@ -472,7 +546,8 @@ fn diagnostics_pane(ui: &mut egui::Ui, d: &V1EditorState) {
 fn validate_now(d: &mut V1EditorState) {
     d.result = None;
     d.diagnostics.clear();
-    let (Some(root), Some(file)) = (d.root.clone(), d.file.clone().or_else(|| d.root.clone())) else {
+    let (Some(root), Some(file)) = (d.root.clone(), d.file.clone().or_else(|| d.root.clone()))
+    else {
         d.diagnostics = vec!["no project root".to_string()];
         return;
     };
@@ -487,7 +562,12 @@ fn validate_now(d: &mut V1EditorState) {
                     d.diagnostics = diags
                         .iter()
                         .map(|x| {
-                            format!("[{}] {} {}", x.code, x.instance_path.clone().unwrap_or_default(), x.message)
+                            format!(
+                                "[{}] {} {}",
+                                x.code,
+                                x.instance_path.clone().unwrap_or_default(),
+                                x.message
+                            )
                         })
                         .collect();
                 }
@@ -511,10 +591,15 @@ fn save_now(d: &mut V1EditorState) {
             path
         }
     };
-    if std::fs::write(&path, &d.text).is_ok() {
-        d.file = Some(path);
-        d.dirty = false;
-        d.load_index();
+    match std::fs::write(&path, &d.text) {
+        Ok(()) => {
+            d.file = Some(path);
+            d.dirty = false;
+            d.diagnostics = d.load_index().err().into_iter().collect();
+        }
+        Err(error) => {
+            d.diagnostics = vec![format!("failed to save {}: {error}", path.display())];
+        }
     }
 }
 
@@ -522,21 +607,28 @@ fn run_now(d: &mut V1EditorState, bridge: &Bridge) {
     let Some(root) = d.root.clone() else { return };
     // Run needs a file path for relative refs; use the saved file, or a
     // temp path under root for an unsaved buffer.
-    let file = d.file.clone().unwrap_or_else(|| root.join("__unsaved__.request.json"));
+    let file = d
+        .file
+        .clone()
+        .unwrap_or_else(|| root.join("__unsaved__.request.json"));
     let run_id = d.next_run_id;
     d.next_run_id += 1;
     d.active_run = Some(run_id);
     d.in_flight = true;
     d.result = None;
     d.diagnostics.clear();
-    bridge.send(Cmd::RunV1 {
+    if let Err(error) = bridge.send(Cmd::RunV1 {
         run_id,
         root,
         file,
         text: d.text.clone(),
         env_name: d.env_name.clone(),
         mock: d.mock,
-    });
+    }) {
+        d.active_run = None;
+        d.in_flight = false;
+        d.diagnostics = vec![error];
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -551,7 +643,9 @@ fn project_root_of(file: &std::path::Path) -> PathBuf {
         }
         dir = d.parent().map(std::path::Path::to_path_buf);
     }
-    file.parent().unwrap_or(std::path::Path::new(".")).to_path_buf()
+    file.parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf()
 }
 
 fn escape_ptr(s: &str) -> String {
@@ -573,7 +667,10 @@ fn short(v: &serde_json::Value) -> String {
 /// Byte offset of the primary cursor from a TextEdit's cursor range.
 fn byte_offset(text: &str, range: CCursorRange) -> usize {
     let char_idx = range.primary.index.0;
-    text.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(text.len())
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len())
 }
 
 #[cfg(test)]
@@ -596,11 +693,19 @@ mod tests {
 
     #[test]
     fn snippet_shapes_per_kind() {
-        assert!(snippet_for(&asset(AssetKind::Data, "data:users"), "data:users").contains("\"ref\""));
-        assert!(snippet_for(&asset(AssetKind::Hook, "project:hooks/x"), "project:hooks/x")
-            .contains("\"phase\": \"beforeRequest\""));
-        assert!(snippet_for(&asset(AssetKind::Assertion, "project:assertions/x"), "project:assertions/x")
-            .contains("afterResponse"));
+        assert!(
+            snippet_for(&asset(AssetKind::Data, "data:users"), "data:users").contains("\"ref\"")
+        );
+        assert!(snippet_for(
+            &asset(AssetKind::Hook, "project:hooks/x"),
+            "project:hooks/x"
+        )
+        .contains("\"phase\": \"beforeRequest\""));
+        assert!(snippet_for(
+            &asset(AssetKind::Assertion, "project:assertions/x"),
+            "project:assertions/x"
+        )
+        .contains("afterResponse"));
     }
 
     #[test]
@@ -609,5 +714,25 @@ mod tests {
         // char 3 = 'b' starts after a(1)+ä(2)+€(3) = byte 6.
         let range = CCursorRange::one(egui::text::CCursor::new(3));
         assert_eq!(byte_offset(text, range), 6);
+    }
+
+    #[test]
+    fn failed_open_keeps_the_current_buffer() {
+        let mut editor = V1EditorState {
+            text: "keep me".to_string(),
+            dirty: true,
+            ..V1EditorState::default()
+        };
+
+        let error = editor
+            .open_file(
+                std::path::PathBuf::from("/definitely/missing/request.json"),
+                None,
+            )
+            .expect_err("missing file must fail");
+
+        assert!(error.contains("failed to read"));
+        assert_eq!(editor.text, "keep me");
+        assert!(editor.dirty);
     }
 }

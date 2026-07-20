@@ -79,7 +79,9 @@ pub fn load(root: &Path) -> Option<UiState> {
 /// that no longer exists; the theme is set on `state.theme` only (callers
 /// still need `ThemeKind::apply` to push it to the `egui::Context`).
 pub fn apply(state: &mut AppState, snapshot: UiState) {
-    let Some(workspace) = state.workspace.clone() else { return };
+    let Some(workspace) = state.workspace.clone() else {
+        return;
+    };
     for rel_id in &snapshot.open_tabs {
         if let Some(def) = workspace.find_request(rel_id).map(|n| n.def.clone()) {
             state.open_tab(rel_id.clone(), def);
@@ -95,14 +97,25 @@ pub fn apply(state: &mut AppState, snapshot: UiState) {
         .open_tabs
         .get(snapshot.active_tab)
         .and_then(|rel_id| state.tab_index_for(rel_id))
-        .or_else(|| if state.tabs.is_empty() { None } else { Some(state.tabs.len() - 1) });
+        .or_else(|| {
+            if state.tabs.is_empty() {
+                None
+            } else {
+                Some(state.tabs.len() - 1)
+            }
+        });
     state.active_env = snapshot.active_env;
-    if let Some(kind) = ThemeKind::ALL.into_iter().find(|k| k.label() == snapshot.theme) {
+    if let Some(kind) = ThemeKind::ALL
+        .into_iter()
+        .find(|k| k.label() == snapshot.theme)
+    {
         state.theme = kind;
     }
     state.show_collections = snapshot.show_collections;
     state.show_environment = snapshot.show_environment;
-    state.bottom_tool = snapshot.bottom_panel_selected.and_then(|s| BottomTool::ALL.into_iter().find(|t| t.label() == s));
+    state.bottom_tool = snapshot
+        .bottom_panel_selected
+        .and_then(|s| BottomTool::ALL.into_iter().find(|t| t.label() == s));
 }
 
 #[cfg(test)]
@@ -135,13 +148,21 @@ mod tests {
 
     #[test]
     fn load_returns_none_for_a_workspace_with_no_saved_state() {
-        let dir = std::env::temp_dir().join(format!("forge-gui-local-test-{}-{}", std::process::id(), line!()));
+        let dir = std::env::temp_dir().join(format!(
+            "forge-gui-local-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
         assert!(load(&dir).is_none());
     }
 
     #[test]
     fn save_then_load_roundtrips_through_disk() {
-        let dir = std::env::temp_dir().join(format!("forge-gui-local-test-{}-{}", std::process::id(), line!()));
+        let dir = std::env::temp_dir().join(format!(
+            "forge-gui-local-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         let mut state = AppState::new();
         state.theme = ThemeKind::Light;
@@ -160,10 +181,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
         Workspace::create(dir, "WS").expect("create workspace");
         let col_dir = create_collection(dir, "Coll").expect("create collection");
-        let file_a =
-            create_request(&col_dir, &RequestDef::new("A", Method::Get, "https://a.example.com")).expect("create a");
-        let file_c =
-            create_request(&col_dir, &RequestDef::new("C", Method::Get, "https://c.example.com")).expect("create c");
+        let file_a = create_request(
+            &col_dir,
+            &RequestDef::new("A", Method::Get, "https://a.example.com"),
+        )
+        .expect("create a");
+        let file_c = create_request(
+            &col_dir,
+            &RequestDef::new("C", Method::Get, "https://c.example.com"),
+        )
+        .expect("create c");
 
         let workspace = Workspace::load(dir).expect("load workspace");
         let rel_a = workspace.rel_id(&file_a);
@@ -179,7 +206,11 @@ mod tests {
     /// snapshot actually meant.
     #[test]
     fn active_tab_resolves_by_rel_id_not_by_stale_index() {
-        let dir = std::env::temp_dir().join(format!("forge-gui-local-test-{}-{}", std::process::id(), line!()));
+        let dir = std::env::temp_dir().join(format!(
+            "forge-gui-local-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
         let (workspace, rel_a, rel_c) = workspace_with_a_and_c(&dir);
         let missing_rel_b = "collections/coll/b.request.json".to_string(); // never created
 
@@ -211,7 +242,11 @@ mod tests {
     /// than leaving `active_tab` pointing nowhere or out of range.
     #[test]
     fn active_tab_falls_back_to_last_tab_when_intended_tab_is_missing() {
-        let dir = std::env::temp_dir().join(format!("forge-gui-local-test-{}-{}", std::process::id(), line!()));
+        let dir = std::env::temp_dir().join(format!(
+            "forge-gui-local-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
         let (workspace, rel_a, rel_c) = workspace_with_a_and_c(&dir);
         let missing_rel_b = "collections/coll/b.request.json".to_string();
 

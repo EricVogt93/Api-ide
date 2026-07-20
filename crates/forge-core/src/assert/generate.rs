@@ -23,7 +23,11 @@ pub struct GenerateOptions {
 
 impl Default for GenerateOptions {
     fn default() -> Self {
-        Self { max_depth: 2, include_values: true, max_assertions: 40 }
+        Self {
+            max_depth: 2,
+            include_values: true,
+            max_assertions: 40,
+        }
     }
 }
 
@@ -38,12 +42,17 @@ impl Default for GenerateOptions {
 pub fn generate_from_response(res: &ExecutionResult, opts: &GenerateOptions) -> Vec<Check> {
     let mut checks = Vec::new();
 
-    checks.push(Check::StatusCode { op: NumberOp::Eq, value: res.status });
+    checks.push(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: res.status,
+    });
 
     if let Some(ct) = res.content_type() {
         let mime = ct.split(';').next().unwrap_or("").trim();
         if !mime.is_empty() {
-            checks.push(Check::ContentType { value: mime.to_string() });
+            checks.push(Check::ContentType {
+                value: mime.to_string(),
+            });
         }
     }
 
@@ -51,7 +60,9 @@ pub fn generate_from_response(res: &ExecutionResult, opts: &GenerateOptions) -> 
         walk(&body, "$", 0, opts, &mut checks);
     }
 
-    checks.push(Check::ResponseTimeBelow { max_ms: suggested_max_ms(res) });
+    checks.push(Check::ResponseTimeBelow {
+        max_ms: suggested_max_ms(res),
+    });
 
     checks
 }
@@ -103,7 +114,11 @@ fn walk(value: &Value, path: &str, depth: usize, opts: &GenerateOptions, checks:
         }
         leaf => {
             if opts.include_values {
-                checks.push(Check::JsonPath { path: path.to_string(), op: ValueOp::Equals, value: leaf.clone() });
+                checks.push(Check::JsonPath {
+                    path: path.to_string(),
+                    op: ValueOp::Equals,
+                    value: leaf.clone(),
+                });
             } else {
                 checks.push(exists_check(path));
             }
@@ -112,7 +127,11 @@ fn walk(value: &Value, path: &str, depth: usize, opts: &GenerateOptions, checks:
 }
 
 fn exists_check(path: &str) -> Check {
-    Check::JsonPath { path: path.to_string(), op: ValueOp::Exists, value: Value::Null }
+    Check::JsonPath {
+        path: path.to_string(),
+        op: ValueOp::Exists,
+        value: Value::Null,
+    }
 }
 
 /// A bare identifier can be written as `.key`; anything else (dots, spaces,
@@ -155,8 +174,17 @@ mod tests {
     fn always_includes_status_and_time() {
         let res = exec_with_no_body(204, 10);
         let checks = generate_from_response(&res, &GenerateOptions::default());
-        assert!(matches!(checks.first(), Some(Check::StatusCode { op: NumberOp::Eq, value: 204 })));
-        assert!(matches!(checks.last(), Some(Check::ResponseTimeBelow { .. })));
+        assert!(matches!(
+            checks.first(),
+            Some(Check::StatusCode {
+                op: NumberOp::Eq,
+                value: 204
+            })
+        ));
+        assert!(matches!(
+            checks.last(),
+            Some(Check::ResponseTimeBelow { .. })
+        ));
     }
 
     fn exec_with_no_body(status: u16, total_ms: u64) -> ExecutionResult {
@@ -183,7 +211,11 @@ mod tests {
 
     #[test]
     fn bracket_notation_for_keys_with_dots_and_spaces() {
-        let res = res_with_json(200, &json!({"weird.key": 1, "weird key": 2, "plain": 3}), 10);
+        let res = res_with_json(
+            200,
+            &json!({"weird.key": 1, "weird key": 2, "plain": 3}),
+            10,
+        );
         let checks = generate_from_response(&res, &GenerateOptions::default());
         let paths: Vec<&str> = checks
             .iter()
@@ -216,20 +248,63 @@ mod tests {
         let checks = generate_from_response(&res, &opts);
 
         let expected = vec![
-            Check::StatusCode { op: NumberOp::Eq, value: 200 },
-            Check::ContentType { value: "application/json".to_string() },
-            Check::JsonPath { path: "$.id".into(), op: ValueOp::Equals, value: json!(42) },
-            Check::JsonPath { path: "$.name".into(), op: ValueOp::Equals, value: json!("widget") },
-            Check::JsonPath { path: "$.active".into(), op: ValueOp::Equals, value: json!(true) },
-            Check::JsonPath { path: "$.tags".into(), op: ValueOp::Exists, value: Value::Null },
-            Check::JsonPath { path: "$.tags[0]".into(), op: ValueOp::Equals, value: json!("a") },
+            Check::StatusCode {
+                op: NumberOp::Eq,
+                value: 200,
+            },
+            Check::ContentType {
+                value: "application/json".to_string(),
+            },
+            Check::JsonPath {
+                path: "$.id".into(),
+                op: ValueOp::Equals,
+                value: json!(42),
+            },
+            Check::JsonPath {
+                path: "$.name".into(),
+                op: ValueOp::Equals,
+                value: json!("widget"),
+            },
+            Check::JsonPath {
+                path: "$.active".into(),
+                op: ValueOp::Equals,
+                value: json!(true),
+            },
+            Check::JsonPath {
+                path: "$.tags".into(),
+                op: ValueOp::Exists,
+                value: Value::Null,
+            },
+            Check::JsonPath {
+                path: "$.tags[0]".into(),
+                op: ValueOp::Equals,
+                value: json!("a"),
+            },
             // meta is an object at depth 1 (< max_depth 2), so we descend into it;
             // its children are at depth 2 == max_depth, so they stop at Exists.
-            Check::JsonPath { path: "$.meta.created".into(), op: ValueOp::Equals, value: json!("2024-01-01") },
-            Check::JsonPath { path: "$.meta.deep".into(), op: ValueOp::Exists, value: Value::Null },
-            Check::JsonPath { path: "$.empty_list".into(), op: ValueOp::Exists, value: Value::Null },
-            Check::JsonPath { path: "$.empty_obj".into(), op: ValueOp::Exists, value: Value::Null },
-            Check::ResponseTimeBelow { max_ms: suggested_max_ms(&res) },
+            Check::JsonPath {
+                path: "$.meta.created".into(),
+                op: ValueOp::Equals,
+                value: json!("2024-01-01"),
+            },
+            Check::JsonPath {
+                path: "$.meta.deep".into(),
+                op: ValueOp::Exists,
+                value: Value::Null,
+            },
+            Check::JsonPath {
+                path: "$.empty_list".into(),
+                op: ValueOp::Exists,
+                value: Value::Null,
+            },
+            Check::JsonPath {
+                path: "$.empty_obj".into(),
+                op: ValueOp::Exists,
+                value: Value::Null,
+            },
+            Check::ResponseTimeBelow {
+                max_ms: suggested_max_ms(&res),
+            },
         ];
 
         assert_eq!(checks, expected);
@@ -239,7 +314,10 @@ mod tests {
     fn include_values_false_uses_exists_for_leaves() {
         let body = json!({"id": 42});
         let res = res_with_json(200, &body, 10);
-        let opts = GenerateOptions { include_values: false, ..GenerateOptions::default() };
+        let opts = GenerateOptions {
+            include_values: false,
+            ..GenerateOptions::default()
+        };
         let checks = generate_from_response(&res, &opts);
         assert!(checks.iter().any(|c| matches!(
             c,
@@ -255,11 +333,17 @@ mod tests {
         }
         let body = Value::Object(map);
         let res = res_with_json(200, &body, 10);
-        let opts = GenerateOptions { max_assertions: 10, ..GenerateOptions::default() };
+        let opts = GenerateOptions {
+            max_assertions: 10,
+            ..GenerateOptions::default()
+        };
         let checks = generate_from_response(&res, &opts);
         assert!(checks.len() <= 10);
         // The trailing time check must still be present.
-        assert!(matches!(checks.last(), Some(Check::ResponseTimeBelow { .. })));
+        assert!(matches!(
+            checks.last(),
+            Some(Check::ResponseTimeBelow { .. })
+        ));
     }
 
     #[test]

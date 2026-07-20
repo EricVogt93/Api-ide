@@ -10,7 +10,10 @@ use forge_core::store::{save_request, Workspace};
 use crate::bridge::{Bridge, Cmd, Evt};
 use crate::keymap::{self, ActionId};
 use crate::local;
-use crate::panels::{assets, collections, console, cookies, history, log, problems, request_editor, terminal, test_results};
+use crate::panels::{
+    assets, collections, console, cookies, history, log, problems, request_editor, terminal,
+    test_results,
+};
 use crate::state::{AppState, BottomTool, RunState, StatusMessage};
 use crate::theme::{icons, ThemeKind};
 
@@ -25,7 +28,10 @@ impl ForgeApp {
     /// command line.
     pub fn new(ctx: egui::Context, initial_workspace: Option<PathBuf>) -> Self {
         let bridge = Bridge::new(ctx.clone());
-        let mut app = Self { state: AppState::new(), bridge };
+        let mut app = Self {
+            state: AppState::new(),
+            bridge,
+        };
         if let Some(path) = initial_workspace {
             match Workspace::load(&path) {
                 Ok(ws) => {
@@ -33,8 +39,19 @@ impl ForgeApp {
                     app.on_workspace_opened(&ctx);
                     crate::dialogs::welcome::remember_recent(&path);
                 }
-                Err(e) => app.state.status = Some(StatusMessage::error(format!("{}: {e}", path.display()))),
+                Err(e) => {
+                    app.state.status =
+                        Some(StatusMessage::error(format!("{}: {e}", path.display())))
+                }
             }
+        }
+        // Dev convenience: FORGE_OPEN=<workspace-relative request id> opens
+        // that request in a tab on startup (used for headless screenshots).
+        if let Ok(rel) = std::env::var("FORGE_OPEN") {
+            app.open_request_tab(&rel);
+        }
+        if std::env::var("FORGE_SEND").is_ok() {
+            request_editor::send_active(&mut app.state, &app.bridge);
         }
         app
     }
@@ -44,10 +61,26 @@ impl ForgeApp {
     /// jar, and restore the last saved UI snapshot (open tabs, active
     /// environment/theme, visible tool windows).
     fn on_workspace_opened(&mut self, ctx: &egui::Context) {
-        let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) else { return };
-        self.state.log.info("workspace", format!("Opened workspace {}", root.display()));
-        self.state.history_store = history::open_store(&root);
-        self.bridge.send(Cmd::LoadCookies { path: cookies::cookies_path(&root) });
+        let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) else {
+            return;
+        };
+        self.state
+            .log
+            .info("workspace", format!("Opened workspace {}", root.display()));
+        match history::open_store(&root) {
+            Ok(store) => self.state.history_store = Some(store),
+            Err(error) => {
+                self.state.history_store = None;
+                self.state.log.error("history", error.clone());
+                self.state.status = Some(StatusMessage::error(error));
+            }
+        }
+        if let Err(error) = self.bridge.send(Cmd::LoadCookies {
+            path: cookies::cookies_path(&root),
+        }) {
+            self.state.log.error("bridge", error.clone());
+            self.state.status = Some(StatusMessage::error(error));
+        }
         if let Some(snapshot) = local::load(&root) {
             local::apply(&mut self.state, snapshot);
             self.state.theme.apply(ctx);
@@ -69,10 +102,45 @@ impl ForgeApp {
 
     /// Record one finished request execution to the workspace's history
     /// store, if it has one open.
-    fn record_history(&self, outcome: &RequestOutcome) {
-        let Some(store) = self.state.history_store.as_ref() else { return };
-        let entry = history::new_entry_from_outcome(self.state.workspace.as_ref(), outcome, self.state.active_env.clone());
-        let _ = store.record(entry);
+    fn record_history(&mut self, outcome: &RequestOutcome) {
+        let Some(store) = self.state.history_store.as_ref() else {
+            return;
+        };
+        let entry = history::new_entry_from_outcome(
+            self.state.workspace.as_ref(),
+            outcome,
+            self.state.active_env.clone(),
+        );
+        if let Err(error) = store.record(entry) {
+            let error = format!("failed to record history: {error}");
+            self.state.log.error("history", error.clone());
+            self.state.status = Some(StatusMessage::error(error));
+        }
+    }
+
+    /// Keep the parsed OpenAPI spec in sync with the workspace's
+    /// `settings.openapi_url`: any change (workspace switch, settings save)
+    /// triggers exactly one refetch through the bridge.
+    fn sync_openapi(&mut self) {
+        let want = self
+            .state
+            .workspace
+            .as_ref()
+            .and_then(|w| w.meta.settings.openapi_url.clone());
+        if want != self.state.openapi_source {
+            self.state.openapi = None;
+            self.state.openapi_error = None;
+            self.state.openapi_source = want.clone();
+            if let (Some(source), Some(root)) =
+                (want, self.state.workspace.as_ref().map(|w| w.root.clone()))
+            {
+                if let Err(error) = self.bridge.send(Cmd::FetchOpenApi { root, source }) {
+                    self.state.log.error("bridge", error.clone());
+                    self.state.openapi_error = Some(error.clone());
+                    self.state.status = Some(StatusMessage::error(error));
+                }
+            }
+        }
     }
 
     fn drain_bridge_events(&mut self) {
@@ -84,14 +152,44 @@ impl ForgeApp {
                     self.state.log.error("run", error.clone());
                     self.state.status = Some(StatusMessage::error(error));
                 }
-                Evt::Ws { conn_id, event } => console::handle_ws_event(&mut self.state, conn_id, event),
-                Evt::Sse { conn_id, event } => console::handle_sse_event(&mut self.state, conn_id, event),
+                Evt::Ws { conn_id, event } => {
+                    console::handle_ws_event(&mut self.state, conn_id, event)
+                }
+                Evt::Sse { conn_id, event } => {
+                    console::handle_sse_event(&mut self.state, conn_id, event)
+                }
                 Evt::Cookies(cookies) => self.state.cookies_ui.rows = cookies,
                 Evt::Grpc { call_id, result } => {
                     self.state.dialogs.grpc_call.handle_result(call_id, result)
                 }
                 Evt::V1Run { run_id, result } => {
                     self.state.dialogs.v1_editor.handle_result(run_id, result)
+                }
+                Evt::OpenApi { source, result } => {
+                    // Ignore replies for a source that is no longer wanted.
+                    if self.state.openapi_source.as_deref() == Some(source.as_str()) {
+                        match result.and_then(|text| {
+                            forge_core::openapi::parse_spec(&text).map_err(|e| e.to_string())
+                        }) {
+                            Ok(spec) => {
+                                self.state.log.info(
+                                    "openapi",
+                                    format!(
+                                        "Loaded spec {:?} ({} operations) from {source}",
+                                        spec.title,
+                                        spec.operations.len()
+                                    ),
+                                );
+                                self.state.openapi = Some(spec);
+                                self.state.openapi_error = None;
+                            }
+                            Err(e) => {
+                                self.state.log.error("openapi", format!("{source}: {e}"));
+                                self.state.openapi = None;
+                                self.state.openapi_error = Some(e);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -116,18 +214,31 @@ impl ForgeApp {
                     self.state.run_state.completed += 1;
                 }
                 match &outcome.result {
-                    Err(e) => self.state.log.error("run", format!("{}: {e}", outcome.name)),
+                    Err(e) => self
+                        .state
+                        .log
+                        .error("run", format!("{}: {e}", outcome.name)),
                     Ok(res) => {
                         let failed = outcome.assertions.iter().filter(|a| !a.passed).count();
                         if failed > 0 {
                             self.state.log.warn(
                                 "run",
-                                format!("{}: {} of {} assertions failed", outcome.name, failed, outcome.assertions.len()),
+                                format!(
+                                    "{}: {} of {} assertions failed",
+                                    outcome.name,
+                                    failed,
+                                    outcome.assertions.len()
+                                ),
                             );
                         } else {
                             self.state.log.info(
                                 "run",
-                                format!("{} → {} ({} ms)", outcome.name, res.status, res.timing.total.as_millis()),
+                                format!(
+                                    "{} → {} ({} ms)",
+                                    outcome.name,
+                                    res.status,
+                                    res.timing.total.as_millis()
+                                ),
                             );
                         }
                     }
@@ -179,10 +290,15 @@ impl ForgeApp {
     fn tool_window_header(ui: &mut egui::Ui, title: &str) -> bool {
         let mut collapse = false;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(title).strong());
+            ui.label(
+                egui::RichText::new(title.to_uppercase())
+                    .size(13.0)
+                    .strong()
+                    .color(ui.visuals().weak_text_color()),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button(egui::RichText::new(icons::COLLAPSE).size(11.0))
+                    .small_button(egui::RichText::new(icons::COLLAPSE).size(13.0))
                     .on_hover_text("Hide (reopen via stripe / View menu)")
                     .clicked()
                 {
@@ -196,8 +312,11 @@ impl ForgeApp {
 
     /// Open (or focus) the tab of a request by workspace-relative id.
     fn open_request_tab(&mut self, rel_id: &str) {
-        if let Some(def) =
-            self.state.workspace.as_ref().and_then(|ws| ws.find_request(rel_id).map(|n| n.def.clone()))
+        if let Some(def) = self
+            .state
+            .workspace
+            .as_ref()
+            .and_then(|ws| ws.find_request(rel_id).map(|n| n.def.clone()))
         {
             self.state.open_tab(rel_id.to_string(), def);
         }
@@ -220,18 +339,38 @@ impl ForgeApp {
             self.state.status = Some(StatusMessage::error("No workspace open"));
             return;
         };
-        let options = RunOptions { environment: self.state.active_env.clone(), ..Default::default() };
+        let options = RunOptions {
+            environment: self.state.active_env.clone(),
+            ..Default::default()
+        };
         self.state.last_run = Some((RunScope::Workspace, options.clone()));
         let run_id = self.state.alloc_run_id();
-        self.state.run_state = RunState { run_id: Some(run_id), total: 0, completed: 0 };
+        self.state.run_state = RunState {
+            run_id: Some(run_id),
+            total: 0,
+            completed: 0,
+        };
         self.state.run_log.start(run_id);
-        self.bridge.send(Cmd::Run { run_id, workspace: Box::new(ws), scope: RunScope::Workspace, options });
+        if let Err(error) = self.bridge.send(Cmd::Run {
+            run_id,
+            workspace: Box::new(ws),
+            scope: RunScope::Workspace,
+            options,
+        }) {
+            self.clear_run(run_id);
+            self.state.log.error("bridge", error.clone());
+            self.state.status = Some(StatusMessage::error(error));
+        }
     }
 
     /// Build a menu-item button labelled with an [`ActionId`]'s registered
     /// title, showing its keyboard shortcut (if any) on the trailing side.
     fn action_button(ctx: &egui::Context, id: ActionId) -> egui::Button<'static> {
-        let title = keymap::ACTIONS.iter().find(|a| a.id == id).map(|a| a.title).unwrap_or("");
+        let title = keymap::ACTIONS
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.title)
+            .unwrap_or("");
         let mut button = egui::Button::new(title);
         if let Some(shortcut) = keymap::shortcut_for(id) {
             button = button.shortcut_text(ctx.format_shortcut(&shortcut));
@@ -240,9 +379,26 @@ impl ForgeApp {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        // Relay menu bar: flat text menu items (dim, no resting fill; hover
+        // brings a soft rounded fill), so kill the default button chrome for
+        // everything inside this bar. The env pill re-adds its own box.
+        let dim = self.state.theme.dim_color();
+        {
+            let v = &mut ui.style_mut().visuals;
+            v.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+            v.widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
+            v.widgets.open.weak_bg_fill = v.widgets.hovered.weak_bg_fill;
+            // Menu items rest dimmed (the theme's override_text_color would
+            // otherwise force them to full text color).
+            v.override_text_color = Some(dim);
+        }
         ui.horizontal(|ui| {
+            ui.add_space(2.0);
             ui.menu_button("File", |ui| {
-                if ui.add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace)).clicked() {
+                if ui
+                    .add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace))
+                    .clicked()
+                {
                     self.open_workspace_dialog();
                     ui.close();
                 }
@@ -252,18 +408,27 @@ impl ForgeApp {
                 }
                 ui.separator();
                 let has_active = self.state.active_tab.is_some();
-                if ui.add_enabled(has_active, Self::action_button(ui.ctx(), ActionId::Save)).clicked() {
+                if ui
+                    .add_enabled(has_active, Self::action_button(ui.ctx(), ActionId::Save))
+                    .clicked()
+                {
                     if let Some(idx) = self.state.active_tab {
                         save_tab(&mut self.state, idx);
                     }
                     ui.close();
                 }
-                if ui.add(Self::action_button(ui.ctx(), ActionId::SaveAll)).clicked() {
+                if ui
+                    .add(Self::action_button(ui.ctx(), ActionId::SaveAll))
+                    .clicked()
+                {
                     save_all(&mut self.state);
                     ui.close();
                 }
                 ui.separator();
-                if ui.add(Self::action_button(ui.ctx(), ActionId::ImportCurl)).clicked() {
+                if ui
+                    .add(Self::action_button(ui.ctx(), ActionId::ImportCurl))
+                    .clicked()
+                {
                     self.state.dialogs.curl_import.open();
                     ui.close();
                 }
@@ -280,7 +445,10 @@ impl ForgeApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.add(Self::action_button(ui.ctx(), ActionId::OpenSettings)).clicked() {
+                if ui
+                    .add(Self::action_button(ui.ctx(), ActionId::OpenSettings))
+                    .clicked()
+                {
                     self.state.dialogs.settings.open = true;
                     ui.close();
                 }
@@ -291,12 +459,18 @@ impl ForgeApp {
             });
             ui.menu_button("Run", |ui| {
                 let can_send = self.state.active_tab.is_some();
-                if ui.add_enabled(can_send, Self::action_button(ui.ctx(), ActionId::Send)).clicked() {
+                if ui
+                    .add_enabled(can_send, Self::action_button(ui.ctx(), ActionId::Send))
+                    .clicked()
+                {
                     request_editor::send_active(&mut self.state, &self.bridge);
                     ui.close();
                 }
                 let can_run = self.state.workspace.is_some();
-                if ui.add_enabled(can_run, egui::Button::new("Run Collection")).clicked() {
+                if ui
+                    .add_enabled(can_run, egui::Button::new("Run Collection"))
+                    .clicked()
+                {
                     self.run_workspace();
                     ui.close();
                 }
@@ -310,11 +484,13 @@ impl ForgeApp {
                 ui.checkbox(&mut self.state.show_collections, "Collections");
                 ui.checkbox(&mut self.state.show_assets, "Assets");
                 ui.checkbox(&mut self.state.show_environment, "Environment");
-                ui.checkbox(&mut self.state.show_bottom, "Bottom Tool Window");
                 ui.separator();
                 ui.menu_button("Theme", |ui| {
                     for kind in ThemeKind::ALL {
-                        if ui.selectable_label(self.state.theme == kind, kind.label()).clicked() {
+                        if ui
+                            .selectable_label(self.state.theme == kind, kind.label())
+                            .clicked()
+                        {
                             self.state.theme = kind;
                             kind.apply(ui.ctx());
                             ui.close();
@@ -334,54 +510,150 @@ impl ForgeApp {
                     ui.close();
                 }
             });
+
+            // Right cluster (laid out right-to-left, so first added = rightmost):
+            // theme toggle, environment switcher pill.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(icons::THEME)
+                    .on_hover_text("Toggle theme")
+                    .clicked()
+                {
+                    self.state.theme = if self.state.theme == ThemeKind::Darcula {
+                        ThemeKind::Light
+                    } else {
+                        ThemeKind::Darcula
+                    };
+                    self.state.theme.apply(ui.ctx());
+                }
+                ui.add_space(2.0);
+
+                self.env_pill(ui);
+            });
+        });
+    }
+
+    /// The environment switcher pill in the top bar's right cluster: a
+    /// rounded elevated button showing a status dot + the active environment,
+    /// opening a menu to switch or manage environments.
+    fn env_pill(&mut self, ui: &mut egui::Ui) {
+        // Restore the boxed look the flat menu-bar scope stripped.
+        {
+            let elev = ui.visuals().widgets.hovered.bg_fill;
+            let v = &mut ui.style_mut().visuals;
+            v.widgets.inactive.weak_bg_fill = elev;
+            v.override_text_color = None;
+        }
+        let env_names: Vec<String> = self
+            .state
+            .workspace
+            .as_ref()
+            .map(|w| w.environments.iter().map(|e| e.env.name.clone()).collect())
+            .unwrap_or_default();
+        let current = self
+            .state
+            .active_env
+            .clone()
+            .unwrap_or_else(|| "No Environment".to_string());
+        let dot = if self.state.active_env.is_some() {
+            "\u{25CF}"
+        } else {
+            "\u{25CB}"
+        };
+        ui.menu_button(format!("{dot} {current} \u{25BE}"), |ui| {
+            ui.label(egui::RichText::new("ENVIRONMENTS").weak().small());
+            if ui
+                .selectable_label(self.state.active_env.is_none(), "No Environment")
+                .clicked()
+            {
+                self.state.active_env = None;
+                ui.close();
+            }
+            for name in env_names {
+                let is_sel = self.state.active_env.as_deref() == Some(name.as_str());
+                if ui.selectable_label(is_sel, &name).clicked() {
+                    self.state.active_env = Some(name);
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui.button("Manage environments\u{2026}").clicked() {
+                let preferred = self.state.active_env.clone();
+                self.state.dialogs.env_editor.open(preferred);
+                ui.close();
+            }
         });
     }
 
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
         let mut close_idx: Option<usize> = None;
         let mut select_idx: Option<usize> = None;
-        egui::ScrollArea::horizontal().id_salt("tab-bar-scroll").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let accent = self.state.theme.accent_color();
-                for (i, tab) in self.state.tabs.iter().enumerate() {
-                    let is_active = self.state.active_tab == Some(i);
-                    // New-UI tab look: flat labels, the active tab gets a
-                    // subtle fill plus a 2px accent underline.
-                    let frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 6)).fill(if is_active {
-                        ui.visuals().widgets.hovered.bg_fill.gamma_multiply(0.6)
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    });
-                    let resp = frame
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                crate::widgets::method_badge::method_badge(ui, tab.def.method);
-                                let title = if tab.dirty { format!("{} {}", tab.title(), icons::DIRTY) } else { tab.title().to_string() };
-                                ui.label(title);
-                                if ui.small_button(icons::CLOSE).clicked() {
-                                    close_idx = Some(i);
-                                }
+        egui::ScrollArea::horizontal()
+            .id_salt("tab-bar-scroll")
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let accent = self.state.theme.accent_color();
+                    for (i, tab) in self.state.tabs.iter().enumerate() {
+                        let is_active = self.state.active_tab == Some(i);
+                        // Relay tab look: the active tab is filled with the
+                        // editor background (visually joining the tab to the
+                        // editor below) plus a 2px accent underline.
+                        let frame = egui::Frame::NONE
+                            .inner_margin(egui::Margin::symmetric(10, 6))
+                            .fill(if is_active {
+                                self.state.theme.editor_bg()
+                            } else {
+                                egui::Color32::TRANSPARENT
                             });
-                        })
-                        .response;
-                    if is_active {
-                        let rect = resp.rect;
-                        let underline = egui::Rect::from_min_max(
-                            egui::pos2(rect.left() + 2.0, rect.bottom() - 2.0),
-                            egui::pos2(rect.right() - 2.0, rect.bottom()),
-                        );
-                        ui.painter().rect_filled(underline, 1.0, accent);
+                        let resp = frame
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    // The badge+title group is the click target for
+                                    // selecting the tab; the × button is a separate
+                                    // widget so its click is never stolen by a
+                                    // full-tab overlay (that was closing-bug #1).
+                                    let body = ui
+                                        .horizontal(|ui| {
+                                            crate::widgets::method_badge::method_badge(
+                                                ui,
+                                                tab.def.method,
+                                            );
+                                            let title = if tab.dirty {
+                                                format!("{} {}", tab.title(), icons::DIRTY)
+                                            } else {
+                                                tab.title().to_string()
+                                            };
+                                            ui.label(title);
+                                        })
+                                        .response;
+                                    let click = ui.interact(
+                                        body.rect,
+                                        ui.id().with(("tab-body", i)),
+                                        egui::Sense::click(),
+                                    );
+                                    if click.clicked() {
+                                        select_idx = Some(i);
+                                    }
+                                    if click.middle_clicked() {
+                                        close_idx = Some(i);
+                                    }
+                                    if ui.small_button(icons::CLOSE).clicked() {
+                                        close_idx = Some(i);
+                                    }
+                                });
+                            })
+                            .response;
+                        if is_active {
+                            let rect = resp.rect;
+                            let underline = egui::Rect::from_min_max(
+                                egui::pos2(rect.left() + 2.0, rect.bottom() - 2.0),
+                                egui::pos2(rect.right() - 2.0, rect.bottom()),
+                            );
+                            ui.painter().rect_filled(underline, 1.0, accent);
+                        }
                     }
-                    let resp = ui.interact(resp.rect, resp.id.with("tab-click"), egui::Sense::click());
-                    if resp.clicked() {
-                        select_idx = Some(i);
-                    }
-                    if resp.middle_clicked() {
-                        close_idx = Some(i);
-                    }
-                }
+                });
             });
-        });
         if let Some(i) = select_idx {
             self.state.active_tab = Some(i);
         }
@@ -390,10 +662,12 @@ impl ForgeApp {
         }
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui) {
+    /// Relay-style bottom console tab strip: the always-visible bottom-tool
+    /// switcher. Selecting a tab opens its panel; clicking the active tab
+    /// hides it.
+    fn bottom_tool_tabs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // Bottom tool-window stripe: click to show/hide; clicking the
-            // already-active one hides it (only one tool window at a time).
+            ui.add_space(4.0);
             for (tool, icon) in [
                 (BottomTool::Run, icons::RUN),
                 (BottomTool::Problems, icons::PROBLEMS),
@@ -404,56 +678,101 @@ impl ForgeApp {
                 (BottomTool::Cookies, icons::COOKIES),
             ] {
                 let active = self.state.bottom_tool == Some(tool);
-                let text = format!("{icon} {}", tool.label());
-                if ui.selectable_label(active, text).clicked() {
+                if ui
+                    .selectable_label(active, format!("{icon}  {}", tool.label()))
+                    .clicked()
+                {
                     self.state.bottom_tool = if active { None } else { Some(tool) };
                 }
             }
-            ui.separator();
-
-            let workspace_name =
-                self.state.workspace.as_ref().map(|w| w.meta.name.clone()).unwrap_or_else(|| "No workspace".to_string());
-            ui.label(workspace_name);
-
-            ui.separator();
-            let env_names: Vec<String> = self
-                .state
-                .workspace
-                .as_ref()
-                .map(|w| w.environments.iter().map(|e| e.env.name.clone()).collect())
-                .unwrap_or_default();
-            let selected = self.state.active_env.clone().unwrap_or_else(|| "No Environment".to_string());
-            egui::ComboBox::from_id_salt("active-env").selected_text(selected).show_ui(ui, |ui| {
-                if ui.selectable_label(self.state.active_env.is_none(), "No Environment").clicked() {
-                    self.state.active_env = None;
-                }
-                for name in env_names {
-                    let is_sel = self.state.active_env.as_deref() == Some(name.as_str());
-                    if ui.selectable_label(is_sel, &name).clicked() {
-                        self.state.active_env = Some(name);
+            if self.state.bottom_tool.is_some() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button(icons::COLLAPSE)
+                        .on_hover_text("Hide")
+                        .clicked()
+                    {
+                        self.state.bottom_tool = None;
                     }
-                }
-            });
+                });
+            }
+        });
+    }
 
+    fn status_bar(&mut self, ui: &mut egui::Ui) {
+        // Relay status bar: 11px mono, dim, sparse separators.
+        if let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) {
+            self.state.git.refresh(&root, false);
+        }
+        let dim = self.state.theme.dim_color();
+        let mono = |t: String| egui::RichText::new(t).monospace().size(13.0).color(dim);
+        ui.horizontal(|ui| {
+            // Real git branch when the workspace is in a repo, its name otherwise.
+            let left = self
+                .state
+                .git
+                .status
+                .as_ref()
+                .and_then(|s| s.branch.clone())
+                .or_else(|| self.state.workspace.as_ref().map(|w| w.meta.name.clone()))
+                .unwrap_or_else(|| "No workspace".to_string());
+            ui.label(mono(format!("{}  {left}", icons::BRANCH)));
+
+            // Active environment (read-only here; switch via the top-bar pill).
+            ui.add_space(6.0);
+            let env_active = self.state.active_env.is_some();
+            status_dot(
+                ui,
+                if env_active {
+                    self.state.theme.accent_color()
+                } else {
+                    dim
+                },
+            );
+            ui.label(mono(
+                self.state
+                    .active_env
+                    .clone()
+                    .unwrap_or_else(|| "No Environment".to_string()),
+            ));
+
+            ui.add_space(6.0);
             if self.state.run_state.is_running() {
-                ui.separator();
                 ui.spinner();
-                ui.label(format!("Running {}/{}", self.state.run_state.completed, self.state.run_state.total));
+                ui.label(mono(format!(
+                    "Running {}/{}",
+                    self.state.run_state.completed, self.state.run_state.total
+                )));
+            } else {
+                ui.label(mono("Ready".into()));
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(self.state.theme.label());
+                ui.label(mono(self.state.theme.label().to_string()));
+                ui.add_space(6.0);
+                ui.label(mono("Ln 1, Col 1".into()));
+                ui.add_space(6.0);
+                ui.label(mono("UTF-8".into()));
+                ui.add_space(6.0);
+                let n = self.state.tabs.len();
+                ui.label(mono(format!("{n} tab{}", if n == 1 { "" } else { "s" })));
             });
         });
     }
 
     fn toast(&mut self, ui: &mut egui::Ui) {
-        let Some(status) = &self.state.status else { return };
+        let Some(status) = &self.state.status else {
+            return;
+        };
         if status.expired() {
             self.state.status = None;
             return;
         }
-        let color = if status.is_error { self.state.theme.error_color() } else { self.state.theme.ok_color() };
+        let color = if status.is_error {
+            self.state.theme.error_color()
+        } else {
+            self.state.theme.ok_color()
+        };
         egui::Area::new(egui::Id::new("toast"))
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-12.0, -32.0))
             .order(egui::Order::Foreground)
@@ -467,7 +786,8 @@ impl ForgeApp {
                         ui.colored_label(color, &status.text);
                     });
             });
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(200));
     }
 }
 
@@ -477,94 +797,146 @@ impl eframe::App for ForgeApp {
         if let Some(ws) = self.state.pending_workspace.take() {
             self.switch_workspace(ws, ui.ctx());
         }
+        self.sync_openapi();
 
         crate::dialogs::handle_global_shortcuts(ui.ctx(), &mut self.state);
         if let Some(action) = keymap::dispatch(ui.ctx()) {
             self.dispatch_action(action);
         }
 
-        egui::Panel::top("menu-bar").resizable(false).show(ui, |ui| {
-            self.menu_bar(ui);
-        });
-
-        egui::Panel::left("left-stripe").exact_size(26.0).resizable(false).show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(4.0);
-                let active = self.state.show_collections;
-                if ui
-                    .selectable_label(active, icons::COLLECTIONS)
-                    .on_hover_text("Collections")
-                    .clicked()
-                {
-                    self.state.show_collections = !self.state.show_collections;
-                }
-                ui.add_space(4.0);
-                let assets_active = self.state.show_assets;
-                if ui
-                    .selectable_label(assets_active, icons::ASSETS)
-                    .on_hover_text("Assets (reqv1 store)")
-                    .clicked()
-                {
-                    self.state.show_assets = !self.state.show_assets;
-                }
+        egui::Panel::top("menu-bar")
+            .resizable(false)
+            .show(ui, |ui| {
+                self.menu_bar(ui);
             });
-        });
+
+        egui::Panel::bottom("status-bar")
+            .exact_size(26.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                self.status_bar(ui);
+            });
+
+        egui::Panel::left("activity-rail")
+            .exact_size(46.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                let accent = self.state.theme.accent_color();
+                ui.add_space(6.0);
+                ui.vertical_centered(|ui| {
+                    if rail_button(
+                        ui,
+                        self.state.show_collections,
+                        icons::COLLECTIONS,
+                        "Collections",
+                        accent,
+                    ) {
+                        self.state.show_collections = !self.state.show_collections;
+                    }
+                    ui.add_space(3.0);
+                    if rail_button(
+                        ui,
+                        self.state.show_assets,
+                        icons::ASSETS,
+                        "Assets (reqv1 store)",
+                        accent,
+                    ) {
+                        self.state.show_assets = !self.state.show_assets;
+                    }
+                    ui.add_space(3.0);
+                    let hist = self.state.bottom_tool == Some(BottomTool::History);
+                    if rail_button(ui, hist, icons::HISTORY, "History", accent) {
+                        self.state.bottom_tool = if hist {
+                            None
+                        } else {
+                            Some(BottomTool::History)
+                        };
+                    }
+                    ui.add_space(3.0);
+                    if rail_button(
+                        ui,
+                        self.state.show_environment,
+                        icons::ENVIRONMENT,
+                        "Environment",
+                        accent,
+                    ) {
+                        self.state.show_environment = !self.state.show_environment;
+                    }
+                    ui.add_space(3.0);
+                    let run = self.state.bottom_tool == Some(BottomTool::Run);
+                    if rail_button(ui, run, icons::PULSE, "Run results", accent) {
+                        self.state.bottom_tool = if run { None } else { Some(BottomTool::Run) };
+                    }
+                });
+                // Gear pinned to the bottom of the rail.
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                    ui.add_space(6.0);
+                    if rail_button(ui, false, icons::GEAR, "Settings", accent) {
+                        self.state.dialogs.settings.open = true;
+                    }
+                });
+            });
 
         if self.state.show_collections {
-            egui::Panel::left("left-panel").exact_size(280.0).resizable(true).size_range(180.0..=520.0).show(ui, |ui| {
-                if Self::tool_window_header(ui, "Collections") {
-                    self.state.show_collections = false;
-                }
-                collections::show(ui, &mut self.state, &self.bridge);
-            });
+            egui::Panel::left("left-panel")
+                .exact_size(280.0)
+                .resizable(true)
+                .size_range(180.0..=520.0)
+                .show(ui, |ui| {
+                    if Self::tool_window_header(ui, "Collections") {
+                        self.state.show_collections = false;
+                    }
+                    collections::show(ui, &mut self.state, &self.bridge);
+                });
         }
 
         if self.state.show_assets {
-            egui::Panel::left("assets-panel").exact_size(300.0).resizable(true).size_range(200.0..=560.0).show(ui, |ui| {
-                if Self::tool_window_header(ui, "Assets") {
-                    self.state.show_assets = false;
-                }
-                assets::show(ui, &mut self.state);
-            });
+            egui::Panel::left("assets-panel")
+                .exact_size(300.0)
+                .resizable(true)
+                .size_range(200.0..=560.0)
+                .show(ui, |ui| {
+                    if Self::tool_window_header(ui, "Assets") {
+                        self.state.show_assets = false;
+                    }
+                    assets::show(ui, &mut self.state);
+                });
         }
-
-        egui::Panel::right("right-stripe").exact_size(26.0).resizable(false).show(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(4.0);
-                let active = self.state.show_environment;
-                if ui
-                    .selectable_label(active, icons::ENVIRONMENT)
-                    .on_hover_text("Environment")
-                    .clicked()
-                {
-                    self.state.show_environment = !self.state.show_environment;
-                }
-            });
-        });
 
         if self.state.show_environment {
-            egui::Panel::right("right-panel").exact_size(260.0).resizable(true).size_range(180.0..=480.0).show(ui, |ui| {
-                if Self::tool_window_header(ui, "Environment") {
-                    self.state.show_environment = false;
-                }
-                environment_panel(ui, &mut self.state);
-            });
+            egui::Panel::right("right-panel")
+                .exact_size(260.0)
+                .resizable(true)
+                .size_range(180.0..=480.0)
+                .show(ui, |ui| {
+                    if Self::tool_window_header(ui, "Environment") {
+                        self.state.show_environment = false;
+                    }
+                    environment_panel(ui, &mut self.state);
+                });
         }
 
-        egui::Panel::bottom("status-bar").exact_size(28.0).resizable(false).show(ui, |ui| {
-            self.status_bar(ui);
-        });
+        // Relay-style console tab strip: the bottom-tool switcher lives here
+        // (always visible), not crammed into the status bar.
+        egui::Panel::bottom("tool-tabs")
+            .exact_size(30.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                self.bottom_tool_tabs(ui);
+            });
 
-        if self.state.show_bottom {
-            if let Some(tool) = self.state.bottom_tool {
-                egui::Panel::bottom("bottom-tool-panel").exact_size(260.0).resizable(true).size_range(120.0..=560.0).show(
-                    ui,
-                    |ui| {
-                        if Self::tool_window_header(ui, tool.label()) {
-                            self.state.bottom_tool = None;
-                            return;
-                        }
-                        match tool {
+        if let Some(tool) = self.state.bottom_tool {
+            egui::Panel::bottom("bottom-tool-panel")
+                .default_size(240.0)
+                .resizable(true)
+                .size_range(120.0..=560.0)
+                .show(ui, |ui| {
+                    // Claim the full panel height regardless of content: egui
+                    // persists the *content* rect as the panel's next size, so
+                    // a shorter-than-panel tool (e.g. the terminal) would
+                    // otherwise shrink the panel a little on every repaint.
+                    ui.set_min_height(ui.available_height());
+                    match tool {
                         BottomTool::Run => test_results::show(ui, &mut self.state, &self.bridge),
                         BottomTool::Problems => {
                             if let Some(rel_id) = problems::show(ui, &mut self.state) {
@@ -576,27 +948,49 @@ impl eframe::App for ForgeApp {
                         BottomTool::History => history::show(ui, &mut self.state),
                         BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
                         BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
-                        }
-                    },
-                );
-            }
+                    }
+                });
         }
 
-        egui::CentralPanel::default().show(ui, |ui| {
-            if self.state.workspace.is_none() {
-                crate::dialogs::welcome::show(ui, &mut self.state);
-                return;
-            }
-            self.tab_bar(ui);
-            ui.separator();
-            if self.state.active_tab.is_some() {
-                request_editor::show(ui, &mut self.state, &self.bridge);
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.weak("Open a request from the Collections panel to get started.");
-                });
-            }
-        });
+        let editor_bg = self.state.theme.editor_bg();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(editor_bg))
+            .show(ui, |ui| {
+                if self.state.workspace.is_none() {
+                    crate::dialogs::welcome::show(ui, &mut self.state);
+                    return;
+                }
+                // Tab strip sits on the lighter panel bg (chrome), full-width, so
+                // it reads as a strip above the darker editor content — the
+                // JetBrains/Relay contrast the flat single-bg look was missing.
+                let panel_bg = ui.visuals().panel_fill;
+                egui::Frame::NONE
+                    .fill(panel_bg)
+                    .inner_margin(egui::Margin::symmetric(2, 0))
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        self.tab_bar(ui);
+                    });
+                ui.separator();
+                if self.state.active_tab.is_some() {
+                    // Relay-consistent 12px horizontal gutter around the editor
+                    // content (the tab strip above stays full-bleed).
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 2,
+                            bottom: 0,
+                        })
+                        .show(ui, |ui| {
+                            request_editor::show(ui, &mut self.state, &self.bridge);
+                        });
+                } else {
+                    ui.centered_and_justified(|ui| {
+                        ui.weak("Open a request from the Collections panel to get started.");
+                    });
+                }
+            });
 
         crate::dialogs::show(ui.ctx(), &mut self.state, &self.bridge);
         self.toast(ui);
@@ -610,6 +1004,53 @@ impl eframe::App for ForgeApp {
             local::save(&root, &self.state);
         }
     }
+}
+
+/// One activity-rail button: a 34×34 icon target that lights up on hover and
+/// gets a New-UI accent selection bar down its left edge when active. Returns
+/// `true` on click.
+fn rail_button(
+    ui: &mut egui::Ui,
+    active: bool,
+    icon: &str,
+    tip: &str,
+    accent: egui::Color32,
+) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), egui::Sense::click());
+    let resp = resp.on_hover_text(tip);
+    if active {
+        ui.painter()
+            .rect_filled(rect, 8u8, ui.visuals().widgets.active.bg_fill);
+    } else if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, 8u8, ui.visuals().widgets.hovered.bg_fill);
+    }
+    if active {
+        let bar = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + 1.0, rect.top() + 7.0),
+            egui::pos2(rect.left() + 4.0, rect.bottom() - 7.0),
+        );
+        ui.painter().rect_filled(bar, 2u8, accent);
+    }
+    let color = if active {
+        egui::Color32::WHITE
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        icon,
+        egui::FontId::proportional(18.0),
+        color,
+    );
+    resp.clicked()
+}
+
+/// A small filled status dot (environment indicator in the status bar).
+fn status_dot(ui: &mut egui::Ui, color: egui::Color32) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+    ui.painter().circle_filled(rect.center(), 3.5, color);
 }
 
 /// Read-only environment variable list for the right tool window; secret
@@ -636,23 +1077,33 @@ fn environment_panel(ui: &mut egui::Ui, state: &mut AppState) {
         ui.weak("Environment not found.");
         return;
     };
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        egui::Grid::new("env-vars-grid").num_columns(2).striped(true).show(ui, |ui| {
-            ui.strong("Name");
-            ui.strong("Value");
-            ui.end_row();
-            for (name, var) in &loaded.env.variables {
-                ui.label(name);
-                if var.secret {
-                    let has_value = loaded.secrets.contains_key(name);
-                    ui.weak(if has_value { "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}" } else { "(not set)" });
-                } else {
-                    ui.label(var.value.clone().unwrap_or_default());
-                }
-                ui.end_row();
-            }
+    egui::ScrollArea::vertical()
+        .id_salt("app-sa-1")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Grid::new("env-vars-grid")
+                .num_columns(2)
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong("Name");
+                    ui.strong("Value");
+                    ui.end_row();
+                    for (name, var) in &loaded.env.variables {
+                        ui.label(name);
+                        if var.secret {
+                            let has_value = loaded.secrets.contains_key(name);
+                            ui.weak(if has_value {
+                                "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}"
+                            } else {
+                                "(not set)"
+                            });
+                        } else {
+                            ui.label(var.value.clone().unwrap_or_default());
+                        }
+                        ui.end_row();
+                    }
+                });
         });
-    });
 }
 
 pub(crate) fn save_tab(state: &mut AppState, idx: usize) {
@@ -660,7 +1111,9 @@ pub(crate) fn save_tab(state: &mut AppState, idx: usize) {
         state.status = Some(StatusMessage::error("No workspace open"));
         return;
     };
-    let Some(tab) = state.tabs.get_mut(idx) else { return };
+    let Some(tab) = state.tabs.get_mut(idx) else {
+        return;
+    };
     let file = root.join(&tab.rel_id);
     match save_request(&file, &tab.def) {
         Ok(()) => {
@@ -701,15 +1154,28 @@ mod tests {
     #[test]
     fn stale_run_events_do_not_corrupt_current_run_state() {
         let mut app = ForgeApp::new(egui::Context::default(), None);
-        app.state.run_state = RunState { run_id: Some(2), total: 5, completed: 1 };
+        app.state.run_state = RunState {
+            run_id: Some(2),
+            total: 5,
+            completed: 1,
+        };
 
-        app.handle_run_event(1, RunEvent::RequestFinished(Box::new(dummy_outcome("req-a"))));
+        app.handle_run_event(
+            1,
+            RunEvent::RequestFinished(Box::new(dummy_outcome("req-a"))),
+        );
         assert_eq!(
             app.state.run_state.completed, 1,
             "a RequestFinished from a stale run_id must not bump the current run's completed count"
         );
 
-        let summary = RunSummary { total: 1, passed: 1, failed: 0, skipped: 0, duration_ms: 5 };
+        let summary = RunSummary {
+            total: 1,
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            duration_ms: 5,
+        };
         app.handle_run_event(1, RunEvent::RunFinished(summary));
         assert_eq!(
             app.state.run_state.run_id,
@@ -722,7 +1188,10 @@ mod tests {
         );
 
         // The current run's own events still apply normally.
-        app.handle_run_event(2, RunEvent::RequestFinished(Box::new(dummy_outcome("req-b"))));
+        app.handle_run_event(
+            2,
+            RunEvent::RequestFinished(Box::new(dummy_outcome("req-b"))),
+        );
         assert_eq!(app.state.run_state.completed, 2);
     }
 }

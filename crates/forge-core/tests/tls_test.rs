@@ -67,7 +67,9 @@ async fn one_shot_tls_server(pki: &TestPki, require_client_cert: bool) -> u16 {
         roots
             .add(CertificateDer::from_pem_slice(pki.ca_pem.as_bytes()).expect("ca der"))
             .expect("add ca");
-        let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build().expect("verifier");
+        let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+            .build()
+            .expect("verifier");
         ServerConfig::builder()
             .with_client_cert_verifier(verifier)
             .with_single_cert(pki.server_chain.clone(), pki.server_key.clone_key())
@@ -80,12 +82,18 @@ async fn one_shot_tls_server(pki: &TestPki, require_client_cert: bool) -> u16 {
     };
 
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let port = listener.local_addr().expect("addr").port();
 
     tokio::spawn(async move {
-        let Ok((stream, _)) = listener.accept().await else { return };
-        let Ok(mut tls) = acceptor.accept(stream).await else { return };
+        let Ok((stream, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(mut tls) = acceptor.accept(stream).await else {
+            return;
+        };
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut buf = [0u8; 4096];
         let _ = tls.read(&mut buf).await;
@@ -111,7 +119,10 @@ async fn custom_ca_bundle_makes_private_ca_trusted() {
     req.extra_roots_pem = Some(pki.ca_pem.clone().into_bytes());
 
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("request should succeed");
     assert_eq!(res.status, 200);
     assert_eq!(res.body, b"ok");
 }
@@ -143,7 +154,10 @@ async fn client_certificate_satisfies_mtls_server() {
     req.client_pem = Some(pki.client_pem.clone().into_bytes());
 
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("mTLS request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("mTLS request should succeed");
     assert_eq!(res.status, 200);
     assert_eq!(res.body, b"ok");
 }
@@ -158,7 +172,10 @@ async fn mtls_server_rejects_requests_without_a_client_certificate() {
 
     let engine = HttpEngine::new();
     let result = engine.execute(req, CancellationToken::new()).await;
-    assert!(result.is_err(), "server requiring a client cert must reject the handshake");
+    assert!(
+        result.is_err(),
+        "server requiring a client cert must reject the handshake"
+    );
 }
 
 #[test]
@@ -167,11 +184,17 @@ fn invalid_client_pem_yields_a_clear_error() {
     req.client_pem = Some(b"not a pem".to_vec());
 
     let engine = HttpEngine::new();
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let err = rt
         .block_on(engine.execute(req, CancellationToken::new()))
         .expect_err("garbage PEM must fail");
-    assert!(err.to_string().contains("client certificate"), "unexpected error: {err}");
+    assert!(
+        err.to_string().contains("client certificate"),
+        "unexpected error: {err}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -191,26 +214,38 @@ async fn one_shot_wss_echo(pki: &TestPki) -> u16 {
     roots
         .add(CertificateDer::from_pem_slice(pki.ca_pem.as_bytes()).expect("ca der"))
         .expect("add ca");
-    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build().expect("verifier");
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .build()
+        .expect("verifier");
     let config = ServerConfig::builder()
         .with_client_cert_verifier(verifier)
         .with_single_cert(pki.server_chain.clone(), pki.server_key.clone_key())
         .expect("server config");
 
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let port = listener.local_addr().expect("addr").port();
 
     tokio::spawn(async move {
-        let Ok((stream, _)) = listener.accept().await else { return };
-        let Ok(tls) = acceptor.accept(stream).await else { return };
-        let Ok(mut ws) = tokio_tungstenite::accept_async(tls).await else { return };
+        let Ok((stream, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(tls) = acceptor.accept(stream).await else {
+            return;
+        };
+        let Ok(mut ws) = tokio_tungstenite::accept_async(tls).await else {
+            return;
+        };
         use futures::{SinkExt, StreamExt};
         while let Some(Ok(msg)) = ws.next().await {
             if msg.is_text() {
                 let text = msg.into_text().unwrap_or_default();
                 let _ = ws
-                    .send(tokio_tungstenite::tungstenite::Message::text(format!("echo: {text}")))
+                    .send(tokio_tungstenite::tungstenite::Message::text(format!(
+                        "echo: {text}"
+                    )))
                     .await;
             } else if msg.is_close() {
                 break;
@@ -234,12 +269,13 @@ async fn websocket_session_uses_client_certificate() {
     .await
     .expect("mTLS WebSocket connect should succeed");
 
-    let _ = session.outgoing.send(forge_core::protocols::WsOutgoing::Text("ping".to_string()));
+    let _ = session
+        .outgoing
+        .send(forge_core::protocols::WsOutgoing::Text("ping".to_string()));
 
     let mut got_echo = false;
     for _ in 0..4 {
-        match tokio::time::timeout(std::time::Duration::from_secs(5), session.events.recv()).await
-        {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), session.events.recv()).await {
             Ok(Some(forge_core::protocols::WsEvent::Text { text, .. })) => {
                 assert_eq!(text, "echo: ping");
                 got_echo = true;
@@ -263,7 +299,10 @@ async fn websocket_session_without_client_cert_is_rejected() {
         &material(&pki, false),
     )
     .await;
-    assert!(result.is_err(), "mTLS server must reject a client without a certificate");
+    assert!(
+        result.is_err(),
+        "mTLS server must reject a client without a certificate"
+    );
 }
 
 /// One-shot mTLS SSE server: sends one event, then closes.
@@ -272,19 +311,27 @@ async fn one_shot_sse_server(pki: &TestPki) -> u16 {
     roots
         .add(CertificateDer::from_pem_slice(pki.ca_pem.as_bytes()).expect("ca der"))
         .expect("add ca");
-    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build().expect("verifier");
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .build()
+        .expect("verifier");
     let config = ServerConfig::builder()
         .with_client_cert_verifier(verifier)
         .with_single_cert(pki.server_chain.clone(), pki.server_key.clone_key())
         .expect("server config");
 
     let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let port = listener.local_addr().expect("addr").port();
 
     tokio::spawn(async move {
-        let Ok((stream, _)) = listener.accept().await else { return };
-        let Ok(mut tls) = acceptor.accept(stream).await else { return };
+        let Ok((stream, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(mut tls) = acceptor.accept(stream).await else {
+            return;
+        };
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut buf = [0u8; 4096];
         let _ = tls.read(&mut buf).await;
@@ -315,8 +362,7 @@ async fn sse_session_uses_client_certificate() {
 
     let mut got_event = false;
     for _ in 0..4 {
-        match tokio::time::timeout(std::time::Duration::from_secs(5), session.events.recv()).await
-        {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), session.events.recv()).await {
             Ok(Some(forge_core::protocols::SseEvent::Event { event, data, .. })) => {
                 assert_eq!(event, "tick");
                 assert_eq!(data, "42");
@@ -342,5 +388,8 @@ async fn sse_session_without_client_cert_is_rejected() {
         &material(&pki, false),
     )
     .await;
-    assert!(result.is_err(), "mTLS server must reject a client without a certificate");
+    assert!(
+        result.is_err(),
+        "mTLS server must reject a client without a certificate"
+    );
 }

@@ -11,10 +11,18 @@ pub struct AssertionOutcome {
 
 impl AssertionOutcome {
     pub fn pass(summary: impl Into<String>) -> Self {
-        Self { summary: summary.into(), passed: true, message: None }
+        Self {
+            summary: summary.into(),
+            passed: true,
+            message: None,
+        }
     }
 
     pub fn fail(summary: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { summary: summary.into(), passed: false, message: Some(message.into()) }
+        Self {
+            summary: summary.into(),
+            passed: false,
+            message: Some(message.into()),
+        }
     }
 }

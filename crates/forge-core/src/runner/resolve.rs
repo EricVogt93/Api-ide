@@ -54,16 +54,6 @@ fn token_cache() -> &'static TokenCache {
     TOKEN_CACHE.get_or_init(TokenCache::new)
 }
 
-/// Plain `reqwest::Client` used only for OAuth2 token-endpoint calls.
-/// [`HttpEngine`] doesn't expose its internal client (it owns cookies and a
-/// pool keyed by TLS/proxy settings that aren't relevant to a token
-/// request), so a small dedicated client is kept here instead.
-static OAUTH_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-
-fn oauth_client() -> &'static reqwest::Client {
-    OAUTH_CLIENT.get_or_init(reqwest::Client::new)
-}
-
 /// Resolve `def` into an executable request.
 ///
 /// `engine` is needed for OAuth2 client-credentials token fetches (cached).
@@ -75,9 +65,24 @@ pub async fn resolve_request(
     scopes: &VarScopes,
     engine: &HttpEngine,
 ) -> Result<ResolvedRequest, ResolveError> {
-    // The HttpEngine doesn't expose a reusable reqwest::Client, so OAuth2
-    // token fetches use their own module-level client (see `oauth_client`).
-    let _ = engine;
+    let ws_settings = &workspace.meta.settings;
+    let timeout = Duration::from_millis(def.settings.timeout_ms.unwrap_or(ws_settings.timeout_ms));
+    let follow_redirects = def
+        .settings
+        .follow_redirects
+        .unwrap_or(ws_settings.follow_redirects);
+    let max_redirects = def
+        .settings
+        .max_redirects
+        .unwrap_or(ws_settings.max_redirects);
+    let verify_tls = def.settings.verify_tls.unwrap_or(ws_settings.verify_tls);
+    let proxy = ws_settings.proxy.as_ref().map(|p| p.url.clone());
+    let no_proxy = ws_settings
+        .proxy
+        .as_ref()
+        .map(|proxy| proxy.no_proxy.clone())
+        .filter(|value| !value.is_empty());
+    let (client_pem, extra_roots_pem) = load_tls_material(workspace).await?;
 
     let mut headers: Vec<(String, String)> = Vec::new();
     for h in &def.headers {
@@ -89,7 +94,19 @@ pub async fn resolve_request(
     }
 
     let auth = effective_auth(&def.auth, auth_chain);
-    let additions = resolve_auth_additions(auth, scopes).await?;
+    let oauth_client = if matches!(auth, Some(AuthConfig::OAuth2ClientCredentials { .. })) {
+        Some(engine.client_for(
+            verify_tls,
+            proxy.as_deref(),
+            no_proxy.as_deref(),
+            client_pem.as_deref(),
+            extra_roots_pem.as_deref(),
+            false,
+        )?)
+    } else {
+        None
+    };
+    let additions = resolve_auth_additions(auth, scopes, oauth_client.as_ref()).await?;
     let auth_query = additions.query;
     for (k, v) in additions.headers {
         if !headers.iter().any(|(hk, _)| hk.eq_ignore_ascii_case(&k)) {
@@ -97,7 +114,10 @@ pub async fn resolve_request(
         }
     }
 
-    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("user-agent")) {
+    if !headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+    {
         let ua = workspace
             .meta
             .settings
@@ -106,15 +126,19 @@ pub async fn resolve_request(
             .unwrap_or_else(|| "Forge/0.1".to_string());
         headers.push(("User-Agent".to_string(), ua));
     }
-    if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept")) {
+    if !headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("accept"))
+    {
         headers.push(("Accept".to_string(), "*/*".to_string()));
     }
 
     let url_template = interpolate(&def.url, scopes)?;
     let url_with_path = substitute_path_params(&url_template, def, scopes)?;
     let url_with_scheme = ensure_scheme(&url_with_path);
-    let mut url = url::Url::parse(&url_with_scheme)
-        .map_err(|e| ResolveError::Exec(ExecError::InvalidUrl(format!("{e}: {url_with_scheme}"))))?;
+    let mut url = url::Url::parse(&url_with_scheme).map_err(|e| {
+        ResolveError::Exec(ExecError::InvalidUrl(format!("{e}: {url_with_scheme}")))
+    })?;
 
     let mut query_additions: Vec<(String, String)> = Vec::new();
     for p in &def.params {
@@ -143,14 +167,6 @@ pub async fn resolve_request(
 
     let body = resolve_body(&def.body, workspace, scopes).await?;
 
-    let ws_settings = &workspace.meta.settings;
-    let timeout = Duration::from_millis(def.settings.timeout_ms.unwrap_or(ws_settings.timeout_ms));
-    let follow_redirects = def.settings.follow_redirects.unwrap_or(ws_settings.follow_redirects);
-    let max_redirects = def.settings.max_redirects.unwrap_or(ws_settings.max_redirects);
-    let verify_tls = def.settings.verify_tls.unwrap_or(ws_settings.verify_tls);
-    let proxy = ws_settings.proxy.as_ref().map(|p| p.url.clone());
-    let (client_pem, extra_roots_pem) = load_tls_material(workspace).await?;
-
     Ok(ResolvedRequest {
         method: def.method,
         url: url.to_string(),
@@ -161,6 +177,7 @@ pub async fn resolve_request(
         max_redirects,
         verify_tls,
         proxy,
+        no_proxy,
         client_pem,
         extra_roots_pem,
         digest: additions.digest,
@@ -175,13 +192,18 @@ pub async fn resolve_request(
 async fn load_tls_material(
     workspace: &Workspace,
 ) -> Result<(Option<Vec<u8>>, Option<Vec<u8>>), ResolveError> {
-    let Some(tls) = &workspace.meta.settings.tls else { return Ok((None, None)) };
+    let Some(tls) = &workspace.meta.settings.tls else {
+        return Ok((None, None));
+    };
 
     let read = |path: &str| {
         let resolved = resolve_body_path(workspace, path);
         async move {
             tokio::fs::read(&resolved).await.map_err(|e| {
-                ResolveError::Auth(format!("failed to read TLS file {}: {e}", resolved.display()))
+                ResolveError::Auth(format!(
+                    "failed to read TLS file {}: {e}",
+                    resolved.display()
+                ))
             })
         }
     };
@@ -226,7 +248,9 @@ pub fn resolve_assertions(
                 serde_json::Value::Array(items.iter().map(|i| interp_json(i, interp)).collect())
             }
             serde_json::Value::Object(map) => serde_json::Value::Object(
-                map.iter().map(|(k, val)| (k.clone(), interp_json(val, interp))).collect(),
+                map.iter()
+                    .map(|(k, val)| (k.clone(), interp_json(val, interp)))
+                    .collect(),
             ),
             other => other.clone(),
         }
@@ -235,22 +259,34 @@ pub fn resolve_assertions(
     defs.iter()
         .map(|def| {
             let check = match &def.check {
-                Check::Header { name, op, value } => {
-                    Check::Header { name: interp(name), op: *op, value: interp(value) }
-                }
-                Check::ContentType { value } => Check::ContentType { value: interp(value) },
+                Check::Header { name, op, value } => Check::Header {
+                    name: interp(name),
+                    op: *op,
+                    value: interp(value),
+                },
+                Check::ContentType { value } => Check::ContentType {
+                    value: interp(value),
+                },
                 Check::JsonPath { path, op, value } => Check::JsonPath {
                     path: interp(path),
                     op: *op,
                     value: interp_json(value, &interp),
                 },
-                Check::BodyContains { value } => Check::BodyContains { value: interp(value) },
-                Check::BodyMatches { regex } => Check::BodyMatches { regex: interp(regex) },
+                Check::BodyContains { value } => Check::BodyContains {
+                    value: interp(value),
+                },
+                Check::BodyMatches { regex } => Check::BodyMatches {
+                    regex: interp(regex),
+                },
                 // No strings to interpolate; JsonSchema is deliberately left
                 // untouched — schemas are structural, not user data.
                 other => other.clone(),
             };
-            crate::model::AssertionDef { check, enabled: def.enabled, note: def.note.clone() }
+            crate::model::AssertionDef {
+                check,
+                enabled: def.enabled,
+                note: def.note.clone(),
+            }
         })
         .collect()
 }
@@ -282,7 +318,10 @@ struct AuthAdditions {
 
 impl AuthAdditions {
     fn headers(headers: Vec<(String, String)>) -> Self {
-        Self { headers, ..Self::default() }
+        Self {
+            headers,
+            ..Self::default()
+        }
     }
 }
 
@@ -290,6 +329,7 @@ impl AuthAdditions {
 async fn resolve_auth_additions(
     auth: Option<&AuthConfig>,
     vars: &VarScopes,
+    oauth_client: Option<&reqwest::Client>,
 ) -> Result<AuthAdditions, ResolveError> {
     let Some(auth) = auth else {
         return Ok(AuthAdditions::default());
@@ -316,14 +356,19 @@ async fn resolve_auth_additions(
                 format!("{prefix} {tok}"),
             )]))
         }
-        AuthConfig::ApiKey { key, value, placement } => {
+        AuthConfig::ApiKey {
+            key,
+            value,
+            placement,
+        } => {
             let k = interpolate(key, vars)?;
             let v = interpolate(value, vars)?;
             match placement {
                 ApiKeyPlacement::Header => Ok(AuthAdditions::headers(vec![(k, v)])),
-                ApiKeyPlacement::Query => {
-                    Ok(AuthAdditions { query: vec![(k, v)], ..AuthAdditions::default() })
-                }
+                ApiKeyPlacement::Query => Ok(AuthAdditions {
+                    query: vec![(k, v)],
+                    ..AuthAdditions::default()
+                }),
             }
         }
         AuthConfig::OAuth2ClientCredentials {
@@ -336,9 +381,16 @@ async fn resolve_auth_additions(
             let token_url = interpolate(token_url, vars)?;
             let client_id = interpolate(client_id, vars)?;
             let client_secret = interpolate(client_secret, vars)?;
-            let key = TokenCacheKey { token_url, client_id, scopes: oauth_scopes.clone() };
+            let key = TokenCacheKey {
+                token_url,
+                client_id,
+                scopes: oauth_scopes.clone(),
+            };
+            let client = oauth_client.ok_or_else(|| {
+                ResolveError::Auth("OAuth2 client transport is unavailable".to_string())
+            })?;
             let token = token_cache()
-                .get_or_fetch(oauth_client(), key, &client_secret, *credentials_in_body)
+                .get_or_fetch(client, key, &client_secret, *credentials_in_body)
                 .await?;
             Ok(AuthAdditions::headers(vec![(
                 "Authorization".to_string(),
@@ -352,7 +404,11 @@ async fn resolve_auth_additions(
             }),
             ..AuthAdditions::default()
         }),
-        AuthConfig::Ntlm { username, password, domain } => Ok(AuthAdditions {
+        AuthConfig::Ntlm {
+            username,
+            password,
+            domain,
+        } => Ok(AuthAdditions {
             ntlm: Some(crate::exec::NtlmCredentials {
                 username: interpolate(username, vars)?,
                 password: interpolate(password, vars)?,
@@ -360,21 +416,25 @@ async fn resolve_auth_additions(
             }),
             ..AuthAdditions::default()
         }),
-        AuthConfig::AwsSigV4 { access_key, secret_key, session_token, region, service } => {
-            Ok(AuthAdditions {
-                sigv4: Some(crate::exec::SigV4Params {
-                    access_key: interpolate(access_key, vars)?,
-                    secret_key: interpolate(secret_key, vars)?,
-                    session_token: match session_token {
-                        Some(t) => Some(interpolate(t, vars)?),
-                        None => None,
-                    },
-                    region: interpolate(region, vars)?,
-                    service: interpolate(service, vars)?,
-                }),
-                ..AuthAdditions::default()
-            })
-        }
+        AuthConfig::AwsSigV4 {
+            access_key,
+            secret_key,
+            session_token,
+            region,
+            service,
+        } => Ok(AuthAdditions {
+            sigv4: Some(crate::exec::SigV4Params {
+                access_key: interpolate(access_key, vars)?,
+                secret_key: interpolate(secret_key, vars)?,
+                session_token: match session_token {
+                    Some(t) => Some(interpolate(t, vars)?),
+                    None => None,
+                },
+                region: interpolate(region, vars)?,
+                service: interpolate(service, vars)?,
+            }),
+            ..AuthAdditions::default()
+        }),
         AuthConfig::OAuth2AuthCode { .. } => Err(ResolveError::Auth(
             "interactive OAuth2 authorization-code flow requires the GUI".to_string(),
         )),
@@ -433,7 +493,9 @@ fn ensure_scheme(url: &str) -> String {
 /// `"://"` (e.g. `api.example.com/redirect?next=https://evil.com`) is
 /// correctly treated as having no scheme.
 fn has_scheme(url: &str) -> bool {
-    let Some(idx) = url.find("://") else { return false };
+    let Some(idx) = url.find("://") else {
+        return false;
+    };
     if idx == 0 {
         return false;
     }
@@ -513,7 +575,9 @@ async fn resolve_body(
                     continue;
                 }
                 let (data, file_name) = match &part.content {
-                    PartContent::Text { value } => (PartData::Text(interpolate(value, scopes)?), None),
+                    PartContent::Text { value } => {
+                        (PartData::Text(interpolate(value, scopes)?), None)
+                    }
                     PartContent::File { path } => {
                         let resolved = resolve_body_path(workspace, path);
                         let file_name = Path::new(path)
@@ -531,14 +595,19 @@ async fn resolve_body(
             }
             Ok(ResolvedBody::Multipart(out))
         }
-        BodyDef::GraphQl { query, variables, operation_name } => {
+        BodyDef::GraphQl {
+            query,
+            variables,
+            operation_name,
+        } => {
             let query = interpolate(query, scopes)?;
             let variables_text = interpolate(variables, scopes)?;
             let variables_value: serde_json::Value = if variables_text.trim().is_empty() {
                 serde_json::json!({})
             } else {
-                serde_json::from_str(&variables_text)
-                    .map_err(|e| ResolveError::Body(format!("invalid GraphQL variables JSON: {e}")))?
+                serde_json::from_str(&variables_text).map_err(|e| {
+                    ResolveError::Body(format!("invalid GraphQL variables JSON: {e}"))
+                })?
             };
             let operation_name = match operation_name {
                 Some(name) => Some(interpolate(name, scopes)?),
@@ -549,16 +618,26 @@ async fn resolve_body(
                 "variables": variables_value,
                 "operationName": operation_name,
             });
-            let data = serde_json::to_vec(&payload)
-                .map_err(|e| ResolveError::Body(format!("failed to serialize GraphQL body: {e}")))?;
-            Ok(ResolvedBody::Bytes { content_type: Some("application/json".to_string()), data })
+            let data = serde_json::to_vec(&payload).map_err(|e| {
+                ResolveError::Body(format!("failed to serialize GraphQL body: {e}"))
+            })?;
+            Ok(ResolvedBody::Bytes {
+                content_type: Some("application/json".to_string()),
+                data,
+            })
         }
         BodyDef::Binary { path } => {
             let resolved = resolve_body_path(workspace, path);
             let data = tokio::fs::read(&resolved).await.map_err(|e| {
-                ResolveError::Body(format!("failed to read body file {}: {e}", resolved.display()))
+                ResolveError::Body(format!(
+                    "failed to read body file {}: {e}",
+                    resolved.display()
+                ))
             })?;
-            Ok(ResolvedBody::Bytes { content_type: Some("application/octet-stream".to_string()), data })
+            Ok(ResolvedBody::Bytes {
+                content_type: Some("application/octet-stream".to_string()),
+                data,
+            })
         }
     }
 }

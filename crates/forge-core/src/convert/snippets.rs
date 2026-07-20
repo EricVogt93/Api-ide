@@ -1,7 +1,12 @@
 //! Generate runnable code snippets from a [`RequestDef`].
 
-use crate::convert::common::{append_query, enabled_headers, percent_encode_form, query_pairs, shell_quote};
-use crate::model::{ApiKeyPlacement, AuthConfig, BodyDef, Method, MultipartPart, PartContent, RawLanguage, RequestDef};
+use crate::convert::common::{
+    append_query, enabled_headers, percent_encode_form, query_pairs, shell_quote,
+};
+use crate::model::{
+    ApiKeyPlacement, AuthConfig, BodyDef, Method, MultipartPart, PartContent, RawLanguage,
+    RequestDef,
+};
 
 /// Target language/library for [`generate`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -77,7 +82,11 @@ fn build_view(def: &RequestDef) -> View {
             let prefix = prefix.clone().unwrap_or_else(|| "Bearer".to_string());
             headers.push(("Authorization".to_string(), format!("{prefix} {token}")));
         }
-        AuthConfig::ApiKey { key, value, placement } => match placement {
+        AuthConfig::ApiKey {
+            key,
+            value,
+            placement,
+        } => match placement {
             ApiKeyPlacement::Header => headers.push((key.clone(), value.clone())),
             ApiKeyPlacement::Query => query.push((key.clone(), value.clone())),
         },
@@ -111,22 +120,40 @@ fn build_view(def: &RequestDef) -> View {
         }
         BodyDef::Xml { text } => Body::Text(text.clone()),
         BodyDef::FormUrlencoded { fields } => Body::Form(
-            fields.iter().filter(|f| f.is_active()).map(|f| (f.key.clone(), f.value.clone())).collect(),
+            fields
+                .iter()
+                .filter(|f| f.is_active())
+                .map(|f| (f.key.clone(), f.value.clone()))
+                .collect(),
         ),
         BodyDef::Multipart { parts } => {
             Body::Multipart(parts.iter().filter(|p| p.enabled).cloned().collect())
         }
-        BodyDef::GraphQl { query: gql_query, variables, operation_name } => {
-            if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type")) {
+        BodyDef::GraphQl {
+            query: gql_query,
+            variables,
+            operation_name,
+        } => {
+            if !headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            {
                 headers.push(("Content-Type".to_string(), "application/json".to_string()));
             }
-            let json = crate::convert::common::graphql_json_body(gql_query, variables, operation_name);
+            let json =
+                crate::convert::common::graphql_json_body(gql_query, variables, operation_name);
             Body::Json(serde_json::from_str(&json).unwrap_or(serde_json::Value::Null))
         }
         BodyDef::Binary { path } => Body::Text(format!("@{path}")),
     };
 
-    View { method: def.method, url, headers, basic_auth, body }
+    View {
+        method: def.method,
+        url,
+        headers,
+        basic_auth,
+        body,
+    }
 }
 
 /// A JSON/JS/Python/Java/Go compatible double-quoted string literal.
@@ -147,7 +174,14 @@ fn python_literal(v: &serde_json::Value) -> String {
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::String(s) => quote(s),
         serde_json::Value::Array(items) => {
-            format!("[{}]", items.iter().map(python_literal).collect::<Vec<_>>().join(", "))
+            format!(
+                "[{}]",
+                items
+                    .iter()
+                    .map(python_literal)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
         }
         serde_json::Value::Object(map) => format!(
             "{{{}}}",
@@ -187,8 +221,10 @@ fn js_fetch(v: &View) -> String {
         .map(|(k, val)| format!("      {}: {}", quote(k), quote(val)))
         .collect();
     if let Some((u, p)) = &v.basic_auth {
-        header_entries
-            .push(format!("      Authorization: 'Basic ' + btoa({})", quote(&format!("{u}:{p}"))));
+        header_entries.push(format!(
+            "      Authorization: 'Basic ' + btoa({})",
+            quote(&format!("{u}:{p}"))
+        ));
     }
     let headers_block = if header_entries.is_empty() {
         "    headers: {},\n".to_string()
@@ -213,7 +249,11 @@ fn js_fetch(v: &View) -> String {
             for p in parts {
                 match &p.content {
                     PartContent::Text { value } => {
-                        s.push_str(&format!("      form.append({}, {});\n", quote(&p.name), quote(value)));
+                        s.push_str(&format!(
+                            "      form.append({}, {});\n",
+                            quote(&p.name),
+                            quote(value)
+                        ));
                     }
                     PartContent::File { path } => {
                         s.push_str(&format!(
@@ -239,8 +279,15 @@ fn js_fetch(v: &View) -> String {
 }
 
 fn axios(v: &View) -> String {
-    let mut lines = vec!["const axios = require('axios');".to_string(), String::new(), "axios.request({".to_string()];
-    lines.push(format!("  method: {},", quote(&v.method.as_str().to_ascii_lowercase())));
+    let mut lines = vec![
+        "const axios = require('axios');".to_string(),
+        String::new(),
+        "axios.request({".to_string(),
+    ];
+    lines.push(format!(
+        "  method: {},",
+        quote(&v.method.as_str().to_ascii_lowercase())
+    ));
     lines.push(format!("  url: {},", quote(&v.url)));
     if !v.headers.is_empty() {
         lines.push("  headers: {".to_string());
@@ -275,9 +322,11 @@ fn axios(v: &View) -> String {
             lines.push("    const form = new FormData();".to_string());
             for p in parts {
                 match &p.content {
-                    PartContent::Text { value } => {
-                        lines.push(format!("    form.append({}, {});", quote(&p.name), quote(value)))
-                    }
+                    PartContent::Text { value } => lines.push(format!(
+                        "    form.append({}, {});",
+                        quote(&p.name),
+                        quote(value)
+                    )),
                     PartContent::File { path } => lines.push(format!(
                         "    form.append({}, fs.createReadStream({}));",
                         quote(&p.name),
@@ -329,12 +378,16 @@ fn python_requests(v: &View) -> String {
             lines.push("    files={".to_string());
             for p in parts {
                 match &p.content {
-                    PartContent::Text { value } => {
-                        lines.push(format!("        {}: (None, {}),", quote(&p.name), quote(value)))
-                    }
-                    PartContent::File { path } => {
-                        lines.push(format!("        {}: open({}, 'rb'),", quote(&p.name), quote(path)))
-                    }
+                    PartContent::Text { value } => lines.push(format!(
+                        "        {}: (None, {}),",
+                        quote(&p.name),
+                        quote(value)
+                    )),
+                    PartContent::File { path } => lines.push(format!(
+                        "        {}: open({}, 'rb'),",
+                        quote(&p.name),
+                        quote(path)
+                    )),
                 }
             }
             lines.push("    },".to_string());
@@ -382,8 +435,12 @@ fn httpie(v: &View) -> String {
             args.push("--multipart".to_string());
             for p in parts {
                 match &p.content {
-                    PartContent::Text { value } => args.push(shell_quote(&format!("{}={}", p.name, value))),
-                    PartContent::File { path } => args.push(shell_quote(&format!("{}@{}", p.name, path))),
+                    PartContent::Text { value } => {
+                        args.push(shell_quote(&format!("{}={}", p.name, value)))
+                    }
+                    PartContent::File { path } => {
+                        args.push(shell_quote(&format!("{}@{}", p.name, path)))
+                    }
                 }
             }
         }
@@ -392,10 +449,15 @@ fn httpie(v: &View) -> String {
 }
 
 fn go_net_http(v: &View) -> String {
-    let (body_decl, body_arg, mut extra_imports): (String, String, Vec<&'static str>) = match &v.body {
+    let (body_decl, body_arg, mut extra_imports): (String, String, Vec<&'static str>) = match &v
+        .body
+    {
         Body::None => (String::new(), "nil".to_string(), vec![]),
         Body::Json(val) => (
-            format!("\tbody := strings.NewReader({})\n", go_raw_string(&val.to_string())),
+            format!(
+                "\tbody := strings.NewReader({})\n",
+                go_raw_string(&val.to_string())
+            ),
             "body".to_string(),
             vec!["strings"],
         ),
@@ -450,8 +512,11 @@ fn go_net_http(v: &View) -> String {
     extra_imports.push("net/http");
     extra_imports.sort_unstable();
     extra_imports.dedup();
-    let import_block =
-        extra_imports.iter().map(|i| format!("\t\"{i}\"")).collect::<Vec<_>>().join("\n");
+    let import_block = extra_imports
+        .iter()
+        .map(|i| format!("\t\"{i}\""))
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let mut header_lines = String::new();
     for (k, val) in &v.headers {
@@ -470,6 +535,7 @@ fn go_net_http(v: &View) -> String {
 }
 
 fn java_http_client(v: &View) -> String {
+    let is_multipart = matches!(&v.body, Body::Multipart(_));
     let mut lines = vec![
         "import java.net.URI;".to_string(),
         "import java.net.http.HttpClient;".to_string(),
@@ -478,6 +544,16 @@ fn java_http_client(v: &View) -> String {
     ];
     if v.basic_auth.is_some() {
         lines.push("import java.util.Base64;".to_string());
+    }
+    if is_multipart {
+        lines.extend([
+            "import java.nio.charset.StandardCharsets;".to_string(),
+            "import java.nio.file.Files;".to_string(),
+            "import java.nio.file.Path;".to_string(),
+            "import java.util.ArrayList;".to_string(),
+            "import java.util.List;".to_string(),
+            "import java.util.UUID;".to_string(),
+        ]);
     }
     lines.push(String::new());
     lines.push("public class Main {".to_string());
@@ -494,7 +570,10 @@ fn java_http_client(v: &View) -> String {
         Body::None => ("HttpRequest.BodyPublishers.noBody()".to_string(), None),
         Body::Json(val) => (
             "HttpRequest.BodyPublishers.ofString(payload)".to_string(),
-            Some(format!("        String payload = {};", quote(&val.to_string()))),
+            Some(format!(
+                "        String payload = {};",
+                quote(&val.to_string())
+            )),
         ),
         Body::Text(text) => (
             "HttpRequest.BodyPublishers.ofString(payload)".to_string(),
@@ -511,10 +590,9 @@ fn java_http_client(v: &View) -> String {
                 Some(format!("        String payload = {};", quote(&encoded))),
             )
         }
-        Body::Multipart(_) => (
-            "HttpRequest.BodyPublishers.ofString(payload) /* TODO: build a real multipart body */"
-                .to_string(),
-            Some("        String payload = \"\";".to_string()),
+        Body::Multipart(parts) => (
+            "HttpRequest.BodyPublishers.ofByteArrays(bodyParts)".to_string(),
+            Some(java_multipart_body(parts)),
         ),
     };
     if let Some(decl) = &body_decl {
@@ -522,14 +600,36 @@ fn java_http_client(v: &View) -> String {
     }
 
     lines.push("        HttpRequest request = HttpRequest.newBuilder()".to_string());
-    lines.push(format!("                .uri(URI.create({}))", quote(&v.url)));
+    lines.push(format!(
+        "                .uri(URI.create({}))",
+        quote(&v.url)
+    ));
     for (k, val) in &v.headers {
-        lines.push(format!("                .header({}, {})", quote(k), quote(val)));
+        if is_multipart && k.eq_ignore_ascii_case("content-type") {
+            continue;
+        }
+        lines.push(format!(
+            "                .header({}, {})",
+            quote(k),
+            quote(val)
+        ));
+    }
+    if is_multipart {
+        lines.push(
+            "                .header(\"Content-Type\", \"multipart/form-data; boundary=\" + boundary)"
+                .to_string(),
+        );
     }
     if v.basic_auth.is_some() {
-        lines.push("                .header(\"Authorization\", \"Basic \" + credentials)".to_string());
+        lines.push(
+            "                .header(\"Authorization\", \"Basic \" + credentials)".to_string(),
+        );
     }
-    lines.push(format!("                .method({}, {})", quote(v.method.as_str()), body_publisher));
+    lines.push(format!(
+        "                .method({}, {})",
+        quote(v.method.as_str()),
+        body_publisher
+    ));
     lines.push("                .build();".to_string());
     lines.push(String::new());
     lines.push(
@@ -543,6 +643,65 @@ fn java_http_client(v: &View) -> String {
     lines.join("\n")
 }
 
+fn java_multipart_body(parts: &[MultipartPart]) -> String {
+    let mut lines = vec![
+        "        String boundary = \"ForgeBoundary\" + UUID.randomUUID();".to_string(),
+        "        List<byte[]> bodyParts = new ArrayList<>();".to_string(),
+    ];
+
+    for (index, part) in parts.iter().enumerate() {
+        match &part.content {
+            PartContent::Text { value } => {
+                let mut suffix = format!(
+                    "\r\nContent-Disposition: form-data; name=\"{}\"\r\n",
+                    part.name
+                );
+                if let Some(content_type) = &part.content_type {
+                    suffix.push_str(&format!("Content-Type: {content_type}\r\n"));
+                }
+                suffix.push_str(&format!("\r\n{value}\r\n"));
+                lines.push(format!(
+                    "        bodyParts.add((\"--\" + boundary + {}).getBytes(StandardCharsets.UTF_8));",
+                    quote(&suffix)
+                ));
+            }
+            PartContent::File { path } => {
+                let variable = format!("file{index}");
+                lines.push(format!(
+                    "        Path {variable} = Path.of({});",
+                    quote(path)
+                ));
+                let before_name = format!(
+                    "\r\nContent-Disposition: form-data; name=\"{}\"; filename=\"",
+                    part.name
+                );
+                let content_type = part
+                    .content_type
+                    .as_deref()
+                    .unwrap_or("application/octet-stream");
+                let after_name = format!("\"\r\nContent-Type: {content_type}\r\n\r\n");
+                lines.push(format!(
+                    "        bodyParts.add((\"--\" + boundary + {} + {variable}.getFileName() + {}).getBytes(StandardCharsets.UTF_8));",
+                    quote(&before_name),
+                    quote(&after_name)
+                ));
+                lines.push(format!(
+                    "        bodyParts.add(Files.readAllBytes({variable}));"
+                ));
+                lines.push(
+                    "        bodyParts.add(\"\\r\\n\".getBytes(StandardCharsets.UTF_8));"
+                        .to_string(),
+                );
+            }
+        }
+    }
+    lines.push(
+        "        bodyParts.add((\"--\" + boundary + \"--\\r\\n\").getBytes(StandardCharsets.UTF_8));"
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,10 +709,19 @@ mod tests {
 
     fn sample() -> RequestDef {
         let mut def = RequestDef::new("Create user", Method::Post, "https://api.example.com/users");
-        def.headers.push(KeyValue::new("Content-Type", "application/json"));
-        def.auth = AuthConfig::Basic { username: "alice".into(), password: "s3cret".into() };
-        def.body = BodyDef::Json { text: r#"{"name":"Ada"}"#.to_string() };
-        def.params.push(Param { kv: KeyValue::new("verbose", "1"), kind: ParamKind::Query });
+        def.headers
+            .push(KeyValue::new("Content-Type", "application/json"));
+        def.auth = AuthConfig::Basic {
+            username: "alice".into(),
+            password: "s3cret".into(),
+        };
+        def.body = BodyDef::Json {
+            text: r#"{"name":"Ada"}"#.to_string(),
+        };
+        def.params.push(Param {
+            kv: KeyValue::new("verbose", "1"),
+            kind: ParamKind::Query,
+        });
         def
     }
 
@@ -568,8 +736,21 @@ mod tests {
     #[test]
     fn disabled_rows_are_skipped_everywhere() {
         let mut def = sample();
-        def.headers.push(KeyValue { key: "X-Off".into(), value: "nope".into(), description: String::new(), enabled: false });
-        def.params.push(Param { kv: KeyValue { key: "off".into(), value: "1".into(), description: String::new(), enabled: false }, kind: ParamKind::Query });
+        def.headers.push(KeyValue {
+            key: "X-Off".into(),
+            value: "nope".into(),
+            description: String::new(),
+            enabled: false,
+        });
+        def.params.push(Param {
+            kv: KeyValue {
+                key: "off".into(),
+                value: "1".into(),
+                description: String::new(),
+                enabled: false,
+            },
+            kind: ParamKind::Query,
+        });
         for lang in SnippetLang::all() {
             let out = generate(&def, lang);
             assert!(!out.contains("X-Off"), "{lang:?} leaked disabled header");
@@ -631,7 +812,9 @@ mod tests {
     #[test]
     fn form_body_uses_url_search_params() {
         let mut def = sample();
-        def.body = BodyDef::FormUrlencoded { fields: vec![KeyValue::new("a", "1"), KeyValue::new("b", "2")] };
+        def.body = BodyDef::FormUrlencoded {
+            fields: vec![KeyValue::new("a", "1"), KeyValue::new("b", "2")],
+        };
         let js = generate(&def, SnippetLang::JsFetch);
         assert!(js.contains("URLSearchParams"));
         let py = generate(&def, SnippetLang::PythonRequests);
@@ -644,7 +827,9 @@ mod tests {
         def.body = BodyDef::Multipart {
             parts: vec![crate::model::MultipartPart {
                 name: "file".to_string(),
-                content: PartContent::File { path: "/tmp/a.png".to_string() },
+                content: PartContent::File {
+                    path: "/tmp/a.png".to_string(),
+                },
                 content_type: None,
                 enabled: true,
             }],
@@ -653,5 +838,10 @@ mod tests {
         assert!(go.contains("multipart.NewWriter"));
         let httpie_out = generate(&def, SnippetLang::Httpie);
         assert!(httpie_out.contains("file@/tmp/a.png"));
+        let java = generate(&def, SnippetLang::JavaHttpClient);
+        assert!(java.contains("HttpRequest.BodyPublishers.ofByteArrays(bodyParts)"));
+        assert!(java.contains("Files.readAllBytes(file0)"));
+        assert!(java.contains("\"multipart/form-data; boundary=\" + boundary"));
+        assert!(!java.contains("TODO"));
     }
 }

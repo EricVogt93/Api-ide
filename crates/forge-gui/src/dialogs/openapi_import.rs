@@ -6,8 +6,12 @@ use std::path::PathBuf;
 
 use egui::{RichText, Window};
 
-use forge_core::openapi::{build_binding, contract_checks, operation_to_request, parse_spec, ParsedSpec};
-use forge_core::store::{create_collection, create_request, save_collection_meta, Workspace, SPECS_DIR};
+use forge_core::openapi::{
+    build_binding, contract_checks, operation_to_request, parse_spec, ParsedSpec,
+};
+use forge_core::store::{
+    create_collection, create_request, save_collection_meta, Workspace, SPECS_DIR,
+};
 
 use crate::state::{AppState, StatusMessage};
 use crate::widgets::method_badge::method_color;
@@ -40,7 +44,10 @@ impl OpenApiImportState {
         let parsed = text.and_then(|t| parse_spec(&t).map_err(|e| e.to_string()));
         self.collection_name = match &parsed {
             Ok(spec) if !spec.title.is_empty() => spec.title.clone(),
-            _ => path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+            _ => path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
         };
         self.selected = match &parsed {
             Ok(spec) => vec![true; spec.operations.len()],
@@ -97,7 +104,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                         ui.label("Collection name:");
                         ui.text_edit_singleline(&mut dialog.collection_name);
                     });
-                    ui.checkbox(&mut dialog.generate_contract, "Generate contract assertions");
+                    ui.checkbox(
+                        &mut dialog.generate_contract,
+                        "Generate contract assertions",
+                    );
                     ui.checkbox(&mut dialog.copy_spec, "Copy spec into workspace specs/ dir");
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
@@ -109,28 +119,41 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                         }
                     });
                     ui.separator();
-                    egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-                        egui::Grid::new("openapi-ops-grid").num_columns(4).striped(true).spacing([10.0, 4.0]).show(
-                            ui,
-                            |ui| {
-                                ui.strong("");
-                                ui.strong("Method");
-                                ui.strong("Path");
-                                ui.strong("Operation");
-                                ui.end_row();
-                                for (i, op) in spec.operations.iter().enumerate() {
-                                    if let Some(sel) = dialog.selected.get_mut(i) {
-                                        ui.checkbox(sel, "");
-                                    }
-                                    ui.label(RichText::new(op.method.as_str()).color(method_color(op.method)).monospace().strong());
-                                    ui.monospace(&op.path);
-                                    let label = if op.summary.is_empty() { op.id.clone() } else { format!("{} ({})", op.summary, op.id) };
-                                    ui.label(label);
+                    egui::ScrollArea::vertical()
+                        .id_salt("openapi_import-sa-1")
+                        .max_height(280.0)
+                        .show(ui, |ui| {
+                            egui::Grid::new("openapi-ops-grid")
+                                .num_columns(4)
+                                .striped(true)
+                                .spacing([10.0, 4.0])
+                                .show(ui, |ui| {
+                                    ui.strong("");
+                                    ui.strong("Method");
+                                    ui.strong("Path");
+                                    ui.strong("Operation");
                                     ui.end_row();
-                                }
-                            },
-                        );
-                    });
+                                    for (i, op) in spec.operations.iter().enumerate() {
+                                        if let Some(sel) = dialog.selected.get_mut(i) {
+                                            ui.checkbox(sel, "");
+                                        }
+                                        ui.label(
+                                            RichText::new(op.method.as_str())
+                                                .color(method_color(op.method))
+                                                .monospace()
+                                                .strong(),
+                                        );
+                                        ui.monospace(&op.path);
+                                        let label = if op.summary.is_empty() {
+                                            op.id.clone()
+                                        } else {
+                                            format!("{} ({})", op.summary, op.id)
+                                        };
+                                        ui.label(label);
+                                        ui.end_row();
+                                    }
+                                });
+                        });
                 }
             }
 
@@ -141,8 +164,16 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                 }
                 let can_import = matches!(&state.dialogs.openapi_import.spec, Some(Ok(_)))
                     && state.dialogs.openapi_import.selected.iter().any(|s| *s)
-                    && !state.dialogs.openapi_import.collection_name.trim().is_empty();
-                if ui.add_enabled(can_import, egui::Button::new("Import")).clicked() {
+                    && !state
+                        .dialogs
+                        .openapi_import
+                        .collection_name
+                        .trim()
+                        .is_empty();
+                if ui
+                    .add_enabled(can_import, egui::Button::new("Import"))
+                    .clicked()
+                {
                     import_clicked = true;
                 }
             });
@@ -163,15 +194,23 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
 }
 
 fn do_import(workspace: &Workspace, dialog: &mut OpenApiImportState) -> Result<(), String> {
-    let Some(Ok(spec)) = &dialog.spec else { return Err("no spec loaded".to_string()) };
-    let Some(spec_source) = &dialog.spec_path else { return Err("no spec file".to_string()) };
+    let Some(Ok(spec)) = &dialog.spec else {
+        return Err("no spec loaded".to_string());
+    };
+    let Some(spec_source) = &dialog.spec_path else {
+        return Err("no spec file".to_string());
+    };
 
-    let col_dir = create_collection(&workspace.root, dialog.collection_name.trim()).map_err(|e| e.to_string())?;
+    let col_dir = create_collection(&workspace.root, dialog.collection_name.trim())
+        .map_err(|e| e.to_string())?;
 
     let spec_rel_path = if dialog.copy_spec {
         let specs_dir = workspace.root.join(SPECS_DIR);
         std::fs::create_dir_all(&specs_dir).map_err(|e| e.to_string())?;
-        let file_name = spec_source.file_name().map(|n| n.to_owned()).unwrap_or_else(|| "spec.yaml".into());
+        let file_name = spec_source
+            .file_name()
+            .map(|n| n.to_owned())
+            .unwrap_or_else(|| "spec.yaml".into());
         let dest = specs_dir.join(&file_name);
         std::fs::copy(spec_source, &dest).map_err(|e| e.to_string())?;
         format!("{SPECS_DIR}/{}", file_name.to_string_lossy())
@@ -196,7 +235,11 @@ fn do_import(workspace: &Workspace, dialog: &mut OpenApiImportState) -> Result<(
                 .collect();
         }
         let file = create_request(&col_dir, &req).map_err(|e| e.to_string())?;
-        let rel_to_collection = file.strip_prefix(&col_dir).unwrap_or(&file).to_string_lossy().replace('\\', "/");
+        let rel_to_collection = file
+            .strip_prefix(&col_dir)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
         pairs.push((rel_to_collection, op.id.clone()));
     }
 
@@ -208,7 +251,9 @@ fn do_import(workspace: &Workspace, dialog: &mut OpenApiImportState) -> Result<(
 }
 
 fn reload_workspace(state: &mut AppState) {
-    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else { return };
+    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else {
+        return;
+    };
     match Workspace::load(&root) {
         Ok(ws) => state.workspace = Some(ws),
         Err(e) => state.status = Some(StatusMessage::error(e.to_string())),

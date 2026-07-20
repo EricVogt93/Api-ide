@@ -34,9 +34,15 @@ pub(crate) mod test_support {
             status,
             status_text: String::new(),
             http_version: "HTTP/1.1".to_string(),
-            headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            headers: headers
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             body: body.to_vec(),
-            timing: TimingBreakdown { total: Duration::from_millis(total_ms), ..Default::default() },
+            timing: TimingBreakdown {
+                total: Duration::from_millis(total_ms),
+                ..Default::default()
+            },
             size: Sizes::default(),
             effective_url: "http://example.test/".to_string(),
             redirect_chain: Vec::new(),

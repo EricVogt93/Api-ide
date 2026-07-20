@@ -25,7 +25,9 @@ impl BrunoImportState {
     /// Open a directory picker for a Bruno collection and parse it
     /// immediately.
     pub fn open(&mut self) {
-        let Some(dir) = rfd::FileDialog::new().pick_folder() else { return };
+        let Some(dir) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
         self.parsed = Some(import_bruno(&dir).map_err(|e| e.to_string()));
         self.name = match &self.parsed {
             Some(Ok(import)) => import.collection.name.clone(),
@@ -96,7 +98,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                 }
                 let can_import = matches!(&state.dialogs.bruno_import.parsed, Some(Ok(_)))
                     && !state.dialogs.bruno_import.name.trim().is_empty();
-                if ui.add_enabled(can_import, egui::Button::new("Import")).clicked() {
+                if ui
+                    .add_enabled(can_import, egui::Button::new("Import"))
+                    .clicked()
+                {
                     import_clicked = true;
                 }
             });
@@ -126,18 +131,23 @@ fn show_skipped(ui: &mut egui::Ui, skipped: &[String]) {
         ui.visuals().warn_fg_color,
         format!("{} item(s) can't be imported:", skipped.len()),
     );
-    egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
-        for note in skipped {
-            ui.weak(note);
-        }
-    });
+    egui::ScrollArea::vertical()
+        .id_salt("bruno_import-sa-1")
+        .max_height(160.0)
+        .show(ui, |ui| {
+            for note in skipped {
+                ui.weak(note);
+            }
+        });
 }
 
 fn do_import(
     workspace: &forge_core::store::Workspace,
     dialog: &mut BrunoImportState,
 ) -> Result<String, String> {
-    let Some(Ok(import)) = dialog.parsed.as_ref() else { return Err("nothing to import".to_string()) };
+    let Some(Ok(import)) = dialog.parsed.as_ref() else {
+        return Err("nothing to import".to_string());
+    };
     let name = dialog.name.trim();
 
     import_collection(workspace, &import.collection, name)?;
@@ -162,5 +172,7 @@ fn do_import(
         }
     }
 
-    Ok(format!("Imported {count} request(s) and {env_count} environment(s) from Bruno"))
+    Ok(format!(
+        "Imported {count} request(s) and {env_count} environment(s) from Bruno"
+    ))
 }

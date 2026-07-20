@@ -20,7 +20,11 @@ pub struct DiffResult {
 /// Line-level unified diff between two texts.
 pub fn diff_text(old: &str, new: &str) -> DiffResult {
     let diff = TextDiff::from_lines(old, new);
-    let unified = diff.unified_diff().context_radius(3).header("a", "b").to_string();
+    let unified = diff
+        .unified_diff()
+        .context_radius(3)
+        .header("a", "b")
+        .to_string();
 
     let mut added = 0usize;
     let mut removed = 0usize;
@@ -32,7 +36,11 @@ pub fn diff_text(old: &str, new: &str) -> DiffResult {
         }
     }
 
-    DiffResult { unified, added, removed }
+    DiffResult {
+        unified,
+        added,
+        removed,
+    }
 }
 
 /// Diff the response bodies of two history entries. Bodies that parse as

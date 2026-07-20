@@ -93,7 +93,15 @@ pub fn validate(
     env: Value,
     secret: &(dyn Fn(&str) -> Option<String> + Sync),
 ) -> Result<ResolvedRequest, Vec<Diagnostic>> {
-    validate_case(doc, root, request_file, env, secret, Value::Null, empty_object())
+    validate_case(
+        doc,
+        root,
+        request_file,
+        env,
+        secret,
+        Value::Null,
+        empty_object(),
+    )
 }
 
 fn empty_object() -> Value {
@@ -140,7 +148,19 @@ pub async fn run(
     cancel: CancellationToken,
     matrix: Value,
 ) -> RunResult {
-    run_with_runtime(doc, root, request_file, env, secret, engine, mode, cancel, matrix, empty_object()).await
+    run_with_runtime(
+        doc,
+        root,
+        request_file,
+        env,
+        secret,
+        engine,
+        mode,
+        cancel,
+        matrix,
+        empty_object(),
+    )
+    .await
 }
 
 /// [`run`] plus incoming runtime (`${runtime.*}` from earlier requests in a
@@ -183,7 +203,12 @@ pub async fn run_with_runtime(
     let mut error: Option<String> = None;
 
     // --- beforeRequest hooks ---
-    for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::BeforeRequest) {
+    for entry in ir
+        .pipeline
+        .clone()
+        .iter()
+        .filter(|e| e.phase == PipelinePhase::BeforeRequest)
+    {
         let outcome = if is_project_asset(entry) {
             run_js_hook(entry, &ir)
         } else {
@@ -228,25 +253,60 @@ pub async fn run_with_runtime(
 
     // --- afterResponse assertions + extractors (only with a response) ---
     if let Some(response) = &response {
-        for entry in ir.pipeline.iter().filter(|e| e.phase == PipelinePhase::AfterResponse) {
+        for entry in ir
+            .pipeline
+            .iter()
+            .filter(|e| e.phase == PipelinePhase::AfterResponse)
+        {
             let outcome = reaction_asset(entry, &ir, Some(response), None);
-            merge_reaction(outcome, entry, &mut assertions, &mut runtime, &mut diagnostics, &mut error);
+            merge_reaction(
+                outcome,
+                entry,
+                &mut assertions,
+                &mut runtime,
+                &mut diagnostics,
+                &mut error,
+            );
         }
     }
 
     // --- onError: only when the run errored (§9) ---
     if error.is_some() {
         let err = error.clone();
-        for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::OnError) {
+        for entry in ir
+            .pipeline
+            .clone()
+            .iter()
+            .filter(|e| e.phase == PipelinePhase::OnError)
+        {
             let outcome = reaction_asset(entry, &ir, response.as_ref(), err.as_deref());
-            merge_reaction(outcome, entry, &mut assertions, &mut runtime, &mut diagnostics, &mut error);
+            merge_reaction(
+                outcome,
+                entry,
+                &mut assertions,
+                &mut runtime,
+                &mut diagnostics,
+                &mut error,
+            );
         }
     }
 
     // --- finally: always (§9), for teardown/always-checks ---
-    for entry in ir.pipeline.clone().iter().filter(|e| e.phase == PipelinePhase::Finally) {
+    for entry in ir
+        .pipeline
+        .clone()
+        .iter()
+        .filter(|e| e.phase == PipelinePhase::Finally)
+    {
         let outcome = reaction_asset(entry, &ir, response.as_ref(), error.as_deref());
-        merge_reaction(outcome, entry, &mut assertions, &mut runtime, &mut diagnostics, &mut error);
+        merge_reaction(
+            outcome,
+            entry,
+            &mut assertions,
+            &mut runtime,
+            &mut diagnostics,
+            &mut error,
+        );
     }
 
     let http = response.as_ref().map(|r| HttpResultView {
@@ -438,16 +498,20 @@ fn run_js_hook(
     }
     if let Some(headers) = out.get("headers").and_then(Value::as_array) {
         for h in headers {
-            let (Some(name), Some(value)) =
-                (h.get("name").and_then(Value::as_str), h.get("value").and_then(Value::as_str))
-            else {
+            let (Some(name), Some(value)) = (
+                h.get("name").and_then(Value::as_str),
+                h.get("value").and_then(Value::as_str),
+            ) else {
                 return Err(Diagnostic::new(
                     Code::AssetError,
                     "hook returned a header without string name/value",
                 )
                 .with_ref(&entry.asset.raw));
             };
-            patch.headers.push(ResolvedHeader { name: name.to_string(), value: value.to_string() });
+            patch.headers.push(ResolvedHeader {
+                name: name.to_string(),
+                value: value.to_string(),
+            });
         }
     }
     Ok(patch)
@@ -496,7 +560,11 @@ fn run_js_after(
         })?;
         assertions.push(AssertionResult {
             passed,
-            message: item.get("message").and_then(Value::as_str).unwrap_or("(no message)").to_string(),
+            message: item
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("(no message)")
+                .to_string(),
             expected: item.get("expected").cloned(),
             actual: item.get("actual").cloned(),
             path: item.get("path").and_then(Value::as_str).map(str::to_string),
@@ -534,7 +602,11 @@ fn apply_patch(
     }
     for h in headers {
         // Upsert by case-insensitive name; warn on overwrite.
-        if let Some(existing) = ir.headers.iter_mut().find(|e| e.name.eq_ignore_ascii_case(&h.name)) {
+        if let Some(existing) = ir
+            .headers
+            .iter_mut()
+            .find(|e| e.name.eq_ignore_ascii_case(&h.name))
+        {
             if existing.value != h.value {
                 diagnostics.push(Diagnostic::new(
                     Code::PipelineConflict,
@@ -555,7 +627,11 @@ async fn send(
     cancel: CancellationToken,
 ) -> Result<ResponseView, Diagnostic> {
     let mut exec = ExecRequest::new(ir.method, ir.url.clone());
-    exec.headers = ir.headers.iter().map(|h| (h.name.clone(), h.value.clone())).collect();
+    exec.headers = ir
+        .headers
+        .iter()
+        .map(|h| (h.name.clone(), h.value.clone()))
+        .collect();
     for q in &ir.query {
         // Append query params to the URL.
         let sep = if exec.url.contains('?') { '&' } else { '?' };
@@ -582,7 +658,9 @@ async fn send(
 }
 
 fn body_to_exec(body: &ResolvedBody, headers: &[(String, String)]) -> ExecBody {
-    let has_ct = headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
+    let has_ct = headers
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
     match body {
         ResolvedBody::None => ExecBody::None,
         ResolvedBody::Json(v) => {
@@ -596,9 +674,12 @@ fn body_to_exec(body: &ResolvedBody, headers: &[(String, String)]) -> ExecBody {
             content_type: (!has_ct).then(|| "text/plain".to_string()),
             data: s.clone().into_bytes(),
         },
-        ResolvedBody::Form(fields) => {
-            ExecBody::Form(fields.iter().map(|h| (h.name.clone(), h.value.clone())).collect())
-        }
+        ResolvedBody::Form(fields) => ExecBody::Form(
+            fields
+                .iter()
+                .map(|h| (h.name.clone(), h.value.clone()))
+                .collect(),
+        ),
     }
 }
 
@@ -620,7 +701,12 @@ fn mock_response(
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Option<ResponseView> {
     match mock {
-        ResolvedMock::Static { status, headers, body, .. } => {
+        ResolvedMock::Static {
+            status,
+            headers,
+            body,
+            ..
+        } => {
             let body_bytes = match body {
                 ResolvedBody::None => Vec::new(),
                 ResolvedBody::Json(v) => serde_json::to_vec(v).unwrap_or_default(),
@@ -634,7 +720,10 @@ fn mock_response(
             };
             Some(ResponseView {
                 status: *status,
-                headers: headers.iter().map(|h| (h.name.clone(), h.value.clone())).collect(),
+                headers: headers
+                    .iter()
+                    .map(|h| (h.name.clone(), h.value.clone()))
+                    .collect(),
                 body: body_bytes,
                 time_ms: 0,
             })
@@ -673,7 +762,12 @@ fn mock_response(
                 .get("body")
                 .map(|b| serde_json::to_vec(b).unwrap_or_default())
                 .unwrap_or_default();
-            Some(ResponseView { status: status as u16, headers, body, time_ms: 0 })
+            Some(ResponseView {
+                status: status as u16,
+                headers,
+                body,
+                time_ms: 0,
+            })
         }
     }
 }
@@ -683,7 +777,9 @@ fn urlencoding_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }

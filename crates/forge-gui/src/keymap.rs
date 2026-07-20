@@ -47,7 +47,10 @@ pub const ACTIONS: &[Action] = &[
     Action {
         id: ActionId::SaveAll,
         title: "Save All",
-        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::S)),
+        shortcut: Some(KeyboardShortcut::new(
+            Modifiers::COMMAND.plus(Modifiers::SHIFT),
+            Key::S,
+        )),
     },
     Action {
         id: ActionId::Send,
@@ -67,7 +70,10 @@ pub const ACTIONS: &[Action] = &[
     Action {
         id: ActionId::PrevTab,
         title: "Previous Tab",
-        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Tab)),
+        shortcut: Some(KeyboardShortcut::new(
+            Modifiers::COMMAND.plus(Modifiers::SHIFT),
+            Key::Tab,
+        )),
     },
     Action {
         id: ActionId::OpenWorkspace,
@@ -82,17 +88,26 @@ pub const ACTIONS: &[Action] = &[
     Action {
         id: ActionId::OpenSettings,
         title: "Settings...",
-        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::ALT), Key::S)),
+        shortcut: Some(KeyboardShortcut::new(
+            Modifiers::COMMAND.plus(Modifiers::ALT),
+            Key::S,
+        )),
     },
     Action {
         id: ActionId::ImportCurl,
         title: "Import curl...",
-        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::V)),
+        shortcut: Some(KeyboardShortcut::new(
+            Modifiers::COMMAND.plus(Modifiers::SHIFT),
+            Key::V,
+        )),
     },
     Action {
         id: ActionId::SearchActions,
         title: "Search Actions...",
-        shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::A)),
+        shortcut: Some(KeyboardShortcut::new(
+            Modifiers::COMMAND.plus(Modifiers::SHIFT),
+            Key::A,
+        )),
     },
 ];
 

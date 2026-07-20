@@ -61,7 +61,10 @@ pub struct MultipartPart {
     pub content: PartContent,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
-    #[serde(default = "super::default_true", skip_serializing_if = "super::is_true")]
+    #[serde(
+        default = "super::default_true",
+        skip_serializing_if = "super::is_true"
+    )]
     pub enabled: bool,
 }
 

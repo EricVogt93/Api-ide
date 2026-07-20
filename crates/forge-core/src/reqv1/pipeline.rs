@@ -30,7 +30,10 @@ impl ResponseView {
         serde_json::from_slice(&self.body).ok()
     }
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -50,7 +53,13 @@ pub struct AssertionResult {
 
 impl AssertionResult {
     fn pass(message: impl Into<String>) -> Self {
-        Self { passed: true, message: message.into(), expected: None, actual: None, path: None }
+        Self {
+            passed: true,
+            message: message.into(),
+            expected: None,
+            actual: None,
+            path: None,
+        }
     }
     fn fail(message: impl Into<String>, expected: Value, actual: Value) -> Self {
         Self {
@@ -77,12 +86,20 @@ pub fn run_before_request(
 ) -> Result<RequestPatch, Diagnostic> {
     let name = entry.asset.address.as_str();
     let with = &entry.input;
-    let get_str = |k: &str| with.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    let get_str = |k: &str| {
+        with.get(k)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
 
     match name {
         "bearer" => {
             let token = get_str("token");
-            let prefix = with.get("prefix").and_then(Value::as_str).unwrap_or("Bearer");
+            let prefix = with
+                .get("prefix")
+                .and_then(Value::as_str)
+                .unwrap_or("Bearer");
             Ok(RequestPatch {
                 headers: vec![ResolvedHeader {
                     name: "Authorization".to_string(),
@@ -92,7 +109,8 @@ pub fn run_before_request(
             })
         }
         "basic" => {
-            let token = BASE64_STANDARD.encode(format!("{}:{}", get_str("username"), get_str("password")));
+            let token =
+                BASE64_STANDARD.encode(format!("{}:{}", get_str("username"), get_str("password")));
             Ok(RequestPatch {
                 headers: vec![ResolvedHeader {
                     name: "Authorization".to_string(),
@@ -102,7 +120,10 @@ pub fn run_before_request(
             })
         }
         "header" => Ok(RequestPatch {
-            headers: vec![ResolvedHeader { name: get_str("name"), value: get_str("value") }],
+            headers: vec![ResolvedHeader {
+                name: get_str("name"),
+                value: get_str("value"),
+            }],
             url: None,
         }),
         other => Err(hook_unknown(other, &entry.asset.raw)),
@@ -134,9 +155,15 @@ pub fn run_after_response(
         }
         "assert-json-path" => {
             let path = with.get("path").and_then(Value::as_str).unwrap_or_default();
-            let op = with.get("operator").and_then(Value::as_str).unwrap_or("exists");
+            let op = with
+                .get("operator")
+                .and_then(Value::as_str)
+                .unwrap_or("exists");
             let expected = with.get("value").cloned();
-            Ok((vec![assert_json_path(res, path, op, expected)], BTreeMap::new()))
+            Ok((
+                vec![assert_json_path(res, path, op, expected)],
+                BTreeMap::new(),
+            ))
         }
         "assert-schema" => {
             let schema = with.get("schema").cloned().unwrap_or(Value::Null);
@@ -176,7 +203,10 @@ pub fn run_after_response(
         }
         "extract-json-path" => {
             let path = with.get("path").and_then(Value::as_str).unwrap_or_default();
-            let target = with.get("target").and_then(Value::as_str).unwrap_or_default();
+            let target = with
+                .get("target")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let mut runtime = BTreeMap::new();
             match query_one(res, path) {
                 Ok(v) => {
@@ -194,7 +224,12 @@ pub fn run_after_response(
     }
 }
 
-fn assert_json_path(res: &ResponseView, path: &str, op: &str, expected: Option<Value>) -> AssertionResult {
+fn assert_json_path(
+    res: &ResponseView,
+    path: &str,
+    op: &str,
+    expected: Option<Value>,
+) -> AssertionResult {
     let found = query_one(res, path);
     let mut r = match (op, &found) {
         ("exists", Ok(_)) => AssertionResult::pass(format!("{path} exists")),
@@ -216,7 +251,10 @@ fn assert_json_path(res: &ResponseView, path: &str, op: &str, expected: Option<V
             }
         }
         ("contains", Ok(Value::String(s))) => {
-            let needle = expected.as_ref().and_then(Value::as_str).unwrap_or_default();
+            let needle = expected
+                .as_ref()
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             if s.contains(needle) {
                 AssertionResult::pass(format!("{path} contains {needle:?}"))
             } else {
@@ -243,19 +281,26 @@ fn query_one(res: &ResponseView, path: &str) -> Result<Value, Diagnostic> {
     let body = res
         .json()
         .ok_or_else(|| Diagnostic::new(Code::AssetError, "response body is not JSON"))?;
-    let query = JsonPath::parse(path)
-        .map_err(|e| Diagnostic::new(Code::AssetError, format!("invalid JSONPath {path:?}: {e}")))?;
+    let query = JsonPath::parse(path).map_err(|e| {
+        Diagnostic::new(Code::AssetError, format!("invalid JSONPath {path:?}: {e}"))
+    })?;
     let nodes = query.query(&body).all();
     match nodes.as_slice() {
         [one] => Ok((*one).clone()),
-        [] => Err(Diagnostic::new(Code::AssetError, format!("JSONPath {path:?} matched nothing"))),
+        [] => Err(Diagnostic::new(
+            Code::AssetError,
+            format!("JSONPath {path:?} matched nothing"),
+        )),
         many => Ok(Value::Array(many.iter().map(|v| (*v).clone()).collect())),
     }
 }
 
 fn hook_unknown(name: &str, raw: &str) -> Diagnostic {
-    Diagnostic::new(Code::AssetNotFound, format!("unknown builtin beforeRequest asset {name:?}"))
-        .with_ref(raw)
+    Diagnostic::new(
+        Code::AssetNotFound,
+        format!("unknown builtin beforeRequest asset {name:?}"),
+    )
+    .with_ref(raw)
 }
 
 /// True if this builtin ref is a known project-executable that v1 can't run —
@@ -271,7 +316,12 @@ mod tests {
     use serde_json::json;
 
     fn res(status: u16, body: &str) -> ResponseView {
-        ResponseView { status, headers: vec![], body: body.as_bytes().to_vec(), time_ms: 1 }
+        ResponseView {
+            status,
+            headers: vec![],
+            body: body.as_bytes().to_vec(),
+            time_ms: 1,
+        }
     }
     fn entry(name: &str, with: Value) -> ResolvedPipelineEntry {
         ResolvedPipelineEntry {
@@ -289,9 +339,17 @@ mod tests {
 
     #[test]
     fn assert_status_pass_fail() {
-        let (r, _) = run_after_response(&entry("assert-status", json!({"expected":200})), &res(200, "{}")).unwrap();
+        let (r, _) = run_after_response(
+            &entry("assert-status", json!({"expected":200})),
+            &res(200, "{}"),
+        )
+        .unwrap();
         assert!(r[0].passed);
-        let (r, _) = run_after_response(&entry("assert-status", json!({"expected":201})), &res(500, "{}")).unwrap();
+        let (r, _) = run_after_response(
+            &entry("assert-status", json!({"expected":201})),
+            &res(500, "{}"),
+        )
+        .unwrap();
         assert!(!r[0].passed);
     }
 
@@ -299,28 +357,44 @@ mod tests {
     fn assert_json_path_equals_and_exists() {
         let body = r#"{"user":{"id":"u-1"}}"#;
         let (r, _) = run_after_response(
-            &entry("assert-json-path", json!({"path":"$.user.id","operator":"equals","value":"u-1"})),
+            &entry(
+                "assert-json-path",
+                json!({"path":"$.user.id","operator":"equals","value":"u-1"}),
+            ),
             &res(200, body),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(r[0].passed, "{:?}", r[0]);
         let (r, _) = run_after_response(
-            &entry("assert-json-path", json!({"path":"$.user.id","operator":"exists"})),
+            &entry(
+                "assert-json-path",
+                json!({"path":"$.user.id","operator":"exists"}),
+            ),
             &res(200, body),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(r[0].passed);
         let (r, _) = run_after_response(
-            &entry("assert-json-path", json!({"path":"$.user.missing","operator":"exists"})),
+            &entry(
+                "assert-json-path",
+                json!({"path":"$.user.missing","operator":"exists"}),
+            ),
             &res(200, body),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(!r[0].passed);
     }
 
     #[test]
     fn extract_json_path_writes_runtime() {
         let (a, rt) = run_after_response(
-            &entry("extract-json-path", json!({"path":"$.token","target":"tok"})),
+            &entry(
+                "extract-json-path",
+                json!({"path":"$.token","target":"tok"}),
+            ),
             &res(200, r#"{"token":"abc"}"#),
-        ).unwrap();
+        )
+        .unwrap();
         assert!(a.is_empty());
         assert_eq!(rt.get("tok"), Some(&json!("abc")));
     }
@@ -339,10 +413,17 @@ mod tests {
             input: json!({ "token": "t-1" }),
         };
         let req = ResolvedRequest {
-            id: "x".into(), name: "x".into(), method: crate::model::Method::Get,
-            url: "http://x".into(), headers: vec![], query: vec![],
-            body: super::super::ir::ResolvedBody::None, pipeline: vec![], mock: None,
-            bindings: json!({}), secret_values: vec![],
+            id: "x".into(),
+            name: "x".into(),
+            method: crate::model::Method::Get,
+            url: "http://x".into(),
+            headers: vec![],
+            query: vec![],
+            body: super::super::ir::ResolvedBody::None,
+            pipeline: vec![],
+            mock: None,
+            bindings: json!({}),
+            secret_values: vec![],
         };
         let patch = run_before_request(&e, &req).unwrap();
         assert_eq!(patch.headers[0].name, "Authorization");

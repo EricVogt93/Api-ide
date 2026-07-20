@@ -26,8 +26,8 @@ pub enum CurlParseError {
 /// decide, for flags we don't otherwise implement, whether to also skip
 /// their value token.
 const VALUE_SHORT_FLAGS: &[char] = &[
-    'A', 'b', 'c', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'o', 'r', 'T', 'u', 'U', 'w', 'x', 'X', 'C', 't', 'z', 'Y',
-    'y', 'P', 'Q',
+    'A', 'b', 'c', 'd', 'D', 'e', 'E', 'F', 'H', 'K', 'm', 'o', 'r', 'T', 'u', 'U', 'w', 'x', 'X',
+    'C', 't', 'z', 'Y', 'y', 'P', 'Q',
 ];
 
 /// Long curl flags (beyond the ones this parser implements) that are known
@@ -125,10 +125,19 @@ fn parse_form_part(raw: &str) -> Result<MultipartPart, CurlParseError> {
         None => (rest, None),
     };
     let content = match value_part.strip_prefix('@') {
-        Some(path) => PartContent::File { path: path.to_string() },
-        None => PartContent::Text { value: value_part.to_string() },
+        Some(path) => PartContent::File {
+            path: path.to_string(),
+        },
+        None => PartContent::Text {
+            value: value_part.to_string(),
+        },
     };
-    Ok(MultipartPart { name: name.to_string(), content, content_type, enabled: true })
+    Ok(MultipartPart {
+        name: name.to_string(),
+        content,
+        content_type,
+        enabled: true,
+    })
 }
 
 /// Encode one `--data-urlencode` directive per curl's own rules:
@@ -158,7 +167,9 @@ fn data_file_note(raw: &str) -> Option<String> {
         Some(f) => f,
         None => raw.split_once('=')?.1.strip_prefix('@')?,
     };
-    Some(format!("body references file @{file}; file contents were not imported"))
+    Some(format!(
+        "body references file @{file}; file contents were not imported"
+    ))
 }
 
 /// Strip scheme/query/fragment down to `host/path`, tolerating
@@ -203,17 +214,19 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
     let mut notes: Vec<String> = Vec::new();
 
     let take_value = |iter: &mut std::iter::Peekable<std::vec::IntoIter<String>>,
-                       flag: &str|
+                      flag: &str|
      -> Result<String, CurlParseError> {
-        iter.next().ok_or_else(|| CurlParseError::MissingValue(flag.to_string()))
+        iter.next()
+            .ok_or_else(|| CurlParseError::MissingValue(flag.to_string()))
     };
 
     while let Some(tok) = iter.next() {
         match tok.as_str() {
             "-X" | "--request" => {
                 let v = take_value(&mut iter, &tok)?;
-                explicit_method =
-                    Some(Method::parse(&v).ok_or_else(|| CurlParseError::UnknownMethod(v.clone()))?);
+                explicit_method = Some(
+                    Method::parse(&v).ok_or_else(|| CurlParseError::UnknownMethod(v.clone()))?,
+                );
             }
             "-H" | "--header" => {
                 let v = take_value(&mut iter, &tok)?;
@@ -257,7 +270,9 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
             "-k" | "--insecure" => insecure = true,
             "-x" | "--proxy" => {
                 let v = take_value(&mut iter, &tok)?;
-                notes.push(format!("proxy '{v}' from the imported curl command was not applied"));
+                notes.push(format!(
+                    "proxy '{v}' from the imported curl command was not applied"
+                ));
             }
             "--compressed" => compressed = true,
             "-A" | "--user-agent" => {
@@ -284,7 +299,11 @@ pub fn parse_curl(cmd: &str) -> Result<RequestDef, CurlParseError> {
             }
             other => {
                 if let Some(short) = other.strip_prefix('-').filter(|s| !s.starts_with('-')) {
-                    if short.chars().next().is_some_and(|c| VALUE_SHORT_FLAGS.contains(&c)) {
+                    if short
+                        .chars()
+                        .next()
+                        .is_some_and(|c| VALUE_SHORT_FLAGS.contains(&c))
+                    {
                         iter.next();
                     }
                 } else if other.starts_with("--") {
@@ -418,21 +437,39 @@ mod tests {
         let def = parse_curl(cmd).expect("should parse");
         assert_eq!(def.method, Method::Post);
         assert_eq!(def.url, "https://api.example.com/v1/users?active=true");
-        assert_eq!(def.auth, AuthConfig::Basic { username: "alice".into(), password: "s3cret".into() });
+        assert_eq!(
+            def.auth,
+            AuthConfig::Basic {
+                username: "alice".into(),
+                password: "s3cret".into()
+            }
+        );
         assert_eq!(def.settings.follow_redirects, Some(true));
         assert_eq!(def.settings.verify_tls, Some(false));
         assert!(matches!(&def.body, BodyDef::Json { text } if text == r#"{"name":"Ada"}"#));
-        let header = |name: &str| def.headers.iter().find(|h| h.key.eq_ignore_ascii_case(name)).map(|h| h.value.clone());
+        let header = |name: &str| {
+            def.headers
+                .iter()
+                .find(|h| h.key.eq_ignore_ascii_case(name))
+                .map(|h| h.value.clone())
+        };
         assert_eq!(header("Cookie"), Some("session=abc123".to_string()));
         assert_eq!(header("User-Agent"), Some("ForgeTest/1.0".to_string()));
-        assert_eq!(header("Referer"), Some("https://example.com/ref".to_string()));
-        assert_eq!(header("Accept-Encoding"), Some("gzip, deflate, br".to_string()));
+        assert_eq!(
+            header("Referer"),
+            Some("https://example.com/ref".to_string())
+        );
+        assert_eq!(
+            header("Accept-Encoding"),
+            Some("gzip, deflate, br".to_string())
+        );
         assert_eq!(def.name, "POST api.example.com/v1/users");
     }
 
     #[test]
     fn data_urlencode_encodes_value() {
-        let def = parse_curl("curl https://example.com --data-urlencode 'q=hello world&more'").unwrap();
+        let def =
+            parse_curl("curl https://example.com --data-urlencode 'q=hello world&more'").unwrap();
         match &def.body {
             BodyDef::Raw { text, .. } => assert_eq!(text, "q=hello%20world%26more"),
             other => panic!("expected Raw body, got {other:?}"),
@@ -451,7 +488,8 @@ mod tests {
 
     #[test]
     fn get_flag_moves_data_to_query() {
-        let def = parse_curl("curl -G https://example.com/search -d 'q=rust' -d 'lang=en'").unwrap();
+        let def =
+            parse_curl("curl -G https://example.com/search -d 'q=rust' -d 'lang=en'").unwrap();
         assert_eq!(def.method, Method::Get);
         assert_eq!(def.url, "https://example.com/search?q=rust&lang=en");
         assert_eq!(def.body, BodyDef::None);
@@ -468,9 +506,13 @@ mod tests {
                 assert_eq!(parts.len(), 2);
                 assert_eq!(parts[0].name, "file");
                 assert_eq!(parts[0].content_type.as_deref(), Some("image/png"));
-                assert!(matches!(&parts[0].content, PartContent::File { path } if path == "/tmp/a.png"));
+                assert!(
+                    matches!(&parts[0].content, PartContent::File { path } if path == "/tmp/a.png")
+                );
                 assert_eq!(parts[1].name, "label");
-                assert!(matches!(&parts[1].content, PartContent::Text { value } if value == "hello"));
+                assert!(
+                    matches!(&parts[1].content, PartContent::Text { value } if value == "hello")
+                );
             }
             other => panic!("expected multipart, got {other:?}"),
         }
@@ -479,7 +521,9 @@ mod tests {
 
     #[test]
     fn quoted_values_with_spaces_and_single_quotes() {
-        let def = parse_curl(r#"curl "https://example.com/search" -H "X-Note: it's fine, spaced value""#).unwrap();
+        let def =
+            parse_curl(r#"curl "https://example.com/search" -H "X-Note: it's fine, spaced value""#)
+                .unwrap();
         let note = def.headers.iter().find(|h| h.key == "X-Note").unwrap();
         assert_eq!(note.value, "it's fine, spaced value");
     }
@@ -545,7 +589,8 @@ mod tests {
     fn unknown_value_flag_with_dashdash_prefix_does_not_swallow_url() {
         // --proxy-cacert wasn't in VALUE_LONG_FLAGS before; its value token
         // (a path) used to be mistaken for the positional URL.
-        let def = parse_curl("curl --proxy-cacert /etc/ssl/cert.pem https://api.example.com/data").unwrap();
+        let def = parse_curl("curl --proxy-cacert /etc/ssl/cert.pem https://api.example.com/data")
+            .unwrap();
         assert_eq!(def.url, "https://api.example.com/data");
     }
 
@@ -553,7 +598,8 @@ mod tests {
     fn data_at_file_reference_emits_note() {
         let def = parse_curl("curl https://example.com -d @payload.json").unwrap();
         assert!(
-            def.description.contains("body references file @payload.json; file contents were not imported"),
+            def.description
+                .contains("body references file @payload.json; file contents were not imported"),
             "unexpected description: {}",
             def.description
         );
@@ -565,9 +611,11 @@ mod tests {
 
     #[test]
     fn data_urlencode_named_at_file_reference_emits_note() {
-        let def = parse_curl("curl https://example.com --data-urlencode field=@payload.json").unwrap();
+        let def =
+            parse_curl("curl https://example.com --data-urlencode field=@payload.json").unwrap();
         assert!(
-            def.description.contains("body references file @payload.json; file contents were not imported"),
+            def.description
+                .contains("body references file @payload.json; file contents were not imported"),
             "unexpected description: {}",
             def.description
         );

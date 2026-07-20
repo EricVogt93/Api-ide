@@ -15,7 +15,10 @@ use super::schema;
 /// Disabled assertions are skipped entirely (no outcome is produced for
 /// them).
 pub fn evaluate_all(defs: &[AssertionDef], res: &ExecutionResult) -> Vec<AssertionOutcome> {
-    defs.iter().filter(|d| d.enabled).map(|d| evaluate(&d.check, res)).collect()
+    defs.iter()
+        .filter(|d| d.enabled)
+        .map(|d| evaluate(&d.check, res))
+        .collect()
 }
 
 /// Evaluate a single [`Check`] against `res`.
@@ -45,7 +48,12 @@ fn compare_numbers(actual: f64, op: NumberOp, expected: f64) -> bool {
     }
 }
 
-fn eval_status_code(summary: &str, op: NumberOp, value: u16, res: &ExecutionResult) -> AssertionOutcome {
+fn eval_status_code(
+    summary: &str,
+    op: NumberOp,
+    value: u16,
+    res: &ExecutionResult,
+) -> AssertionOutcome {
     let actual = res.status;
     if compare_numbers(actual as f64, op, value as f64) {
         AssertionOutcome::pass(summary)
@@ -64,7 +72,10 @@ fn eval_status_class(summary: &str, class: u8, res: &ExecutionResult) -> Asserti
     } else {
         AssertionOutcome::fail(
             summary,
-            format!("expected status class {class}xx, got {} ({actual_class}xx)", res.status),
+            format!(
+                "expected status class {class}xx, got {} ({actual_class}xx)",
+                res.status
+            ),
         )
     }
 }
@@ -82,14 +93,20 @@ fn eval_header(
             if !values.is_empty() {
                 AssertionOutcome::pass(summary)
             } else {
-                AssertionOutcome::fail(summary, format!("expected header {name:?} to exist, but it was not present"))
+                AssertionOutcome::fail(
+                    summary,
+                    format!("expected header {name:?} to exist, but it was not present"),
+                )
             }
         }
         StringOp::NotExists => {
             if values.is_empty() {
                 AssertionOutcome::pass(summary)
             } else {
-                AssertionOutcome::fail(summary, format!("expected header {name:?} to not exist, got {values:?}"))
+                AssertionOutcome::fail(
+                    summary,
+                    format!("expected header {name:?} to not exist, got {values:?}"),
+                )
             }
         }
         StringOp::Equals => {
@@ -152,7 +169,10 @@ fn eval_content_type(summary: &str, value: &str, res: &ExecutionResult) -> Asser
     match res.content_type() {
         Some(ct) => {
             let mime = ct.split(';').next().unwrap_or("").trim();
-            if mime.to_ascii_lowercase().starts_with(&value.to_ascii_lowercase()) {
+            if mime
+                .to_ascii_lowercase()
+                .starts_with(&value.to_ascii_lowercase())
+            {
                 AssertionOutcome::pass(summary)
             } else {
                 AssertionOutcome::fail(
@@ -194,11 +214,18 @@ fn eval_response_time(summary: &str, max_ms: u64, res: &ExecutionResult) -> Asse
     if actual < max_ms {
         AssertionOutcome::pass(summary)
     } else {
-        AssertionOutcome::fail(summary, format!("expected response time < {max_ms} ms, got {actual} ms"))
+        AssertionOutcome::fail(
+            summary,
+            format!("expected response time < {max_ms} ms, got {actual} ms"),
+        )
     }
 }
 
-fn eval_json_schema(summary: &str, schema_value: &Value, res: &ExecutionResult) -> AssertionOutcome {
+fn eval_json_schema(
+    summary: &str,
+    schema_value: &Value,
+    res: &ExecutionResult,
+) -> AssertionOutcome {
     match res.json() {
         Some(instance) => match schema::validate(schema_value, &instance) {
             Ok(()) => AssertionOutcome::pass(summary),
@@ -251,7 +278,11 @@ fn node_contains(node: &Value, expected: &Value) -> bool {
 }
 
 fn format_nodes(nodes: &[&Value]) -> String {
-    nodes.iter().map(|n| node_to_string(n)).collect::<Vec<_>>().join(", ")
+    nodes
+        .iter()
+        .map(|n| node_to_string(n))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn eval_json_path(
@@ -268,7 +299,10 @@ fn eval_json_path(
     let query = match JsonPath::parse(path) {
         Ok(q) => q,
         Err(e) => {
-            return AssertionOutcome::fail(summary, format!("invalid JSONPath expression {path:?}: {e}"))
+            return AssertionOutcome::fail(
+                summary,
+                format!("invalid JSONPath expression {path:?}: {e}"),
+            )
         }
     };
     let nodes: Vec<&Value> = query.query(&body).all();
@@ -278,7 +312,10 @@ fn eval_json_path(
             if !nodes.is_empty() {
                 AssertionOutcome::pass(summary)
             } else {
-                AssertionOutcome::fail(summary, format!("expected {path} to exist, but it had no match"))
+                AssertionOutcome::fail(
+                    summary,
+                    format!("expected {path} to exist, but it had no match"),
+                )
             }
         }
         ValueOp::NotExists => {
@@ -287,19 +324,28 @@ fn eval_json_path(
             } else {
                 AssertionOutcome::fail(
                     summary,
-                    format!("expected {path} to not exist, got {} match(es)", nodes.len()),
+                    format!(
+                        "expected {path} to not exist, got {} match(es)",
+                        nodes.len()
+                    ),
                 )
             }
         }
         ValueOp::Equals => {
             if nodes.is_empty() {
-                AssertionOutcome::fail(summary, format!("expected {path} == {expected}, got no match"))
+                AssertionOutcome::fail(
+                    summary,
+                    format!("expected {path} == {expected}, got no match"),
+                )
             } else if nodes.iter().any(|n| json_eq(n, expected)) {
                 AssertionOutcome::pass(summary)
             } else {
                 AssertionOutcome::fail(
                     summary,
-                    format!("expected {path} == {expected}, got {}", format_nodes(&nodes)),
+                    format!(
+                        "expected {path} == {expected}, got {}",
+                        format_nodes(&nodes)
+                    ),
                 )
             }
         }
@@ -309,24 +355,36 @@ fn eval_json_path(
             } else {
                 AssertionOutcome::fail(
                     summary,
-                    format!("expected {path} != {expected}, got {}", format_nodes(&nodes)),
+                    format!(
+                        "expected {path} != {expected}, got {}",
+                        format_nodes(&nodes)
+                    ),
                 )
             }
         }
         ValueOp::Contains => {
             if nodes.is_empty() {
-                AssertionOutcome::fail(summary, format!("expected {path} to contain {expected}, got no match"))
+                AssertionOutcome::fail(
+                    summary,
+                    format!("expected {path} to contain {expected}, got no match"),
+                )
             } else if nodes.iter().any(|n| node_contains(n, expected)) {
                 AssertionOutcome::pass(summary)
             } else {
                 AssertionOutcome::fail(
                     summary,
-                    format!("expected {path} to contain {expected}, got {}", format_nodes(&nodes)),
+                    format!(
+                        "expected {path} to contain {expected}, got {}",
+                        format_nodes(&nodes)
+                    ),
                 )
             }
         }
         ValueOp::Matches => {
-            let pattern = expected.as_str().map(str::to_string).unwrap_or_else(|| expected.to_string());
+            let pattern = expected
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| expected.to_string());
             match Regex::new(&pattern) {
                 Ok(re) => {
                     if nodes.is_empty() {
@@ -339,11 +397,16 @@ fn eval_json_path(
                     } else {
                         AssertionOutcome::fail(
                             summary,
-                            format!("expected {path} to match /{pattern}/, got {}", format_nodes(&nodes)),
+                            format!(
+                                "expected {path} to match /{pattern}/, got {}",
+                                format_nodes(&nodes)
+                            ),
                         )
                     }
                 }
-                Err(e) => AssertionOutcome::fail(summary, format!("invalid regex /{pattern}/: {e}")),
+                Err(e) => {
+                    AssertionOutcome::fail(summary, format!("invalid regex /{pattern}/: {e}"))
+                }
             }
         }
         ValueOp::Lt | ValueOp::Lte | ValueOp::Gt | ValueOp::Gte => {
@@ -352,7 +415,9 @@ fn eval_json_path(
                 None => {
                     return AssertionOutcome::fail(
                         summary,
-                        format!("expected comparison value for {path} to be a number, got {expected}"),
+                        format!(
+                            "expected comparison value for {path} to be a number, got {expected}"
+                        ),
                     )
                 }
             };
@@ -366,10 +431,15 @@ fn eval_json_path(
             if numeric.is_empty() {
                 return AssertionOutcome::fail(
                     summary,
-                    format!("expected {path} to be a number, got {}", format_nodes(&nodes)),
+                    format!(
+                        "expected {path} to be a number, got {}",
+                        format_nodes(&nodes)
+                    ),
                 );
             }
-            let ok = numeric.iter().any(|&n| compare_numbers(n, to_number_op(op), expected_num));
+            let ok = numeric
+                .iter()
+                .any(|&n| compare_numbers(n, to_number_op(op), expected_num));
             if ok {
                 AssertionOutcome::pass(summary)
             } else {
@@ -420,19 +490,52 @@ mod tests {
     #[test]
     fn status_code_eq_pass_and_fail() {
         let res = exec_result(200, &[], b"", 10);
-        let pass = evaluate(&Check::StatusCode { op: NumberOp::Eq, value: 200 }, &res);
+        let pass = evaluate(
+            &Check::StatusCode {
+                op: NumberOp::Eq,
+                value: 200,
+            },
+            &res,
+        );
         assert!(pass.passed);
 
-        let fail = evaluate(&Check::StatusCode { op: NumberOp::Eq, value: 201 }, &res);
+        let fail = evaluate(
+            &Check::StatusCode {
+                op: NumberOp::Eq,
+                value: 201,
+            },
+            &res,
+        );
         assert!(!fail.passed);
-        assert_eq!(fail.message.as_deref(), Some("expected status == 201, got 200"));
+        assert_eq!(
+            fail.message.as_deref(),
+            Some("expected status == 201, got 200")
+        );
     }
 
     #[test]
     fn status_code_gt() {
         let res = exec_result(404, &[], b"", 10);
-        assert!(evaluate(&Check::StatusCode { op: NumberOp::Gt, value: 400 }, &res).passed);
-        assert!(!evaluate(&Check::StatusCode { op: NumberOp::Gt, value: 500 }, &res).passed);
+        assert!(
+            evaluate(
+                &Check::StatusCode {
+                    op: NumberOp::Gt,
+                    value: 400
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::StatusCode {
+                    op: NumberOp::Gt,
+                    value: 500
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
@@ -441,7 +544,10 @@ mod tests {
         assert!(evaluate(&Check::StatusClass { class: 4 }, &res).passed);
         let fail = evaluate(&Check::StatusClass { class: 2 }, &res);
         assert!(!fail.passed);
-        assert_eq!(fail.message.as_deref(), Some("expected status class 2xx, got 404 (4xx)"));
+        assert_eq!(
+            fail.message.as_deref(),
+            Some("expected status class 2xx, got 404 (4xx)")
+        );
     }
 
     // ---- Header ----
@@ -449,73 +555,136 @@ mod tests {
     #[test]
     fn header_exists_not_exists() {
         let res = exec_result(200, &[("X-Foo", "bar")], b"", 10);
-        assert!(evaluate(
-            &Check::Header { name: "x-foo".into(), op: StringOp::Exists, value: String::new() },
-            &res
-        )
-        .passed);
-        assert!(!evaluate(
-            &Check::Header { name: "x-missing".into(), op: StringOp::Exists, value: String::new() },
-            &res
-        )
-        .passed);
-        assert!(evaluate(
-            &Check::Header { name: "x-missing".into(), op: StringOp::NotExists, value: String::new() },
-            &res
-        )
-        .passed);
-        assert!(!evaluate(
-            &Check::Header { name: "x-foo".into(), op: StringOp::NotExists, value: String::new() },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::Header {
+                    name: "x-foo".into(),
+                    op: StringOp::Exists,
+                    value: String::new()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::Header {
+                    name: "x-missing".into(),
+                    op: StringOp::Exists,
+                    value: String::new()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::Header {
+                    name: "x-missing".into(),
+                    op: StringOp::NotExists,
+                    value: String::new()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::Header {
+                    name: "x-foo".into(),
+                    op: StringOp::NotExists,
+                    value: String::new()
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn header_duplicate_values_equals_any() {
-        let res = exec_result(200, &[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")], b"", 10);
-        assert!(evaluate(
-            &Check::Header { name: "set-cookie".into(), op: StringOp::Equals, value: "b=2".into() },
-            &res
-        )
-        .passed);
-        assert!(!evaluate(
-            &Check::Header { name: "set-cookie".into(), op: StringOp::Equals, value: "c=3".into() },
-            &res
-        )
-        .passed);
+        let res = exec_result(
+            200,
+            &[("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")],
+            b"",
+            10,
+        );
+        assert!(
+            evaluate(
+                &Check::Header {
+                    name: "set-cookie".into(),
+                    op: StringOp::Equals,
+                    value: "b=2".into()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::Header {
+                    name: "set-cookie".into(),
+                    op: StringOp::Equals,
+                    value: "c=3".into()
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn header_contains_and_not_contains() {
         let res = exec_result(200, &[("X-Foo", "hello-world")], b"", 10);
-        assert!(evaluate(
-            &Check::Header { name: "X-Foo".into(), op: StringOp::Contains, value: "world".into() },
-            &res
-        )
-        .passed);
-        assert!(evaluate(
-            &Check::Header { name: "X-Foo".into(), op: StringOp::NotContains, value: "nope".into() },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::Header {
+                    name: "X-Foo".into(),
+                    op: StringOp::Contains,
+                    value: "world".into()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::Header {
+                    name: "X-Foo".into(),
+                    op: StringOp::NotContains,
+                    value: "nope".into()
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn header_matches_regex() {
         let res = exec_result(200, &[("X-Id", "req-42")], b"", 10);
-        assert!(evaluate(
-            &Check::Header { name: "x-id".into(), op: StringOp::Matches, value: r"^req-\d+$".into() },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::Header {
+                    name: "x-id".into(),
+                    op: StringOp::Matches,
+                    value: r"^req-\d+$".into()
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn header_matches_invalid_regex_fails_gracefully() {
         let res = exec_result(200, &[("X-Id", "req-42")], b"", 10);
         let outcome = evaluate(
-            &Check::Header { name: "x-id".into(), op: StringOp::Matches, value: "[".into() },
+            &Check::Header {
+                name: "x-id".into(),
+                op: StringOp::Matches,
+                value: "[".into(),
+            },
             &res,
         );
         assert!(!outcome.passed);
@@ -526,14 +695,32 @@ mod tests {
 
     #[test]
     fn content_type_ignores_params() {
-        let res = exec_result(200, &[("Content-Type", "application/json; charset=utf-8")], b"{}", 10);
-        assert!(evaluate(&Check::ContentType { value: "application/json".into() }, &res).passed);
+        let res = exec_result(
+            200,
+            &[("Content-Type", "application/json; charset=utf-8")],
+            b"{}",
+            10,
+        );
+        assert!(
+            evaluate(
+                &Check::ContentType {
+                    value: "application/json".into()
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn content_type_missing_header_fails() {
         let res = exec_result(200, &[], b"", 10);
-        let outcome = evaluate(&Check::ContentType { value: "application/json".into() }, &res);
+        let outcome = evaluate(
+            &Check::ContentType {
+                value: "application/json".into(),
+            },
+            &res,
+        );
         assert!(!outcome.passed);
         assert!(outcome.message.unwrap().contains("no content-type header"));
     }
@@ -543,9 +730,33 @@ mod tests {
     #[test]
     fn body_contains_and_matches() {
         let res = exec_result(200, &[], b"hello world", 10);
-        assert!(evaluate(&Check::BodyContains { value: "world".into() }, &res).passed);
-        assert!(!evaluate(&Check::BodyContains { value: "planet".into() }, &res).passed);
-        assert!(evaluate(&Check::BodyMatches { regex: r"^hello \w+$".into() }, &res).passed);
+        assert!(
+            evaluate(
+                &Check::BodyContains {
+                    value: "world".into()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::BodyContains {
+                    value: "planet".into()
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::BodyMatches {
+                    regex: r"^hello \w+$".into()
+                },
+                &res
+            )
+            .passed
+        );
         let bad = evaluate(&Check::BodyMatches { regex: "(".into() }, &res);
         assert!(!bad.passed);
         assert!(bad.message.unwrap().contains("invalid regex"));
@@ -567,7 +778,11 @@ mod tests {
     fn json_path_non_json_body_fails() {
         let res = exec_result(200, &[], b"not json", 10);
         let outcome = evaluate(
-            &Check::JsonPath { path: "$.a".into(), op: ValueOp::Exists, value: Value::Null },
+            &Check::JsonPath {
+                path: "$.a".into(),
+                op: ValueOp::Exists,
+                value: Value::Null,
+            },
             &res,
         );
         assert!(!outcome.passed);
@@ -578,7 +793,11 @@ mod tests {
     fn json_path_invalid_expression_fails_gracefully() {
         let res = json_res(200, &json!({"a": 1}), 10);
         let outcome = evaluate(
-            &Check::JsonPath { path: "not a path".into(), op: ValueOp::Exists, value: Value::Null },
+            &Check::JsonPath {
+                path: "not a path".into(),
+                op: ValueOp::Exists,
+                value: Value::Null,
+            },
             &res,
         );
         assert!(!outcome.passed);
@@ -588,47 +807,83 @@ mod tests {
     #[test]
     fn json_path_exists_not_exists() {
         let res = json_res(200, &json!({"a": {"b": 1}}), 10);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.a.b".into(), op: ValueOp::Exists, value: Value::Null },
-            &res
-        )
-        .passed);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.a.c".into(), op: ValueOp::NotExists, value: Value::Null },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.a.b".into(),
+                    op: ValueOp::Exists,
+                    value: Value::Null
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.a.c".into(),
+                    op: ValueOp::NotExists,
+                    value: Value::Null
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn json_path_equals_numeric_coercion() {
         let res = json_res(200, &json!({"count": 1}), 10);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.count".into(), op: ValueOp::Equals, value: json!(1.0) },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.count".into(),
+                    op: ValueOp::Equals,
+                    value: json!(1.0)
+                },
+                &res
+            )
+            .passed
+        );
         let res2 = json_res(200, &json!({"count": 1.0}), 10);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.count".into(), op: ValueOp::Equals, value: json!(1) },
-            &res2
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.count".into(),
+                    op: ValueOp::Equals,
+                    value: json!(1)
+                },
+                &res2
+            )
+            .passed
+        );
     }
 
     #[test]
     fn json_path_equals_multiple_nodes_any_match() {
         let res = json_res(200, &json!({"items": [{"v": 1}, {"v": 2}]}), 10);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.items[*].v".into(), op: ValueOp::Equals, value: json!(2) },
-            &res
-        )
-        .passed);
-        assert!(!evaluate(
-            &Check::JsonPath { path: "$.items[*].v".into(), op: ValueOp::Equals, value: json!(3) },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.items[*].v".into(),
+                    op: ValueOp::Equals,
+                    value: json!(2)
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::JsonPath {
+                    path: "$.items[*].v".into(),
+                    op: ValueOp::Equals,
+                    value: json!(3)
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
@@ -638,67 +893,115 @@ mod tests {
             &json!({"s": "hello world", "arr": [1, 2, 3], "obj": {"k": 1}}),
             10,
         );
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.s".into(), op: ValueOp::Contains, value: json!("world") },
-            &res
-        )
-        .passed);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.arr".into(), op: ValueOp::Contains, value: json!(2) },
-            &res
-        )
-        .passed);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.obj".into(), op: ValueOp::Contains, value: json!("k") },
-            &res
-        )
-        .passed);
-        assert!(!evaluate(
-            &Check::JsonPath { path: "$.obj".into(), op: ValueOp::Contains, value: json!("missing") },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.s".into(),
+                    op: ValueOp::Contains,
+                    value: json!("world")
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.arr".into(),
+                    op: ValueOp::Contains,
+                    value: json!(2)
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.obj".into(),
+                    op: ValueOp::Contains,
+                    value: json!("k")
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::JsonPath {
+                    path: "$.obj".into(),
+                    op: ValueOp::Contains,
+                    value: json!("missing")
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn json_path_matches_regex() {
         let res = json_res(200, &json!({"id": "req-42"}), 10);
-        assert!(evaluate(
-            &Check::JsonPath {
-                path: "$.id".into(),
-                op: ValueOp::Matches,
-                value: json!(r"^req-\d+$")
-            },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.id".into(),
+                    op: ValueOp::Matches,
+                    value: json!(r"^req-\d+$")
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn json_path_numeric_comparisons() {
         let res = json_res(200, &json!({"n": 5}), 10);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.n".into(), op: ValueOp::Gt, value: json!(1) },
-            &res
-        )
-        .passed);
-        assert!(evaluate(
-            &Check::JsonPath { path: "$.n".into(), op: ValueOp::Lte, value: json!(5) },
-            &res
-        )
-        .passed);
-        assert!(!evaluate(
-            &Check::JsonPath { path: "$.n".into(), op: ValueOp::Lt, value: json!(5) },
-            &res
-        )
-        .passed);
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.n".into(),
+                    op: ValueOp::Gt,
+                    value: json!(1)
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            evaluate(
+                &Check::JsonPath {
+                    path: "$.n".into(),
+                    op: ValueOp::Lte,
+                    value: json!(5)
+                },
+                &res
+            )
+            .passed
+        );
+        assert!(
+            !evaluate(
+                &Check::JsonPath {
+                    path: "$.n".into(),
+                    op: ValueOp::Lt,
+                    value: json!(5)
+                },
+                &res
+            )
+            .passed
+        );
     }
 
     #[test]
     fn json_path_numeric_comparison_non_number_fails() {
         let res = json_res(200, &json!({"n": "not-a-number"}), 10);
         let outcome = evaluate(
-            &Check::JsonPath { path: "$.n".into(), op: ValueOp::Gt, value: json!(1) },
+            &Check::JsonPath {
+                path: "$.n".into(),
+                op: ValueOp::Gt,
+                value: json!(1),
+            },
             &res,
         );
         assert!(!outcome.passed);
@@ -710,7 +1013,15 @@ mod tests {
     fn json_schema_pass_and_fail() {
         let schema = json!({"type": "object", "required": ["id"]});
         let res_ok = json_res(200, &json!({"id": 1}), 10);
-        assert!(evaluate(&Check::JsonSchema { schema: schema.clone() }, &res_ok).passed);
+        assert!(
+            evaluate(
+                &Check::JsonSchema {
+                    schema: schema.clone()
+                },
+                &res_ok
+            )
+            .passed
+        );
 
         let res_bad = json_res(200, &json!({}), 10);
         let outcome = evaluate(&Check::JsonSchema { schema }, &res_bad);
@@ -723,8 +1034,22 @@ mod tests {
     fn evaluate_all_skips_disabled() {
         let res = exec_result(200, &[], b"", 10);
         let defs = vec![
-            AssertionDef { check: Check::StatusCode { op: NumberOp::Eq, value: 200 }, enabled: true, note: String::new() },
-            AssertionDef { check: Check::StatusCode { op: NumberOp::Eq, value: 500 }, enabled: false, note: String::new() },
+            AssertionDef {
+                check: Check::StatusCode {
+                    op: NumberOp::Eq,
+                    value: 200,
+                },
+                enabled: true,
+                note: String::new(),
+            },
+            AssertionDef {
+                check: Check::StatusCode {
+                    op: NumberOp::Eq,
+                    value: 500,
+                },
+                enabled: false,
+                note: String::new(),
+            },
         ];
         let outcomes = evaluate_all(&defs, &res);
         assert_eq!(outcomes.len(), 1);

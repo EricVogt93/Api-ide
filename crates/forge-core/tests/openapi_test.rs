@@ -6,7 +6,9 @@ use forge_core::openapi::{build_binding, contract_requests, operation_to_request
 
 fn fixture(name: &str) -> String {
     std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/openapi").join(name),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/openapi")
+            .join(name),
     )
     .expect("read fixture")
 }
@@ -21,14 +23,21 @@ fn json_and_yaml_petstore_produce_equivalent_operation_sets() {
     json_ids.sort();
     yaml_ids.sort();
     assert_eq!(json_ids, yaml_ids);
-    assert_eq!(json_ids, vec!["createPet", "deletePet", "getPetById", "listPets"]);
+    assert_eq!(
+        json_ids,
+        vec!["createPet", "deletePet", "getPetById", "listPets"]
+    );
 }
 
 #[test]
 fn skeleton_for_create_pet_has_example_body_and_path_param_for_get() {
     let spec = parse_spec(&fixture("petstore.json")).expect("parse");
 
-    let create = spec.operations.iter().find(|o| o.id == "createPet").unwrap();
+    let create = spec
+        .operations
+        .iter()
+        .find(|o| o.id == "createPet")
+        .unwrap();
     let req = operation_to_request(create);
     assert_eq!(req.url, "{{baseUrl}}/pets");
     match &req.body {
@@ -39,10 +48,18 @@ fn skeleton_for_create_pet_has_example_body_and_path_param_for_get() {
         other => panic!("expected JSON body from example, got {other:?}"),
     }
 
-    let get = spec.operations.iter().find(|o| o.id == "getPetById").unwrap();
+    let get = spec
+        .operations
+        .iter()
+        .find(|o| o.id == "getPetById")
+        .unwrap();
     let req = operation_to_request(get);
     assert_eq!(req.url, "{{baseUrl}}/pets/:petId");
-    let path_param = req.params.iter().find(|p| p.kind == ParamKind::Path).unwrap();
+    let path_param = req
+        .params
+        .iter()
+        .find(|p| p.kind == ParamKind::Path)
+        .unwrap();
     assert_eq!(path_param.kv.key, "petId");
 }
 
@@ -54,15 +71,30 @@ fn contract_requests_generates_one_per_operation_with_schema_assertions() {
 
     let (get_pet_req, op_id) = generated.iter().find(|(_, id)| id == "getPetById").unwrap();
     assert_eq!(op_id, "getPetById");
-    assert!(get_pet_req.assertions.iter().any(|a| matches!(a.check, Check::StatusCode { value: 200, .. })));
-    assert!(get_pet_req.assertions.iter().any(|a| matches!(a.check, Check::ContentType { .. })));
-    assert!(get_pet_req.assertions.iter().any(|a| matches!(a.check, Check::JsonSchema { .. })));
+    assert!(get_pet_req
+        .assertions
+        .iter()
+        .any(|a| matches!(a.check, Check::StatusCode { value: 200, .. })));
+    assert!(get_pet_req
+        .assertions
+        .iter()
+        .any(|a| matches!(a.check, Check::ContentType { .. })));
+    assert!(get_pet_req
+        .assertions
+        .iter()
+        .any(|a| matches!(a.check, Check::JsonSchema { .. })));
     assert!(get_pet_req.assertions.iter().all(|a| a.note == "contract"));
 
     // delete has no 2xx response body -> only a status assertion (204 has no content).
     let (delete_req, _) = generated.iter().find(|(_, id)| id == "deletePet").unwrap();
-    assert!(delete_req.assertions.iter().any(|a| matches!(a.check, Check::StatusCode { value: 204, .. })));
-    assert!(!delete_req.assertions.iter().any(|a| matches!(a.check, Check::JsonSchema { .. })));
+    assert!(delete_req
+        .assertions
+        .iter()
+        .any(|a| matches!(a.check, Check::StatusCode { value: 204, .. })));
+    assert!(!delete_req
+        .assertions
+        .iter()
+        .any(|a| matches!(a.check, Check::JsonSchema { .. })));
 }
 
 #[test]
@@ -71,7 +103,12 @@ fn build_binding_from_contract_requests_round_trips_operation_ids() {
     let generated = contract_requests(&spec);
     let pairs: Vec<(String, String)> = generated
         .iter()
-        .map(|(req, op_id)| (format!("{}.request.json", req.name.to_lowercase().replace(' ', "-")), op_id.clone()))
+        .map(|(req, op_id)| {
+            (
+                format!("{}.request.json", req.name.to_lowercase().replace(' ', "-")),
+                op_id.clone(),
+            )
+        })
         .collect();
     let binding = build_binding("specs/petstore.json", &pairs);
     assert_eq!(binding.spec_path, "specs/petstore.json");

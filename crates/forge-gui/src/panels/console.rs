@@ -68,16 +68,36 @@ pub struct LogMessage {
 
 impl LogMessage {
     fn lifecycle(text: impl Into<String>) -> Self {
-        Self { direction: Direction::Lifecycle, at: Utc::now(), text: text.into(), expanded: false }
+        Self {
+            direction: Direction::Lifecycle,
+            at: Utc::now(),
+            text: text.into(),
+            expanded: false,
+        }
     }
     fn incoming(text: impl Into<String>, at: DateTime<Utc>) -> Self {
-        Self { direction: Direction::In, at, text: text.into(), expanded: false }
+        Self {
+            direction: Direction::In,
+            at,
+            text: text.into(),
+            expanded: false,
+        }
     }
     fn outgoing(text: impl Into<String>) -> Self {
-        Self { direction: Direction::Out, at: Utc::now(), text: text.into(), expanded: false }
+        Self {
+            direction: Direction::Out,
+            at: Utc::now(),
+            text: text.into(),
+            expanded: false,
+        }
     }
     fn error(text: impl Into<String>) -> Self {
-        Self { direction: Direction::Error, at: Utc::now(), text: text.into(), expanded: false }
+        Self {
+            direction: Direction::Error,
+            at: Utc::now(),
+            text: text.into(),
+            expanded: false,
+        }
     }
 }
 
@@ -130,14 +150,24 @@ fn active_connection_mut(state: &mut AppState) -> Option<&mut Connection> {
 /// Fold a WebSocket event arriving from the bridge into the matching
 /// connection's log.
 pub fn handle_ws_event(state: &mut AppState, conn_id: u64, event: WsEvent) {
-    let Some(conn) = state.console.connections.iter_mut().find(|c| c.id == conn_id) else { return };
+    let Some(conn) = state
+        .console
+        .connections
+        .iter_mut()
+        .find(|c| c.id == conn_id)
+    else {
+        return;
+    };
     match event {
         WsEvent::Connected => {
             conn.status = ConnStatus::Open;
             conn.messages.push(LogMessage::lifecycle("Connected"));
         }
         WsEvent::Text { text, at } => conn.messages.push(LogMessage::incoming(text, at)),
-        WsEvent::Binary { data, at } => conn.messages.push(LogMessage::incoming(format!("<binary, {} bytes>", data.len()), at)),
+        WsEvent::Binary { data, at } => conn.messages.push(LogMessage::incoming(
+            format!("<binary, {} bytes>", data.len()),
+            at,
+        )),
         WsEvent::Pong => conn.messages.push(LogMessage::lifecycle("Pong")),
         WsEvent::Closed { code, reason } => {
             conn.status = ConnStatus::Closed;
@@ -147,7 +177,8 @@ pub fn handle_ws_event(state: &mut AppState, conn_id: u64, event: WsEvent) {
                 (None, false) => format!(" ({reason})"),
                 (None, true) => String::new(),
             };
-            conn.messages.push(LogMessage::lifecycle(format!("Closed{detail}")));
+            conn.messages
+                .push(LogMessage::lifecycle(format!("Closed{detail}")));
         }
         WsEvent::Error(e) => {
             conn.status = ConnStatus::Error(e.clone());
@@ -159,13 +190,25 @@ pub fn handle_ws_event(state: &mut AppState, conn_id: u64, event: WsEvent) {
 /// Fold an SSE event arriving from the bridge into the matching
 /// connection's log.
 pub fn handle_sse_event(state: &mut AppState, conn_id: u64, event: SseEvent) {
-    let Some(conn) = state.console.connections.iter_mut().find(|c| c.id == conn_id) else { return };
+    let Some(conn) = state
+        .console
+        .connections
+        .iter_mut()
+        .find(|c| c.id == conn_id)
+    else {
+        return;
+    };
     match event {
         SseEvent::Open => {
             conn.status = ConnStatus::Open;
             conn.messages.push(LogMessage::lifecycle("Connected"));
         }
-        SseEvent::Event { id, event, data, at } => {
+        SseEvent::Event {
+            id,
+            event,
+            data,
+            at,
+        } => {
             let mut text = String::new();
             if !event.is_empty() {
                 text.push_str(&format!("event: {event}\n"));
@@ -196,28 +239,38 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         ui.separator();
     }
     log_area(ui, state);
-    if matches!(active_connection(state).map(|c| c.protocol), Some(Protocol::Ws)) {
+    if matches!(
+        active_connection(state).map(|c| c.protocol),
+        Some(Protocol::Ws)
+    ) {
         send_box(ui, state, bridge);
     }
 }
 
 fn connection_bar(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("console-protocol").selected_text(state.console.protocol.label()).show_ui(ui, |ui| {
-            ui.selectable_value(&mut state.console.protocol, Protocol::Ws, "WebSocket");
-            ui.selectable_value(&mut state.console.protocol, Protocol::Sse, "SSE");
-        });
+        egui::ComboBox::from_id_salt("console-protocol")
+            .selected_text(state.console.protocol.label())
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut state.console.protocol, Protocol::Ws, "WebSocket");
+                ui.selectable_value(&mut state.console.protocol, Protocol::Sse, "SSE");
+            });
         ui.add(
             egui::TextEdit::singleline(&mut state.console.url)
                 .desired_width(300.0)
                 .hint_text("ws://host/path or https://host/events"),
         );
         ui.menu_button("Headers", |ui| {
-            crate::widgets::kv_table::kv_table(ui, "console-headers", &mut state.console.headers, false);
+            crate::widgets::kv_table::kv_table(
+                ui,
+                "console-headers",
+                &mut state.console.headers,
+                false,
+            );
         });
 
-        let connecting_or_open =
-            active_connection(state).is_some_and(|c| matches!(c.status, ConnStatus::Open | ConnStatus::Connecting));
+        let connecting_or_open = active_connection(state)
+            .is_some_and(|c| matches!(c.status, ConnStatus::Open | ConnStatus::Connecting));
         if connecting_or_open {
             if ui.button("Disconnect").clicked() {
                 disconnect_active(state, bridge);
@@ -251,25 +304,22 @@ fn connect(state: &mut AppState, bridge: &Bridge) {
         state.status = Some(StatusMessage::error("Enter a URL to connect"));
         return;
     }
-    let headers: Vec<(String, String)> =
-        state.console.headers.iter().filter(|h| h.enabled && !h.key.is_empty()).map(|h| (h.key.clone(), h.value.clone())).collect();
+    let headers: Vec<(String, String)> = state
+        .console
+        .headers
+        .iter()
+        .filter(|h| h.enabled && !h.key.is_empty())
+        .map(|h| (h.key.clone(), h.value.clone()))
+        .collect();
 
-    state.console.next_conn_id += 1;
-    let conn_id = state.console.next_conn_id;
-    let protocol = state.console.protocol;
-    state.console.connections.push(Connection {
-        id: conn_id,
-        protocol,
-        url: url.clone(),
-        status: ConnStatus::Connecting,
-        messages: vec![LogMessage::lifecycle(format!("Connecting to {url}\u{2026}"))],
-    });
-    state.console.active_conn = Some(conn_id);
-
-    // Workspace mTLS/CA settings apply to protocol sessions too.
+    // Validate workspace mTLS/CA settings before creating a connection row
+    // that could otherwise remain stuck in "Connecting".
     let tls = match &state.workspace {
         Some(ws) => {
-            match forge_core::protocols::TlsMaterial::from_settings(&ws.root, ws.meta.settings.tls.as_ref()) {
+            match forge_core::protocols::TlsMaterial::from_settings(
+                &ws.root,
+                ws.meta.settings.tls.as_ref(),
+            ) {
                 Ok(material) => material,
                 Err(e) => {
                     state.status = Some(StatusMessage::error(format!("TLS settings: {e}")));
@@ -280,18 +330,58 @@ fn connect(state: &mut AppState, bridge: &Bridge) {
         None => forge_core::protocols::TlsMaterial::default(),
     };
 
-    match protocol {
-        Protocol::Ws => bridge.send(Cmd::WsConnect { conn_id, url, headers, tls }),
-        Protocol::Sse => bridge.send(Cmd::SseSubscribe { conn_id, url, headers, tls }),
+    state.console.next_conn_id += 1;
+    let conn_id = state.console.next_conn_id;
+    let protocol = state.console.protocol;
+    state.console.connections.push(Connection {
+        id: conn_id,
+        protocol,
+        url: url.clone(),
+        status: ConnStatus::Connecting,
+        messages: vec![LogMessage::lifecycle(format!(
+            "Connecting to {url}\u{2026}"
+        ))],
+    });
+    state.console.active_conn = Some(conn_id);
+
+    let sent = match protocol {
+        Protocol::Ws => bridge.send(Cmd::WsConnect {
+            conn_id,
+            url,
+            headers,
+            tls,
+        }),
+        Protocol::Sse => bridge.send(Cmd::SseSubscribe {
+            conn_id,
+            url,
+            headers,
+            tls,
+        }),
+    };
+    if let Err(error) = sent {
+        if let Some(connection) = active_connection_mut(state) {
+            connection.status = ConnStatus::Error(error.clone());
+            connection
+                .messages
+                .push(LogMessage::lifecycle(error.clone()));
+        }
+        state.status = Some(StatusMessage::error(error));
     }
 }
 
 fn disconnect_active(state: &mut AppState, bridge: &Bridge) {
-    let Some(id) = state.console.active_conn else { return };
-    let Some(conn) = state.console.connections.iter().find(|c| c.id == id) else { return };
-    match conn.protocol {
+    let Some(id) = state.console.active_conn else {
+        return;
+    };
+    let Some(conn) = state.console.connections.iter().find(|c| c.id == id) else {
+        return;
+    };
+    let sent = match conn.protocol {
         Protocol::Ws => bridge.send(Cmd::WsClose { conn_id: id }),
         Protocol::Sse => bridge.send(Cmd::SseClose { conn_id: id }),
+    };
+    if let Err(error) = sent {
+        state.status = Some(StatusMessage::error(error));
     }
 }
 
@@ -318,14 +408,15 @@ fn log_area(ui: &mut Ui, state: &mut AppState) {
 
     if let Some(conn) = active_connection(state) {
         rendered = true;
-        egui::ScrollArea::vertical().id_salt("console-log").auto_shrink([false, false]).stick_to_bottom(auto_scroll).show(
-            ui,
-            |ui| {
+        egui::ScrollArea::vertical()
+            .id_salt("console-log")
+            .auto_shrink([false, false])
+            .stick_to_bottom(auto_scroll)
+            .show(ui, |ui| {
                 for (i, msg) in conn.messages.iter().enumerate() {
                     render_message(ui, msg, i, &mut toggle_expand);
                 }
-            },
-        );
+            });
     }
 
     if !rendered {
@@ -354,9 +445,20 @@ fn render_message(ui: &mut Ui, msg: &LogMessage, idx: usize, toggle: &mut Option
         ui.colored_label(color, arrow);
         ui.weak(msg.at.format("%H:%M:%S").to_string());
         let truncated = msg.text.chars().count() > 300 && !msg.expanded;
-        let shown = if truncated { format!("{}\u{2026}", msg.text.chars().take(300).collect::<String>()) } else { msg.text.clone() };
-        let text = if italics { RichText::new(shown).italics().color(color) } else { RichText::new(shown).color(color) };
-        if ui.add(egui::Label::new(text).sense(egui::Sense::click())).clicked() {
+        let shown = if truncated {
+            format!("{}\u{2026}", msg.text.chars().take(300).collect::<String>())
+        } else {
+            msg.text.clone()
+        };
+        let text = if italics {
+            RichText::new(shown).italics().color(color)
+        } else {
+            RichText::new(shown).color(color)
+        };
+        if ui
+            .add(egui::Label::new(text).sense(egui::Sense::click()))
+            .clicked()
+        {
             *toggle = Some(idx);
         }
     });
@@ -365,21 +467,37 @@ fn render_message(ui: &mut Ui, msg: &LogMessage, idx: usize, toggle: &mut Option
 fn send_box(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     ui.separator();
     ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::multiline(&mut state.console.send_text).desired_rows(2).desired_width(ui.available_width() - 70.0));
+        ui.add(
+            egui::TextEdit::multiline(&mut state.console.send_text)
+                .desired_rows(2)
+                .desired_width(ui.available_width() - 70.0),
+        );
         let can_send = active_connection(state).is_some_and(|c| c.status == ConnStatus::Open);
-        if ui.add_enabled(can_send, egui::Button::new("Send")).clicked() {
+        if ui
+            .add_enabled(can_send, egui::Button::new("Send"))
+            .clicked()
+        {
             send_message(state, bridge);
         }
     });
 }
 
 fn send_message(state: &mut AppState, bridge: &Bridge) {
-    let Some(id) = state.console.active_conn else { return };
+    let Some(id) = state.console.active_conn else {
+        return;
+    };
     let msg = std::mem::take(&mut state.console.send_text);
     if msg.is_empty() {
         return;
     }
-    bridge.send(Cmd::WsSend { conn_id: id, msg: msg.clone() });
+    if let Err(error) = bridge.send(Cmd::WsSend {
+        conn_id: id,
+        msg: msg.clone(),
+    }) {
+        state.console.send_text = msg;
+        state.status = Some(StatusMessage::error(error));
+        return;
+    }
     if let Some(conn) = active_connection_mut(state) {
         conn.messages.push(LogMessage::outgoing(msg));
     }

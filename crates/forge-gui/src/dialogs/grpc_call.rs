@@ -41,7 +41,9 @@ impl GrpcCallState {
     }
 
     fn pick_protos(&mut self) {
-        let Some(files) = rfd::FileDialog::new().add_filter("Protobuf", &["proto"]).pick_files()
+        let Some(files) = rfd::FileDialog::new()
+            .add_filter("Protobuf", &["proto"])
+            .pick_files()
         else {
             return;
         };
@@ -91,10 +93,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                 }
                 match dialog.protos.len() {
                     0 => ui.weak("no schema loaded"),
-                    n => ui.label(format!(
-                        "{n} file(s), {} method(s)",
-                        dialog.methods.len()
-                    )),
+                    n => ui.label(format!("{n} file(s), {} method(s)", dialog.methods.len())),
                 };
             });
             if let Some(err) = &dialog.compile_error {
@@ -139,14 +138,17 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
 
             ui.add_space(6.0);
             ui.label("Request message (JSON):");
-            egui::ScrollArea::vertical().id_salt("grpc-req").max_height(140.0).show(ui, |ui| {
-                ui.add(
-                    TextEdit::multiline(&mut dialog.request_json)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(6),
-                );
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("grpc-req")
+                .max_height(140.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        TextEdit::multiline(&mut dialog.request_json)
+                            .code_editor()
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(6),
+                    );
+                });
 
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -158,8 +160,16 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             let mut remove: Option<usize> = None;
             for (i, (k, v)) in dialog.metadata.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.add(TextEdit::singleline(k).hint_text("key").desired_width(180.0));
-                    ui.add(TextEdit::singleline(v).hint_text("value").desired_width(280.0));
+                    ui.add(
+                        TextEdit::singleline(k)
+                            .hint_text("key")
+                            .desired_width(180.0),
+                    );
+                    ui.add(
+                        TextEdit::singleline(v)
+                            .hint_text("value")
+                            .desired_width(280.0),
+                    );
                     if ui.small_button("✕").clicked() {
                         remove = Some(i);
                     }
@@ -173,13 +183,16 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             let can_call = !dialog.in_flight
                 && !dialog.endpoint.trim().is_empty()
                 && dialog.methods.get(dialog.selected_method).is_some();
-            if ui.add_enabled(can_call, egui::Button::new("▶ Call")).clicked() {
+            if ui
+                .add_enabled(can_call, egui::Button::new("▶ Call"))
+                .clicked()
+            {
                 let call_id = dialog.next_call_id;
                 dialog.next_call_id += 1;
                 dialog.active_call = Some(call_id);
                 dialog.in_flight = true;
                 dialog.response = None;
-                bridge.send(Cmd::GrpcCall {
+                if let Err(error) = bridge.send(Cmd::GrpcCall {
                     call_id,
                     protos: dialog.protos.clone(),
                     endpoint: dialog.endpoint.trim().to_string(),
@@ -191,7 +204,9 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                         .filter(|(k, _)| !k.trim().is_empty())
                         .map(|(k, v)| (k.trim().to_string(), v.clone()))
                         .collect(),
-                });
+                }) {
+                    dialog.handle_result(call_id, Err(error));
+                }
             }
             if dialog.in_flight {
                 ui.horizontal(|ui| {
@@ -220,22 +235,24 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                         if ui.button("Copy").clicked() {
                             ui.ctx().copy_text(joined.clone());
                         }
-                        ui.label(RichText::new("OK").color(egui::Color32::from_rgb(0x49, 0x9C, 0x54)));
+                        ui.label(
+                            RichText::new("OK").color(egui::Color32::from_rgb(0x49, 0x9C, 0x54)),
+                        );
                         if response.messages.len() != 1 {
                             ui.weak(format!("{} message(s)", response.messages.len()));
                         }
                     });
-                    egui::ScrollArea::vertical().id_salt("grpc-res").max_height(200.0).show(
-                        ui,
-                        |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("grpc-res")
+                        .max_height(200.0)
+                        .show(ui, |ui| {
                             let mut text = joined.as_str();
                             ui.add(
                                 TextEdit::multiline(&mut text)
                                     .code_editor()
                                     .desired_width(f32::INFINITY),
                             );
-                        },
-                    );
+                        });
                 }
             }
         });

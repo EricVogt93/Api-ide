@@ -1,6 +1,6 @@
 //! Host API surface exposed to scripts: the `req` / `res` / `vars` handle
 //! types, `assert`/`test`, `log`, and the small set of stateless helper
-//! functions (`uuid`, `timestamp`, `base64_encode`/`base64_decode`, `env`).
+//! functions (`uuid`, `timestamp`, `base64_encode`/`base64_decode`).
 //!
 //! Handle types wrap `Arc<Mutex<..>>` around the real data so that a
 //! script's mutations (setting a header, recording a variable) are visible
@@ -16,6 +16,8 @@ use rhai::{Dynamic, Engine};
 
 use crate::assert::AssertionOutcome;
 use crate::exec::{ExecutionResult, ResolvedBody, ResolvedRequest};
+
+use super::VarMutation;
 
 /// Lock a mutex, recovering from poisoning instead of panicking. These
 /// mutexes only ever guard plain data behind a single-threaded script
@@ -38,9 +40,6 @@ pub(crate) fn register_stateless(engine: &mut Engine) {
             Err(_) => String::new(),
         }
     });
-    // Stubbed out: scripts run in a sandbox with no access to the host
-    // process environment. Always returns `()`.
-    engine.register_fn("env", |_name: String| Dynamic::UNIT);
 }
 
 /// Install `log(msg)` and the `print`/`debug` hooks, both feeding the same
@@ -82,7 +81,11 @@ impl ReqHandle {
 
     fn set_header(&mut self, name: String, value: String) {
         let mut req = lock(&self.0);
-        match req.headers.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(&name)) {
+        match req
+            .headers
+            .iter_mut()
+            .find(|(k, _)| k.eq_ignore_ascii_case(&name))
+        {
             Some(existing) => existing.1 = value,
             None => req.headers.push((name, value)),
         }
@@ -98,7 +101,9 @@ impl ReqHandle {
     }
 
     fn remove_header(&mut self, name: String) {
-        lock(&self.0).headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
+        lock(&self.0)
+            .headers
+            .retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
     }
 
     fn set_body_text(&mut self, text: String) {
@@ -107,7 +112,10 @@ impl ReqHandle {
             ResolvedBody::Bytes { content_type, .. } => content_type.clone(),
             _ => None,
         };
-        req.body = ResolvedBody::Bytes { content_type, data: text.into_bytes() };
+        req.body = ResolvedBody::Bytes {
+            content_type,
+            data: text.into_bytes(),
+        };
     }
 
     fn get_body_text(&mut self) -> String {
@@ -157,7 +165,10 @@ impl ResHandle {
     }
 
     fn header(&mut self, name: String) -> Dynamic {
-        self.0.header(&name).map(|v| Dynamic::from(v.to_string())).unwrap_or(Dynamic::UNIT)
+        self.0
+            .header(&name)
+            .map(|v| Dynamic::from(v.to_string()))
+            .unwrap_or(Dynamic::UNIT)
     }
 
     fn json(&mut self) -> Dynamic {
@@ -186,24 +197,32 @@ pub(crate) fn register_res_type(engine: &mut Engine) {
 #[derive(Clone)]
 pub(crate) struct VarsHandle {
     values: Arc<Mutex<BTreeMap<String, String>>>,
-    sets: Arc<Mutex<Vec<(String, String)>>>,
+    mutations: Arc<Mutex<Vec<VarMutation>>>,
 }
 
 impl VarsHandle {
     pub(crate) fn new(
         values: Arc<Mutex<BTreeMap<String, String>>>,
-        sets: Arc<Mutex<Vec<(String, String)>>>,
+        mutations: Arc<Mutex<Vec<VarMutation>>>,
     ) -> Self {
-        Self { values, sets }
+        Self { values, mutations }
     }
 
     fn get(&mut self, name: String) -> Dynamic {
-        lock(&self.values).get(&name).map(|v| Dynamic::from(v.clone())).unwrap_or(Dynamic::UNIT)
+        lock(&self.values)
+            .get(&name)
+            .map(|v| Dynamic::from(v.clone()))
+            .unwrap_or(Dynamic::UNIT)
     }
 
     fn set(&mut self, name: String, value: String) {
         lock(&self.values).insert(name.clone(), value.clone());
-        lock(&self.sets).push((name, value));
+        lock(&self.mutations).push(VarMutation::Set(name, value));
+    }
+
+    fn unset(&mut self, name: String) {
+        lock(&self.values).remove(&name);
+        lock(&self.mutations).push(VarMutation::Unset(name));
     }
 }
 
@@ -212,20 +231,32 @@ pub(crate) fn register_vars_type(engine: &mut Engine) {
     engine
         .register_type_with_name::<VarsHandle>("Vars")
         .register_fn("get", VarsHandle::get)
-        .register_fn("set", VarsHandle::set);
+        .register_fn("set", VarsHandle::set)
+        .register_fn("unset", VarsHandle::unset);
 }
 
 /// Install the post-response `assert(cond, message)` and
 /// `test(name, cond)` host functions. Neither aborts the script on
 /// failure; they simply record an [`AssertionOutcome`].
-pub(crate) fn register_assertions(engine: &mut Engine, assertions: Arc<Mutex<Vec<AssertionOutcome>>>) {
+pub(crate) fn register_assertions(
+    engine: &mut Engine,
+    assertions: Arc<Mutex<Vec<AssertionOutcome>>>,
+) {
     let for_assert = assertions.clone();
     engine.register_fn("assert", move |cond: bool, message: String| {
-        lock(&for_assert).push(AssertionOutcome { summary: message, passed: cond, message: None });
+        lock(&for_assert).push(AssertionOutcome {
+            summary: message,
+            passed: cond,
+            message: None,
+        });
     });
 
     let for_test = assertions;
     engine.register_fn("test", move |name: String, cond: bool| {
-        lock(&for_test).push(AssertionOutcome { summary: name, passed: cond, message: None });
+        lock(&for_test).push(AssertionOutcome {
+            summary: name,
+            passed: cond,
+            message: None,
+        });
     });
 }

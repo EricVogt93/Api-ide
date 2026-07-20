@@ -55,8 +55,16 @@ pub struct ResolvedPipelineEntry {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedMock {
-    Static { status: u16, headers: Vec<ResolvedHeader>, body: ResolvedBody, delay_ms: u64 },
-    Dynamic { asset: AssetDescriptor, input: Value },
+    Static {
+        status: u16,
+        headers: Vec<ResolvedHeader>,
+        body: ResolvedBody,
+        delay_ms: u64,
+    },
+    Dynamic {
+        asset: AssetDescriptor,
+        input: Value,
+    },
 }
 
 impl ResolvedRequest {

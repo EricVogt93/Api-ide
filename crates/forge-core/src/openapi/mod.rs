@@ -19,7 +19,10 @@ pub fn build_binding(spec_path: &str, pairs: &[(String, String)]) -> crate::mode
     for (req_file, op_id) in pairs {
         operations.insert(req_file.clone(), op_id.clone());
     }
-    crate::model::OpenApiBinding { spec_path: spec_path.to_string(), operations }
+    crate::model::OpenApiBinding {
+        spec_path: spec_path.to_string(),
+        operations,
+    }
 }
 
 #[cfg(test)]
@@ -31,12 +34,21 @@ mod tests {
         let binding = build_binding(
             "specs/petstore.yaml",
             &[
-                ("pets/list-pets.request.json".to_string(), "listPets".to_string()),
-                ("pets/get-pet.request.json".to_string(), "getPetById".to_string()),
+                (
+                    "pets/list-pets.request.json".to_string(),
+                    "listPets".to_string(),
+                ),
+                (
+                    "pets/get-pet.request.json".to_string(),
+                    "getPetById".to_string(),
+                ),
             ],
         );
         assert_eq!(binding.spec_path, "specs/petstore.yaml");
-        assert_eq!(binding.operations.get("pets/list-pets.request.json"), Some(&"listPets".to_string()));
+        assert_eq!(
+            binding.operations.get("pets/list-pets.request.json"),
+            Some(&"listPets".to_string())
+        );
         assert_eq!(binding.operations.len(), 2);
     }
 }

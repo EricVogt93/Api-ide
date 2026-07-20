@@ -27,17 +27,26 @@ pub(super) fn install_pm(
     let sink = assertions.clone();
     ctx.globals().set(
         "__pmTestResult",
-        Function::new(ctx.clone(), move |name: String, passed: bool, message: String| {
-            sink.borrow_mut().push(AssertionOutcome {
-                summary: name,
-                passed,
-                message: if message.is_empty() { None } else { Some(message) },
-            });
-        })?,
+        Function::new(
+            ctx.clone(),
+            move |name: String, passed: bool, message: String| {
+                sink.borrow_mut().push(AssertionOutcome {
+                    summary: name,
+                    passed,
+                    message: if message.is_empty() {
+                        None
+                    } else {
+                        Some(message)
+                    },
+                });
+            },
+        )?,
     )?;
     ctx.globals().set(
         "__pmSendRequest",
-        Function::new(ctx.clone(), |spec_json: String| super::send_request::send_blocking(&spec_json))?,
+        Function::new(ctx.clone(), |spec_json: String| {
+            super::send_request::send_blocking(&spec_json)
+        })?,
     )?;
     ctx.globals().set("__pmHasResponse", has_response)?;
     ctx.eval::<(), _>(PM_PRELUDE)
@@ -172,8 +181,7 @@ const PM_PRELUDE: &str = r#"
         get: function (k) { return vars.get(String(k)); },
         set: function (k, v) { vars.set(String(k), String(v)); },
         has: function (k) { return typeof vars.get(String(k)) !== "undefined"; },
-        // ponytail: the host has no variable removal; unset blanks the value.
-        unset: function (k) { vars.set(String(k), ""); },
+        unset: function (k) { vars.unset(String(k)); },
         replaceIn: function (s) {
             return String(s).replace(/\{\{([^}]+)\}\}/g, function (m, name) {
                 var v = vars.get(name.trim());

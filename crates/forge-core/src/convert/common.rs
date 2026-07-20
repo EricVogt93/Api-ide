@@ -6,8 +6,11 @@ use crate::model::{ParamKind, RequestDef};
 
 /// RFC 3986 unreserved characters stay unescaped; everything else is
 /// percent-encoded. Matches curl's `--data-urlencode` behaviour.
-const FORM_ENCODE_SET: &AsciiSet =
-    &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
+const FORM_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
 
 /// Percent-encode a string the way curl's `--data-urlencode` and
 /// `application/x-www-form-urlencoded` bodies do.
@@ -76,10 +79,16 @@ pub(crate) fn graphql_json_body(
         serde_json::from_str(variables).unwrap_or_else(|_| serde_json::json!({}))
     };
     let mut obj = serde_json::Map::new();
-    obj.insert("query".to_string(), serde_json::Value::String(query.to_string()));
+    obj.insert(
+        "query".to_string(),
+        serde_json::Value::String(query.to_string()),
+    );
     obj.insert("variables".to_string(), vars);
     if let Some(op) = operation_name {
-        obj.insert("operationName".to_string(), serde_json::Value::String(op.clone()));
+        obj.insert(
+            "operationName".to_string(),
+            serde_json::Value::String(op.clone()),
+        );
     }
     serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_default()
 }

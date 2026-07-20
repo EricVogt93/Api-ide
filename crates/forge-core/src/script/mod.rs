@@ -20,7 +20,7 @@ mod send_request;
 
 use std::collections::BTreeMap;
 
-pub use engine::{ScriptEngine, ScriptOutput};
+pub use engine::{ScriptEngine, ScriptOutput, VarMutation};
 pub use js::JsEngine;
 
 use crate::exec::{ExecutionResult, ResolvedRequest};
@@ -37,7 +37,10 @@ pub struct Scripting {
 
 impl Scripting {
     pub fn new() -> Self {
-        Self { rhai: ScriptEngine::new(), js: JsEngine::new() }
+        Self {
+            rhai: ScriptEngine::new(),
+            js: JsEngine::new(),
+        }
     }
 
     /// Run a pre-request script in the given language. See
@@ -74,7 +77,12 @@ impl Scripting {
     /// Run a `beforeAll`/`beforeEach` suite hook (no `req`/`res` in scope)
     /// in the given language. See [`ScriptEngine::run_hook`] /
     /// [`JsEngine::run_hook`].
-    pub fn run_hook(&self, lang: ScriptLang, script: &str, vars: &BTreeMap<String, String>) -> ScriptOutput {
+    pub fn run_hook(
+        &self,
+        lang: ScriptLang,
+        script: &str,
+        vars: &BTreeMap<String, String>,
+    ) -> ScriptOutput {
         match lang {
             ScriptLang::Rhai => self.rhai.run_hook(script, vars),
             ScriptLang::Js => self.js.run_hook(script, vars),

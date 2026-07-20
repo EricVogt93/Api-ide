@@ -205,8 +205,7 @@ pub fn build_request_body(
     let variables: serde_json::Value = if variables_json.trim().is_empty() {
         serde_json::Value::Object(serde_json::Map::new())
     } else {
-        serde_json::from_str(variables_json)
-            .map_err(|e| format!("invalid variables JSON: {e}"))?
+        serde_json::from_str(variables_json).map_err(|e| format!("invalid variables JSON: {e}"))?
     };
 
     let mut body = serde_json::json!({

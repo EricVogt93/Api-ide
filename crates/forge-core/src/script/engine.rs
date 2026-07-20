@@ -11,6 +11,13 @@ use super::api::{
     register_vars_type, ReqHandle, ResHandle, VarsHandle,
 };
 
+/// One ordered mutation to the runtime variable scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VarMutation {
+    Set(String, String),
+    Unset(String),
+}
+
 /// Result of running one pre-request or post-response script.
 #[derive(Debug, Clone, Default)]
 pub struct ScriptOutput {
@@ -23,9 +30,9 @@ pub struct ScriptOutput {
     /// Assertions recorded by `assert(cond, message)` / `test(name, cond)`
     /// during a post-response script. Always empty for pre-request scripts.
     pub assertions: Vec<AssertionOutcome>,
-    /// Variables set via `vars.set(name, value)`, in call order, for the
-    /// caller to persist into the runtime variable scope.
-    pub vars_set: Vec<(String, String)>,
+    /// Ordered `vars.set` / `vars.unset` calls for the caller to persist
+    /// into the runtime variable scope.
+    pub var_mutations: Vec<VarMutation>,
 }
 
 /// A reusable, sandboxed Rhai engine for pre-request / post-response
@@ -59,7 +66,9 @@ impl ScriptEngine {
         engine.set_max_map_size(10_000);
         engine.disable_symbol("eval");
         api::register_stateless(&mut engine);
-        Self { engine: Mutex::new(engine) }
+        Self {
+            engine: Mutex::new(engine),
+        }
     }
 
     /// Run a pre-request script. `req` is mutated in place through the
@@ -75,7 +84,7 @@ impl ScriptEngine {
 
         let req_state = Arc::new(Mutex::new(req.clone()));
         let vars_state = Arc::new(Mutex::new(vars.clone()));
-        let vars_sets = Arc::new(Mutex::new(Vec::new()));
+        let var_mutations = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::new(Mutex::new(Vec::new()));
 
         register_req_type(&mut engine);
@@ -84,7 +93,7 @@ impl ScriptEngine {
 
         let mut scope = Scope::new();
         scope.push("req", ReqHandle::new(req_state.clone()));
-        scope.push("vars", VarsHandle::new(vars_state, vars_sets.clone()));
+        scope.push("vars", VarsHandle::new(vars_state, var_mutations.clone()));
 
         let (log, error) = run_script(&engine, script, &mut scope, &log);
 
@@ -96,7 +105,7 @@ impl ScriptEngine {
             log,
             error,
             assertions: Vec::new(),
-            vars_set: vars_sets.lock().map(|v| v.clone()).unwrap_or_default(),
+            var_mutations: var_mutations.lock().map(|v| v.clone()).unwrap_or_default(),
         }
     }
 
@@ -113,7 +122,7 @@ impl ScriptEngine {
         let mut engine = self.lock_engine();
 
         let vars_state = Arc::new(Mutex::new(vars.clone()));
-        let vars_sets = Arc::new(Mutex::new(Vec::new()));
+        let var_mutations = Arc::new(Mutex::new(Vec::new()));
         let assertions = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::new(Mutex::new(Vec::new()));
 
@@ -124,7 +133,7 @@ impl ScriptEngine {
 
         let mut scope = Scope::new();
         scope.push("res", ResHandle::new(Arc::new(res.clone())));
-        scope.push("vars", VarsHandle::new(vars_state, vars_sets.clone()));
+        scope.push("vars", VarsHandle::new(vars_state, var_mutations.clone()));
 
         let (log, error) = run_script(&engine, script, &mut scope, &log);
 
@@ -132,7 +141,7 @@ impl ScriptEngine {
             log,
             error,
             assertions: assertions.lock().map(|v| v.clone()).unwrap_or_default(),
-            vars_set: vars_sets.lock().map(|v| v.clone()).unwrap_or_default(),
+            var_mutations: var_mutations.lock().map(|v| v.clone()).unwrap_or_default(),
         }
     }
 
@@ -145,7 +154,7 @@ impl ScriptEngine {
         let mut engine = self.lock_engine();
 
         let vars_state = Arc::new(Mutex::new(vars.clone()));
-        let vars_sets = Arc::new(Mutex::new(Vec::new()));
+        let var_mutations = Arc::new(Mutex::new(Vec::new()));
         let assertions = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::new(Mutex::new(Vec::new()));
 
@@ -154,7 +163,7 @@ impl ScriptEngine {
         register_assertions(&mut engine, assertions.clone());
 
         let mut scope = Scope::new();
-        scope.push("vars", VarsHandle::new(vars_state, vars_sets.clone()));
+        scope.push("vars", VarsHandle::new(vars_state, var_mutations.clone()));
 
         let (log, error) = run_script(&engine, script, &mut scope, &log);
 
@@ -162,12 +171,14 @@ impl ScriptEngine {
             log,
             error,
             assertions: assertions.lock().map(|v| v.clone()).unwrap_or_default(),
-            vars_set: vars_sets.lock().map(|v| v.clone()).unwrap_or_default(),
+            var_mutations: var_mutations.lock().map(|v| v.clone()).unwrap_or_default(),
         }
     }
 
     fn lock_engine(&self) -> std::sync::MutexGuard<'_, Engine> {
-        self.engine.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.engine
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -252,12 +263,18 @@ mod tests {
         assert_eq!(req.url, "https://example.test/old?patched=1");
         assert!(req.header("X-New").is_some());
         assert_eq!(req.header("X-New"), Some("hello"));
-        assert!(req.header("X-Existing").is_none(), "header should have been removed");
+        assert!(
+            req.header("X-Existing").is_none(),
+            "header should have been removed"
+        );
         match &req.body {
             ResolvedBody::Bytes { data, .. } => assert_eq!(data, b"payload"),
             other => panic!("expected Bytes body, got {other:?}"),
         }
-        assert_eq!(out.vars_set, vec![("token".to_string(), "abc123".to_string())]);
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("token".to_string(), "abc123".to_string())]
+        );
         assert_eq!(out.log, vec!["done".to_string()]);
         assert!(out.assertions.is_empty());
     }
@@ -273,6 +290,29 @@ mod tests {
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
         assert_eq!(req.url, "https://api.test/path");
+    }
+
+    #[test]
+    fn variable_mutations_preserve_set_and_unset_order() {
+        let engine = ScriptEngine::new();
+        let mut req = ResolvedRequest::new(Method::Get, "https://example.test");
+        let mut vars = BTreeMap::new();
+        vars.insert("token".to_string(), "old".to_string());
+
+        let out = engine.run_pre(
+            r#"vars.unset("token"); vars.set("token", "new");"#,
+            &mut req,
+            &vars,
+        );
+
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert_eq!(
+            out.var_mutations,
+            vec![
+                VarMutation::Unset("token".to_string()),
+                VarMutation::Set("token".to_string(), "new".to_string())
+            ]
+        );
     }
 
     #[test]
@@ -353,7 +393,10 @@ mod tests {
         let out = engine.run_post(r#"vars.set("id", res.json().id);"#, &res, &empty_vars());
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.vars_set, vec![("id".to_string(), "xyz".to_string())]);
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("id".to_string(), "xyz".to_string())]
+        );
     }
 
     #[test]
@@ -372,7 +415,10 @@ mod tests {
         );
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.log, vec!["one".to_string(), "two".to_string(), "three".to_string()]);
+        assert_eq!(
+            out.log,
+            vec!["one".to_string(), "two".to_string(), "three".to_string()]
+        );
     }
 
     #[test]
@@ -383,7 +429,10 @@ mod tests {
         let out = engine.run_pre("loop {}", &mut req, &empty_vars());
 
         let err = out.error.expect("expected an operation-limit error");
-        assert!(err.to_lowercase().contains("too many operations"), "unexpected error: {err}");
+        assert!(
+            err.to_lowercase().contains("too many operations"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -394,7 +443,10 @@ mod tests {
         let out = engine.run_pre("let x = ;", &mut req, &empty_vars());
 
         let err = out.error.expect("expected a compile error");
-        assert!(err.starts_with("script compile error:"), "unexpected error: {err}");
+        assert!(
+            err.starts_with("script compile error:"),
+            "unexpected error: {err}"
+        );
         assert!(err.contains("line 1"), "expected line info in: {err}");
     }
 
@@ -470,21 +522,19 @@ mod tests {
     }
 
     #[test]
-    fn env_stub_returns_unit() {
+    fn host_environment_access_is_rejected() {
         let engine = ScriptEngine::new();
         let mut req = ResolvedRequest::new(Method::Get, "https://example.test");
 
-        let out = engine.run_pre(
-            r#"
-                let v = env("PATH");
-                if v == () { log("unit"); } else { log("not-unit"); }
-            "#,
-            &mut req,
-            &empty_vars(),
-        );
+        let out = engine.run_pre(r#"env("PATH");"#, &mut req, &empty_vars());
 
-        assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.log, vec!["unit".to_string()]);
+        assert!(
+            out.error
+                .as_deref()
+                .is_some_and(|error| error.contains("Function not found")),
+            "{:?}",
+            out.error
+        );
     }
 
     #[test]
@@ -537,7 +587,10 @@ mod tests {
         );
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.vars_set, vec![("suite".to_string(), "started".to_string())]);
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("suite".to_string(), "started".to_string())]
+        );
         assert_eq!(out.assertions.len(), 1);
         assert!(out.assertions[0].passed);
         assert_eq!(out.log, vec!["hook ran".to_string()]);
@@ -548,10 +601,16 @@ mod tests {
         let engine = ScriptEngine::new();
 
         let out = engine.run_hook("req.url;", &empty_vars());
-        assert!(out.error.is_some(), "expected `req` to be unavailable in a hook script");
+        assert!(
+            out.error.is_some(),
+            "expected `req` to be unavailable in a hook script"
+        );
 
         let out = engine.run_hook("res.status;", &empty_vars());
-        assert!(out.error.is_some(), "expected `res` to be unavailable in a hook script");
+        assert!(
+            out.error.is_some(),
+            "expected `res` to be unavailable in a hook script"
+        );
     }
 
     #[test]
@@ -562,7 +621,13 @@ mod tests {
 
         let out = engine.run_pre(r#"vars.set("a", "b");"#, &mut req, &vars);
 
-        assert!(vars.is_empty(), "caller's vars map must not be mutated in place");
-        assert_eq!(out.vars_set, vec![("a".to_string(), "b".to_string())]);
+        assert!(
+            vars.is_empty(),
+            "caller's vars map must not be mutated in place"
+        );
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("a".to_string(), "b".to_string())]
+        );
     }
 }

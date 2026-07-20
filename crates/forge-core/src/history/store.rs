@@ -111,9 +111,12 @@ impl HistoryStore {
     /// Open (creating if needed) a history database at `path`, in WAL mode.
     pub fn open(path: &Path) -> HistoryResult<Self> {
         let conn = Connection::open(path)?;
-        let _: String = conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
+        let _: String =
+            conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))?;
         init_schema(&conn)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Open a private in-memory database — used by tests and as a
@@ -121,7 +124,9 @@ impl HistoryStore {
     pub fn open_in_memory() -> HistoryResult<Self> {
         let conn = Connection::open_in_memory()?;
         init_schema(&conn)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -143,7 +148,14 @@ impl HistoryStore {
                     Some(exec.body.clone()),
                     None,
                 ),
-                Err(message) => (Utc::now().to_rfc3339(), None, 0i64, Vec::new(), None, Some(message.to_string())),
+                Err(message) => (
+                    Utc::now().to_rfc3339(),
+                    None,
+                    0i64,
+                    Vec::new(),
+                    None,
+                    Some(message.to_string()),
+                ),
             };
 
         let (request_body, request_truncated) = cap_body(entry.request_body);
@@ -261,7 +273,8 @@ impl HistoryStore {
 
     /// Delete a single entry by id.
     pub fn delete(&self, id: i64) -> HistoryResult<()> {
-        self.conn().execute("DELETE FROM entries WHERE id = ?1", params![id])?;
+        self.conn()
+            .execute("DELETE FROM entries WHERE id = ?1", params![id])?;
         Ok(())
     }
 
@@ -364,6 +377,9 @@ fn cap_body(data: Option<Vec<u8>>) -> (Option<Vec<u8>>, bool) {
 
 /// Escape `%`, `_` and `\` then wrap in `%...%` for a `LIKE ... ESCAPE '\'` clause.
 fn like_pattern(text: &str) -> String {
-    let escaped = text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
     format!("%{escaped}%")
 }

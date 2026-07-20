@@ -5,8 +5,8 @@ use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use forge_core::runner::RequestOutcome;
 
-use crate::theme::ThemeKind;
-use crate::widgets::code_editor::{code_editor, Lang};
+use crate::theme::{icons, ThemeKind};
+use crate::widgets::code_editor::{code_editor, code_editor_numbered, Lang};
 use crate::widgets::underline_tabs;
 
 /// Which response sub-tab is active; persisted per-tab in [`crate::state::Tab`].
@@ -78,10 +78,19 @@ fn human_size(bytes: u64) -> String {
 
 /// Render the response panel. `state` is the tab-local UI state (already
 /// synced via [`ResponseViewState::sync`] when the response last changed).
-pub fn response_view(ui: &mut Ui, outcome: Option<&RequestOutcome>, state: &mut ResponseViewState, theme: ThemeKind) {
+pub fn response_view(
+    ui: &mut Ui,
+    outcome: Option<&RequestOutcome>,
+    state: &mut ResponseViewState,
+    theme: ThemeKind,
+) {
     let Some(outcome) = outcome else {
-        ui.centered_and_justified(|ui| {
-            ui.weak("Send a request to see the response here.");
+        let faint = ui.visuals().weak_text_color();
+        ui.vertical_centered(|ui| {
+            ui.add_space((ui.available_height() * 0.38).max(12.0));
+            ui.label(RichText::new(icons::PLAY).size(44.0).color(faint));
+            ui.add_space(10.0);
+            ui.label(RichText::new("Send the request to see the response").color(faint));
         });
         return;
     };
@@ -127,55 +136,114 @@ pub fn response_view(ui: &mut Ui, outcome: Option<&RequestOutcome>, state: &mut 
     match state.tab {
         ResponseTab::Body => {
             ui.horizontal(|ui| {
-                if ui.button("Copy").clicked() {
-                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(state.body_text.clone()));
+                if ui.button(format!("{}  Copy", icons::COPY)).clicked() {
+                    let _ = arboard::Clipboard::new()
+                        .and_then(|mut c| c.set_text(state.body_text.clone()));
                 }
                 ui.checkbox(&mut state.wrap, "Wrap");
             });
-            let lang = if exec.is_json() { Lang::Json } else { Lang::Plain };
-            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                code_editor(ui, "resp-body", &mut state.body_text, lang, None, true, 6, state.wrap);
-            });
+            let lang = if exec.is_json() {
+                Lang::Json
+            } else {
+                Lang::Plain
+            };
+            egui::ScrollArea::both()
+                .id_salt("response_view-sa-1")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if state.wrap {
+                        code_editor(
+                            ui,
+                            "resp-body",
+                            &mut state.body_text,
+                            lang,
+                            None,
+                            true,
+                            6,
+                            true,
+                        );
+                    } else {
+                        code_editor_numbered(
+                            ui,
+                            "resp-body",
+                            &mut state.body_text,
+                            lang,
+                            None,
+                            true,
+                            6,
+                            false,
+                        );
+                    }
+                });
         }
         ResponseTab::Raw => {
             ui.horizontal(|ui| {
-                if ui.button("Copy").clicked() {
-                    let _ = arboard::Clipboard::new().and_then(|mut c| c.set_text(state.raw_text.clone()));
+                if ui.button(format!("{}  Copy", icons::COPY)).clicked() {
+                    let _ = arboard::Clipboard::new()
+                        .and_then(|mut c| c.set_text(state.raw_text.clone()));
                 }
                 ui.checkbox(&mut state.wrap, "Wrap");
             });
-            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-                code_editor(ui, "resp-raw", &mut state.raw_text, Lang::Plain, None, true, 6, state.wrap);
-            });
+            egui::ScrollArea::both()
+                .id_salt("response_view-sa-2")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if state.wrap {
+                        code_editor(
+                            ui,
+                            "resp-raw",
+                            &mut state.raw_text,
+                            Lang::Plain,
+                            None,
+                            true,
+                            6,
+                            true,
+                        );
+                    } else {
+                        code_editor_numbered(
+                            ui,
+                            "resp-raw",
+                            &mut state.raw_text,
+                            Lang::Plain,
+                            None,
+                            true,
+                            6,
+                            false,
+                        );
+                    }
+                });
         }
         ResponseTab::Headers => {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                TableBuilder::new(ui)
-                    .id_salt("resp-headers")
-                    .striped(true)
-                    .column(Column::auto().at_least(120.0).resizable(true))
-                    .column(Column::remainder().at_least(120.0))
-                    .header(20.0, |mut header| {
-                        header.col(|ui| {
-                            ui.strong("Name");
-                        });
-                        header.col(|ui| {
-                            ui.strong("Value");
-                        });
-                    })
-                    .body(|mut body| {
-                        for (k, v) in &exec.headers {
-                            body.row(20.0, |mut row| {
-                                row.col(|ui| {
-                                    ui.monospace(k);
-                                });
-                                row.col(|ui| {
-                                    ui.monospace(v);
-                                });
+            egui::ScrollArea::vertical()
+                .id_salt("response_view-sa-3")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    TableBuilder::new(ui)
+                        .id_salt("resp-headers")
+                        .striped(true)
+                        .column(Column::auto().at_least(120.0).resizable(true))
+                        .column(Column::remainder().at_least(120.0))
+                        .header(20.0, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("Name");
                             });
-                        }
-                    });
-            });
+                            header.col(|ui| {
+                                ui.strong("Value");
+                            });
+                        })
+                        .body(|mut body| {
+                            for (k, v) in &exec.headers {
+                                body.row(20.0, |mut row| {
+                                    row.col(|ui| {
+                                        ui.monospace(k);
+                                    });
+                                    row.col(|ui| {
+                                        ui.monospace(v);
+                                    });
+                                });
+                            }
+                        });
+                });
         }
         ResponseTab::Timing => {
             ui.add_space(4.0);
@@ -189,40 +257,52 @@ pub fn response_view(ui: &mut Ui, outcome: Option<&RequestOutcome>, state: &mut 
             let download_w = width * (download / total).clamp(0.0, 1.0 - ttfb_w / width);
             let mut x = rect.left();
             painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(ttfb_w, rect.height())),
+                egui::Rect::from_min_size(
+                    egui::pos2(x, rect.top()),
+                    egui::vec2(ttfb_w, rect.height()),
+                ),
                 0u8,
                 Color32::from_rgb(0x35, 0x92, 0xC4),
             );
             x += ttfb_w;
             painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(download_w, rect.height())),
+                egui::Rect::from_min_size(
+                    egui::pos2(x, rect.top()),
+                    egui::vec2(download_w, rect.height()),
+                ),
                 0u8,
                 theme.ok_color(),
             );
             ui.add_space(6.0);
-            ui.label(format!("Time to first byte: {} ms", exec.timing.ttfb.as_millis()));
+            ui.label(format!(
+                "Time to first byte: {} ms",
+                exec.timing.ttfb.as_millis()
+            ));
             ui.label(format!("Download: {} ms", exec.timing.download.as_millis()));
             ui.label(format!("Total: {} ms", exec.timing.total.as_millis()));
         }
         ResponseTab::Assertions => {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                if outcome.assertions.is_empty() {
-                    ui.weak("No assertions configured for this request.");
-                }
-                for assertion in &outcome.assertions {
-                    ui.horizontal(|ui| {
-                        if assertion.passed {
-                            ui.colored_label(theme.ok_color(), "\u{2713}");
-                        } else {
-                            ui.colored_label(theme.error_color(), "\u{2715}");
-                        }
-                        ui.label(&assertion.summary);
-                        if let Some(msg) = &assertion.message {
-                            ui.weak(msg);
-                        }
-                    });
-                }
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("response_view-sa-4")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if outcome.assertions.is_empty() {
+                        ui.weak("No assertions configured for this request.");
+                    }
+                    for assertion in &outcome.assertions {
+                        ui.horizontal(|ui| {
+                            if assertion.passed {
+                                ui.colored_label(theme.ok_color(), "\u{2713}");
+                            } else {
+                                ui.colored_label(theme.error_color(), "\u{2715}");
+                            }
+                            ui.label(&assertion.summary);
+                            if let Some(msg) = &assertion.message {
+                                ui.weak(msg);
+                            }
+                        });
+                    }
+                });
         }
     }
 }

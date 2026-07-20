@@ -28,7 +28,7 @@ use rquickjs::{Context, Ctx, Function, Runtime, Value};
 use crate::assert::AssertionOutcome;
 use crate::exec::{ExecutionResult, ResolvedBody, ResolvedRequest};
 
-use super::ScriptOutput;
+use super::{ScriptOutput, VarMutation};
 
 /// Memory ceiling for a single script execution.
 const MEMORY_LIMIT_BYTES: usize = 32 * 1024 * 1024;
@@ -59,26 +59,34 @@ impl JsEngine {
     ) -> ScriptOutput {
         let req_state = Rc::new(RefCell::new(req.clone()));
         let vars_state = Rc::new(RefCell::new(vars.clone()));
-        let vars_sets = Rc::new(RefCell::new(Vec::new()));
+        let var_mutations = Rc::new(RefCell::new(Vec::new()));
         // Postman-style `pm.test` may run in pre-request scripts too.
         let assertions = Rc::new(RefCell::new(Vec::new()));
         let log = Rc::new(RefCell::new(Vec::new()));
 
-        let error = run_sandboxed(|ctx| {
-            install_helpers(ctx)?;
-            install_log(ctx, &log)?;
-            install_vars(ctx, &vars_state, &vars_sets)?;
-            install_req(ctx, &req_state)?;
-            super::pm::install_pm(ctx, &assertions, false)?;
-            Ok(())
-        }, script);
+        let error = run_sandboxed(
+            |ctx| {
+                install_helpers(ctx)?;
+                install_log(ctx, &log)?;
+                install_vars(ctx, &vars_state, &var_mutations)?;
+                install_req(ctx, &req_state)?;
+                super::pm::install_pm(ctx, &assertions, false)?;
+                Ok(())
+            },
+            script,
+        );
 
         *req = req_state.borrow().clone();
 
         let log = log.borrow().clone();
         let assertions = assertions.borrow().clone();
-        let vars_set = vars_sets.borrow().clone();
-        ScriptOutput { log, error, assertions, vars_set }
+        let var_mutations = var_mutations.borrow().clone();
+        ScriptOutput {
+            log,
+            error,
+            assertions,
+            var_mutations,
+        }
     }
 
     /// Run a post-response script. `res` is read-only; `assert`/`test`
@@ -93,24 +101,32 @@ impl JsEngine {
     ) -> ScriptOutput {
         let res_state = Rc::new(res.clone());
         let vars_state = Rc::new(RefCell::new(vars.clone()));
-        let vars_sets = Rc::new(RefCell::new(Vec::new()));
+        let var_mutations = Rc::new(RefCell::new(Vec::new()));
         let assertions = Rc::new(RefCell::new(Vec::new()));
         let log = Rc::new(RefCell::new(Vec::new()));
 
-        let error = run_sandboxed(|ctx| {
-            install_helpers(ctx)?;
-            install_log(ctx, &log)?;
-            install_vars(ctx, &vars_state, &vars_sets)?;
-            install_assertions(ctx, &assertions)?;
-            install_res(ctx, &res_state)?;
-            super::pm::install_pm(ctx, &assertions, true)?;
-            Ok(())
-        }, script);
+        let error = run_sandboxed(
+            |ctx| {
+                install_helpers(ctx)?;
+                install_log(ctx, &log)?;
+                install_vars(ctx, &vars_state, &var_mutations)?;
+                install_assertions(ctx, &assertions)?;
+                install_res(ctx, &res_state)?;
+                super::pm::install_pm(ctx, &assertions, true)?;
+                Ok(())
+            },
+            script,
+        );
 
         let log = log.borrow().clone();
         let assertions = assertions.borrow().clone();
-        let vars_set = vars_sets.borrow().clone();
-        ScriptOutput { log, error, assertions, vars_set }
+        let var_mutations = var_mutations.borrow().clone();
+        ScriptOutput {
+            log,
+            error,
+            assertions,
+            var_mutations,
+        }
     }
 
     /// Run a suite lifecycle hook (`beforeAll`/`beforeEach`). Exposes
@@ -119,23 +135,31 @@ impl JsEngine {
     /// [`Self::run_post`] instead.
     pub fn run_hook(&self, script: &str, vars: &BTreeMap<String, String>) -> ScriptOutput {
         let vars_state = Rc::new(RefCell::new(vars.clone()));
-        let vars_sets = Rc::new(RefCell::new(Vec::new()));
+        let var_mutations = Rc::new(RefCell::new(Vec::new()));
         let assertions = Rc::new(RefCell::new(Vec::new()));
         let log = Rc::new(RefCell::new(Vec::new()));
 
-        let error = run_sandboxed(|ctx| {
-            install_helpers(ctx)?;
-            install_log(ctx, &log)?;
-            install_vars(ctx, &vars_state, &vars_sets)?;
-            install_assertions(ctx, &assertions)?;
-            super::pm::install_pm(ctx, &assertions, false)?;
-            Ok(())
-        }, script);
+        let error = run_sandboxed(
+            |ctx| {
+                install_helpers(ctx)?;
+                install_log(ctx, &log)?;
+                install_vars(ctx, &vars_state, &var_mutations)?;
+                install_assertions(ctx, &assertions)?;
+                super::pm::install_pm(ctx, &assertions, false)?;
+                Ok(())
+            },
+            script,
+        );
 
         let log = log.borrow().clone();
         let assertions = assertions.borrow().clone();
-        let vars_set = vars_sets.borrow().clone();
-        ScriptOutput { log, error, assertions, vars_set }
+        let var_mutations = var_mutations.borrow().clone();
+        ScriptOutput {
+            log,
+            error,
+            assertions,
+            var_mutations,
+        }
     }
 }
 
@@ -145,7 +169,10 @@ impl JsEngine {
 /// human-readable error (compile or runtime, including a sandbox-limit
 /// trip) on failure. Never panics: every fallible step is folded into the
 /// returned error message instead.
-fn run_sandboxed(install: impl FnOnce(&Ctx) -> rquickjs::Result<()>, script: &str) -> Option<String> {
+fn run_sandboxed(
+    install: impl FnOnce(&Ctx) -> rquickjs::Result<()>,
+    script: &str,
+) -> Option<String> {
     let runtime = match Runtime::new() {
         Ok(rt) => rt,
         Err(e) => return Some(format!("script engine error: failed to start QuickJS: {e}")),
@@ -157,7 +184,11 @@ fn run_sandboxed(install: impl FnOnce(&Ctx) -> rquickjs::Result<()>, script: &st
 
     let context = match Context::full(&runtime) {
         Ok(ctx) => ctx,
-        Err(e) => return Some(format!("script engine error: failed to create context: {e}")),
+        Err(e) => {
+            return Some(format!(
+                "script engine error: failed to create context: {e}"
+            ))
+        }
     };
 
     context.with(|ctx| {
@@ -181,9 +212,19 @@ fn describe_error(ctx: &Ctx<'_>, err: rquickjs::Error) -> String {
     let Some(exception) = value.as_exception() else {
         return format!("script error: {value:?}");
     };
-    let name = exception.as_object().get::<_, Option<String>>("name").ok().flatten();
-    let message = exception.message().unwrap_or_else(|| "unknown error".to_string());
-    let label = if name.as_deref() == Some("SyntaxError") { "script compile error" } else { "script error" };
+    let name = exception
+        .as_object()
+        .get::<_, Option<String>>("name")
+        .ok()
+        .flatten();
+    let message = exception
+        .message()
+        .unwrap_or_else(|| "unknown error".to_string());
+    let label = if name.as_deref() == Some("SyntaxError") {
+        "script compile error"
+    } else {
+        "script error"
+    };
     match exception.stack().as_deref().and_then(stack_line) {
         Some(line) => format!("{label}: {message} (line {line})"),
         None => format!("{label}: {message}"),
@@ -206,8 +247,14 @@ fn stack_line(stack: &str) -> Option<u32> {
 /// final names (no wrapper prelude required).
 fn install_helpers(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
     let globals = ctx.globals();
-    globals.set("uuid", Function::new(ctx.clone(), || uuid::Uuid::new_v4().to_string())?)?;
-    globals.set("timestamp", Function::new(ctx.clone(), || chrono::Utc::now().timestamp())?)?;
+    globals.set(
+        "uuid",
+        Function::new(ctx.clone(), || uuid::Uuid::new_v4().to_string())?,
+    )?;
+    globals.set(
+        "timestamp",
+        Function::new(ctx.clone(), || chrono::Utc::now().timestamp())?,
+    )?;
     globals.set(
         "base64Encode",
         Function::new(ctx.clone(), |s: String| BASE64.encode(s.as_bytes()))?,
@@ -253,49 +300,77 @@ fn install_log(ctx: &Ctx<'_>, log: &Rc<RefCell<Vec<String>>>) -> rquickjs::Resul
     )
 }
 
-/// `vars.get(name)` / `vars.set(name, value)`.
+/// `vars.get(name)` / `vars.set(name, value)` / `vars.unset(name)`.
 fn install_vars(
     ctx: &Ctx<'_>,
     values: &Rc<RefCell<BTreeMap<String, String>>>,
-    sets: &Rc<RefCell<Vec<(String, String)>>>,
+    mutations: &Rc<RefCell<Vec<VarMutation>>>,
 ) -> rquickjs::Result<()> {
     let for_get = values.clone();
     ctx.globals().set(
         "__varsGet",
-        Function::new(ctx.clone(), move |name: String| -> Option<String> { for_get.borrow().get(&name).cloned() })?,
+        Function::new(ctx.clone(), move |name: String| -> Option<String> {
+            for_get.borrow().get(&name).cloned()
+        })?,
     )?;
-    let (for_set_values, for_set_sets) = (values.clone(), sets.clone());
+    let (for_set_values, for_set_mutations) = (values.clone(), mutations.clone());
     ctx.globals().set(
         "__varsSet",
         Function::new(ctx.clone(), move |name: String, value: String| {
-            for_set_values.borrow_mut().insert(name.clone(), value.clone());
-            for_set_sets.borrow_mut().push((name, value));
+            for_set_values
+                .borrow_mut()
+                .insert(name.clone(), value.clone());
+            for_set_mutations
+                .borrow_mut()
+                .push(VarMutation::Set(name, value));
+        })?,
+    )?;
+    let (for_unset_values, for_unset_mutations) = (values.clone(), mutations.clone());
+    ctx.globals().set(
+        "__varsUnset",
+        Function::new(ctx.clone(), move |name: String| {
+            for_unset_values.borrow_mut().remove(&name);
+            for_unset_mutations
+                .borrow_mut()
+                .push(VarMutation::Unset(name));
         })?,
     )?;
     ctx.eval::<(), _>(
         r#"
             var vars = {
                 get: function (name) { return __varsGet(String(name)); },
-                set: function (name, value) { __varsSet(String(name), String(value)); }
+                set: function (name, value) { __varsSet(String(name), String(value)); },
+                unset: function (name) { __varsUnset(String(name)); }
             };
         "#,
     )
 }
 
 /// `assert(cond, message)` / `test(name, cond)`.
-fn install_assertions(ctx: &Ctx<'_>, assertions: &Rc<RefCell<Vec<AssertionOutcome>>>) -> rquickjs::Result<()> {
+fn install_assertions(
+    ctx: &Ctx<'_>,
+    assertions: &Rc<RefCell<Vec<AssertionOutcome>>>,
+) -> rquickjs::Result<()> {
     let for_assert = assertions.clone();
     ctx.globals().set(
         "__hostAssert",
         Function::new(ctx.clone(), move |passed: bool, message: String| {
-            for_assert.borrow_mut().push(AssertionOutcome { summary: message, passed, message: None });
+            for_assert.borrow_mut().push(AssertionOutcome {
+                summary: message,
+                passed,
+                message: None,
+            });
         })?,
     )?;
     let for_test = assertions.clone();
     ctx.globals().set(
         "__hostTest",
         Function::new(ctx.clone(), move |name: String, passed: bool| {
-            for_test.borrow_mut().push(AssertionOutcome { summary: name, passed, message: None });
+            for_test.borrow_mut().push(AssertionOutcome {
+                summary: name,
+                passed,
+                message: None,
+            });
         })?,
     )?;
     ctx.eval::<(), _>(
@@ -312,17 +387,30 @@ fn install_req(ctx: &Ctx<'_>, req: &Rc<RefCell<ResolvedRequest>>) -> rquickjs::R
     let globals = ctx.globals();
 
     let r = req.clone();
-    globals.set("__reqGetUrl", Function::new(ctx.clone(), move || r.borrow().url.clone())?)?;
+    globals.set(
+        "__reqGetUrl",
+        Function::new(ctx.clone(), move || r.borrow().url.clone())?,
+    )?;
     let r = req.clone();
-    globals.set("__reqSetUrl", Function::new(ctx.clone(), move |v: String| r.borrow_mut().url = v)?)?;
+    globals.set(
+        "__reqSetUrl",
+        Function::new(ctx.clone(), move |v: String| r.borrow_mut().url = v)?,
+    )?;
     let r = req.clone();
-    globals.set("__reqGetMethod", Function::new(ctx.clone(), move || r.borrow().method.as_str().to_string())?)?;
+    globals.set(
+        "__reqGetMethod",
+        Function::new(ctx.clone(), move || r.borrow().method.as_str().to_string())?,
+    )?;
     let r = req.clone();
     globals.set(
         "__reqSetHeader",
         Function::new(ctx.clone(), move |name: String, value: String| {
             let mut req = r.borrow_mut();
-            match req.headers.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(&name)) {
+            match req
+                .headers
+                .iter_mut()
+                .find(|(k, _)| k.eq_ignore_ascii_case(&name))
+            {
                 Some(existing) => existing.1 = value,
                 None => req.headers.push((name, value)),
             }
@@ -332,14 +420,20 @@ fn install_req(ctx: &Ctx<'_>, req: &Rc<RefCell<ResolvedRequest>>) -> rquickjs::R
     globals.set(
         "__reqGetHeader",
         Function::new(ctx.clone(), move |name: String| -> Option<String> {
-            r.borrow().headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(&name)).map(|(_, v)| v.clone())
+            r.borrow()
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(&name))
+                .map(|(_, v)| v.clone())
         })?,
     )?;
     let r = req.clone();
     globals.set(
         "__reqRemoveHeader",
         Function::new(ctx.clone(), move |name: String| {
-            r.borrow_mut().headers.retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
+            r.borrow_mut()
+                .headers
+                .retain(|(k, _)| !k.eq_ignore_ascii_case(&name));
         })?,
     )?;
     let r = req.clone();
@@ -351,7 +445,10 @@ fn install_req(ctx: &Ctx<'_>, req: &Rc<RefCell<ResolvedRequest>>) -> rquickjs::R
                 ResolvedBody::Bytes { content_type, .. } => content_type.clone(),
                 _ => None,
             };
-            req.body = ResolvedBody::Bytes { content_type, data: text.into_bytes() };
+            req.body = ResolvedBody::Bytes {
+                content_type,
+                data: text.into_bytes(),
+            };
         })?,
     )?;
     let r = req.clone();
@@ -387,11 +484,20 @@ fn install_res<'js>(ctx: &Ctx<'js>, res: &Rc<ExecutionResult>) -> rquickjs::Resu
     let globals = ctx.globals();
 
     let r = res.clone();
-    globals.set("__resGetStatus", Function::new(ctx.clone(), move || i64::from(r.status))?)?;
+    globals.set(
+        "__resGetStatus",
+        Function::new(ctx.clone(), move || i64::from(r.status))?,
+    )?;
     let r = res.clone();
-    globals.set("__resGetStatusText", Function::new(ctx.clone(), move || r.status_text.clone())?)?;
+    globals.set(
+        "__resGetStatusText",
+        Function::new(ctx.clone(), move || r.status_text.clone())?,
+    )?;
     let r = res.clone();
-    globals.set("__resGetBodyText", Function::new(ctx.clone(), move || r.text().into_owned())?)?;
+    globals.set(
+        "__resGetBodyText",
+        Function::new(ctx.clone(), move || r.text().into_owned())?,
+    )?;
     let r = res.clone();
     globals.set(
         "__resGetTimeMs",
@@ -409,12 +515,15 @@ fn install_res<'js>(ctx: &Ctx<'js>, res: &Rc<ExecutionResult>) -> rquickjs::Resu
     let r = res.clone();
     globals.set(
         "__resJson",
-        Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> rquickjs::Result<Value<'js>> {
-            match ctx.json_parse(r.body.clone()) {
-                Ok(v) => Ok(v),
-                Err(_) => Ok(Value::new_undefined(ctx)),
-            }
-        })?,
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>| -> rquickjs::Result<Value<'js>> {
+                match ctx.json_parse(r.body.clone()) {
+                    Ok(v) => Ok(v),
+                    Err(_) => Ok(Value::new_undefined(ctx)),
+                }
+            },
+        )?,
     )?;
 
     ctx.eval::<(), _>(
@@ -487,12 +596,18 @@ mod tests {
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
         assert_eq!(req.url, "https://example.test/old?patched=1");
         assert_eq!(req.header("X-New"), Some("hello"));
-        assert!(req.header("X-Existing").is_none(), "header should have been removed");
+        assert!(
+            req.header("X-Existing").is_none(),
+            "header should have been removed"
+        );
         match &req.body {
             ResolvedBody::Bytes { data, .. } => assert_eq!(data, b"payload"),
             other => panic!("expected Bytes body, got {other:?}"),
         }
-        assert_eq!(out.vars_set, vec![("token".to_string(), "abc123".to_string())]);
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("token".to_string(), "abc123".to_string())]
+        );
         assert_eq!(out.log, vec!["done".to_string()]);
         assert!(out.assertions.is_empty());
     }
@@ -603,7 +718,10 @@ mod tests {
         let out = engine.run_post(r#"vars.set("id", res.json().id);"#, &res, &empty_vars());
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.vars_set, vec![("id".to_string(), "xyz".to_string())]);
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("id".to_string(), "xyz".to_string())]
+        );
     }
 
     #[test]
@@ -622,7 +740,10 @@ mod tests {
         );
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.log, vec!["one".to_string(), "two 3".to_string(), "four".to_string()]);
+        assert_eq!(
+            out.log,
+            vec!["one".to_string(), "two 3".to_string(), "four".to_string()]
+        );
     }
 
     #[test]
@@ -630,10 +751,16 @@ mod tests {
         let engine = JsEngine::new();
 
         let out = engine.run_hook("req;", &empty_vars());
-        assert!(out.error.is_some(), "expected `req` to be unavailable in a hook script");
+        assert!(
+            out.error.is_some(),
+            "expected `req` to be unavailable in a hook script"
+        );
 
         let out = engine.run_hook("res;", &empty_vars());
-        assert!(out.error.is_some(), "expected `res` to be unavailable in a hook script");
+        assert!(
+            out.error.is_some(),
+            "expected `res` to be unavailable in a hook script"
+        );
     }
 
     #[test]
@@ -650,7 +777,10 @@ mod tests {
         );
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert_eq!(out.vars_set, vec![("suite".to_string(), "started".to_string())]);
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("suite".to_string(), "started".to_string())]
+        );
         assert_eq!(out.assertions.len(), 1);
         assert!(out.assertions[0].passed);
         assert_eq!(out.log, vec!["hook ran".to_string()]);
@@ -665,8 +795,14 @@ mod tests {
         let out = engine.run_pre("while (true) {}", &mut req, &empty_vars());
         let elapsed = started.elapsed();
 
-        assert!(out.error.is_some(), "expected the runaway script to be interrupted");
-        assert!(elapsed < Duration::from_secs(10), "took too long to interrupt: {elapsed:?}");
+        assert!(
+            out.error.is_some(),
+            "expected the runaway script to be interrupted"
+        );
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "took too long to interrupt: {elapsed:?}"
+        );
     }
 
     #[test]
@@ -677,7 +813,10 @@ mod tests {
         let out = engine.run_pre("let x = ;", &mut req, &empty_vars());
 
         let err = out.error.expect("expected a compile error");
-        assert!(err.starts_with("script compile error:"), "unexpected error: {err}");
+        assert!(
+            err.starts_with("script compile error:"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -787,7 +926,11 @@ mod tests {
         assert!(out.assertions[1].passed, "{:?}", out.assertions[1]);
         assert!(!out.assertions[2].passed);
         assert!(
-            out.assertions[2].message.as_deref().unwrap_or_default().contains("expected 200 to equal 404"),
+            out.assertions[2]
+                .message
+                .as_deref()
+                .unwrap_or_default()
+                .contains("expected 200 to equal 404"),
             "{:?}",
             out.assertions[2].message
         );
@@ -828,9 +971,10 @@ mod tests {
 
         let script = r#"
             pm.environment.set("token", pm.response.json().token);
+            pm.globals.unset("existing");
             pm.test("scopes alias the same store", function () {
                 pm.expect(pm.variables.get("token")).to.equal("t-123");
-                pm.expect(pm.collectionVariables.get("existing")).to.equal("yes");
+                pm.expect(pm.collectionVariables.has("existing")).to.be.false;
                 pm.expect(pm.globals.has("missing")).to.be.false;
             });
             log(pm.variables.replaceIn("tok={{token}} keep={{missing}}"));
@@ -839,7 +983,12 @@ mod tests {
         let out = engine.run_post(script, &res, &vars);
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
-        assert!(out.vars_set.contains(&("token".to_string(), "t-123".to_string())));
+        assert!(out
+            .var_mutations
+            .contains(&VarMutation::Set("token".to_string(), "t-123".to_string())));
+        assert!(out
+            .var_mutations
+            .contains(&VarMutation::Unset("existing".to_string())));
         assert!(out.assertions[0].passed, "{:?}", out.assertions[0]);
         assert_eq!(out.log, vec!["tok=t-123 keep={{missing}}".to_string()]);
     }
@@ -887,7 +1036,11 @@ mod tests {
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
         assert_eq!(req.header("X-From-Pm"), Some("1"));
-        assert!(out.assertions.iter().all(|a| a.passed), "{:?}", out.assertions);
+        assert!(
+            out.assertions.iter().all(|a| a.passed),
+            "{:?}",
+            out.assertions
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -951,8 +1104,14 @@ mod tests {
 
         assert!(out.error.is_none(), "unexpected error: {:?}", out.error);
         assert_eq!(out.assertions.len(), 2, "{:?}", out.assertions);
-        assert!(out.assertions.iter().all(|a| a.passed), "{:?}", out.assertions);
-        assert!(out.vars_set.contains(&("token".to_string(), "tok-1".to_string())));
+        assert!(
+            out.assertions.iter().all(|a| a.passed),
+            "{:?}",
+            out.assertions
+        );
+        assert!(out
+            .var_mutations
+            .contains(&VarMutation::Set("token".to_string(), "tok-1".to_string())));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -989,7 +1148,13 @@ mod tests {
 
         let out = engine.run_pre(r#"vars.set("a", "b");"#, &mut req, &vars);
 
-        assert!(vars.is_empty(), "caller's vars map must not be mutated in place");
-        assert_eq!(out.vars_set, vec![("a".to_string(), "b".to_string())]);
+        assert!(
+            vars.is_empty(),
+            "caller's vars map must not be mutated in place"
+        );
+        assert_eq!(
+            out.var_mutations,
+            vec![VarMutation::Set("a".to_string(), "b".to_string())]
+        );
     }
 }

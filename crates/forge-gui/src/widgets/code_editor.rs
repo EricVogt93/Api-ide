@@ -88,7 +88,11 @@ pub fn code_editor(
 ) -> egui::Response {
     let dark = ui.visuals().dark_mode;
     let var_spans = scopes.map(|s| spans(text, s)).unwrap_or_default();
-    let desired_width = if wrap { ui.available_width() } else { f32::INFINITY };
+    let desired_width = if wrap {
+        ui.available_width()
+    } else {
+        f32::INFINITY
+    };
 
     let mut layouter = move |ui: &Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
         let text = buf.as_str();
@@ -113,7 +117,7 @@ pub fn code_editor(
     ui.add(
         TextEdit::multiline(text)
             .id_salt(id_salt)
-            .font(FontSelection::from(FontId::monospace(13.0)))
+            .font(FontSelection::from(FontId::monospace(15.0)))
             .desired_width(desired_width)
             .desired_rows(min_rows)
             .code_editor()
@@ -122,9 +126,62 @@ pub fn code_editor(
     )
 }
 
-fn build_layout_job(text: &str, lang: Lang, dark: bool, var_spans: &[forge_core::vars::VarSpan]) -> LayoutJob {
+/// A left-hand line-number gutter, monospace and dimmed, JetBrains/Relay
+/// style. Rendered as a column of right-aligned numbers whose row height
+/// matches the code editor's, so placed beside [`code_editor`] inside the
+/// same scroll viewport they scroll and align together (with wrapping off).
+pub fn line_gutter(ui: &mut Ui, lines: usize) {
+    let color = ui.visuals().weak_text_color();
+    let font = FontId::monospace(15.0);
+    let width = 3.max(lines.to_string().len()) as f32 * 8.0 + 12.0;
+    ui.allocate_ui(egui::vec2(width, ui.available_height()), |ui| {
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            // Match TextEdit's top inner margin so row 1 lines up.
+            ui.add_space(2.0);
+            for i in 1..=lines.max(1) {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(i.to_string())
+                            .font(font.clone())
+                            .color(color),
+                    );
+                });
+            }
+        });
+    });
+}
+
+/// [`code_editor`] with a line-number gutter down the left edge. Intended to
+/// be called inside a scroll area so the gutter and text scroll as one.
+#[allow(clippy::too_many_arguments)]
+pub fn code_editor_numbered(
+    ui: &mut Ui,
+    id_salt: &str,
+    text: &mut String,
+    lang: Lang,
+    scopes: Option<&VarScopes>,
+    read_only: bool,
+    min_rows: usize,
+    wrap: bool,
+) -> egui::Response {
+    let lines = text.lines().count().max(min_rows);
+    ui.horizontal_top(|ui| {
+        line_gutter(ui, lines);
+        code_editor(ui, id_salt, text, lang, scopes, read_only, min_rows, wrap)
+    })
+    .inner
+}
+
+fn build_layout_job(
+    text: &str,
+    lang: Lang,
+    dark: bool,
+    var_spans: &[forge_core::vars::VarSpan],
+) -> LayoutJob {
     let pal = palette(dark);
-    let font = FontId::monospace(13.0);
+    let font = FontId::monospace(15.0);
 
     let base: Vec<(usize, usize, Color32)> = match lang {
         Lang::Json => lex_json(text, &pal),
@@ -244,7 +301,10 @@ fn lex_xml(text: &str, pal: &Palette) -> Vec<(usize, usize, Color32)> {
     while i < bytes.len() {
         if bytes[i] == b'<' {
             if text[i..].starts_with("<!--") {
-                let end = text[i..].find("-->").map(|p| i + p + 3).unwrap_or(text.len());
+                let end = text[i..]
+                    .find("-->")
+                    .map(|p| i + p + 3)
+                    .unwrap_or(text.len());
                 out.push((i, end, pal.comment));
                 i = end;
                 continue;
@@ -317,14 +377,16 @@ fn lex_graphql(text: &str, pal: &Palette) -> Vec<(usize, usize, Color32)> {
             b'$' => {
                 let start = i;
                 i += 1;
-                while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_') {
+                while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_')
+                {
                     i += 1;
                 }
                 out.push((start, i, pal.key));
             }
             c if (c as char).is_alphabetic() || c == b'_' => {
                 let start = i;
-                while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_') {
+                while i < bytes.len() && ((bytes[i] as char).is_alphanumeric() || bytes[i] == b'_')
+                {
                     i += 1;
                 }
                 let word = &text[start..i];

@@ -8,7 +8,10 @@ use forge_core::model::{EnvVar, Environment, SecretValues};
 use forge_core::vars::{interpolate, spans, InterpolateError, VarOrigin, VarScopes};
 
 fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 }
 
 /// Full six-tier precedence chain, all tiers populated with the same key,
@@ -17,7 +20,8 @@ fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 #[test]
 fn full_precedence_chain() {
     let mut env = Environment::new("prod");
-    env.variables.insert("host".into(), EnvVar::plain("env-value"));
+    env.variables
+        .insert("host".into(), EnvVar::plain("env-value"));
     let secrets = SecretValues::new();
 
     let collection_vars = map(&[("host", "collection-value")]);
@@ -26,8 +30,14 @@ fn full_precedence_chain() {
 
     // 6. collection only
     let collection_only = VarScopes::new().with_collection(&collection_vars);
-    assert_eq!(collection_only.lookup("host").unwrap().value, "collection-value");
-    assert_eq!(collection_only.lookup("host").unwrap().origin, VarOrigin::Collection);
+    assert_eq!(
+        collection_only.lookup("host").unwrap().value,
+        "collection-value"
+    );
+    assert_eq!(
+        collection_only.lookup("host").unwrap().origin,
+        VarOrigin::Collection
+    );
 
     // 5. folders beat collection, nearest folder wins
     let folders_and_collection = VarScopes::new()
@@ -101,15 +111,19 @@ fn fixture_driven_request_template() {
         .expect("fixture template should exist");
 
     let mut env = Environment::new("staging");
-    env.variables.insert("baseUrl".into(), EnvVar::plain("https://api.staging.example.com"));
+    env.variables.insert(
+        "baseUrl".into(),
+        EnvVar::plain("https://api.staging.example.com"),
+    );
     env.variables.insert("token".into(), EnvVar::secret());
     let mut secrets = SecretValues::new();
     secrets.insert("token".into(), "s3cr3t-token".into());
 
     let collection_vars = map(&[("apiVersion", "v2")]);
 
-    let mut scopes =
-        VarScopes::new().with_environment(&env, &secrets).with_collection(&collection_vars);
+    let mut scopes = VarScopes::new()
+        .with_environment(&env, &secrets)
+        .with_collection(&collection_vars);
     scopes.set_runtime("userId", "42");
 
     let rendered = interpolate(&template, &scopes).expect("template should fully resolve");
@@ -121,7 +135,10 @@ fn fixture_driven_request_template() {
     let found = spans(&template, &scopes);
     assert_eq!(found.len(), 4);
     for span in &found {
-        assert_eq!(&template[span.start..span.end], format!("{{{{{}}}}}", span.name));
+        assert_eq!(
+            &template[span.start..span.end],
+            format!("{{{{{}}}}}", span.name)
+        );
         assert!(span.resolved.is_some());
     }
     assert!(found.iter().any(|s| s.name == "token" && s.secret));

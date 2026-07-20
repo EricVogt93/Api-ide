@@ -21,7 +21,10 @@ fn imports_collection_metadata_and_collection_auth() {
     assert_eq!(import.collection.description, "Collection-level docs.");
     assert_eq!(
         import.collection.auth,
-        AuthConfig::Bearer { token: "{{accessToken}}".to_string(), prefix: None }
+        AuthConfig::Bearer {
+            token: "{{accessToken}}".to_string(),
+            prefix: None
+        }
     );
     assert_eq!(import.collection.request_count(), 5);
 }
@@ -31,8 +34,17 @@ fn orders_items_by_meta_seq_and_reads_folder_auth() {
     let import = import_bruno(&fixture_root()).expect("fixture should import");
     let items = &import.collection.items;
 
-    let ImportedItem::Folder { name, auth, items: children, .. } = &items[0] else {
-        panic!("Charges folder (seq 1) should sort first, got {:?}", items[0]);
+    let ImportedItem::Folder {
+        name,
+        auth,
+        items: children,
+        ..
+    } = &items[0]
+    else {
+        panic!(
+            "Charges folder (seq 1) should sort first, got {:?}",
+            items[0]
+        );
     };
     assert_eq!(name, "Charges");
     assert_eq!(
@@ -58,8 +70,12 @@ fn orders_items_by_meta_seq_and_reads_folder_auth() {
 #[test]
 fn imports_request_with_headers_params_json_body_and_docs() {
     let import = import_bruno(&fixture_root()).expect("fixture should import");
-    let ImportedItem::Folder { items, .. } = &import.collection.items[0] else { panic!("folder") };
-    let ImportedItem::Request(def) = &items[0] else { panic!("request") };
+    let ImportedItem::Folder { items, .. } = &import.collection.items[0] else {
+        panic!("folder")
+    };
+    let ImportedItem::Request(def) = &items[0] else {
+        panic!("request")
+    };
 
     assert_eq!(def.name, "Create Charge");
     assert_eq!(def.method, Method::Post);
@@ -69,26 +85,48 @@ fn imports_request_with_headers_params_json_body_and_docs() {
 
     assert_eq!(def.headers.len(), 2);
     assert_eq!(def.headers[0].key, "Content-Type");
-    assert!(!def.headers[1].enabled, "~-prefixed header should import disabled");
+    assert!(
+        !def.headers[1].enabled,
+        "~-prefixed header should import disabled"
+    );
     assert_eq!(def.headers[1].key, "X-Debug");
 
-    let query: Vec<_> = def.params.iter().filter(|p| p.kind == ParamKind::Query).collect();
+    let query: Vec<_> = def
+        .params
+        .iter()
+        .filter(|p| p.kind == ParamKind::Query)
+        .collect();
     assert_eq!(query.len(), 2);
     assert!(!query[1].kv.enabled);
 
-    let BodyDef::Json { text } = &def.body else { panic!("json body, got {:?}", def.body) };
+    let BodyDef::Json { text } = &def.body else {
+        panic!("json body, got {:?}", def.body)
+    };
     assert!(text.contains("\"currency\": \"eur\""));
-    assert!(text.starts_with('{'), "indentation should be stripped: {text:?}");
+    assert!(
+        text.starts_with('{'),
+        "indentation should be stripped: {text:?}"
+    );
 }
 
 #[test]
 fn maps_assert_block_to_declarative_assertions() {
     let import = import_bruno(&fixture_root()).expect("fixture should import");
-    let ImportedItem::Folder { items, .. } = &import.collection.items[0] else { panic!("folder") };
-    let ImportedItem::Request(def) = &items[0] else { panic!("request") };
+    let ImportedItem::Folder { items, .. } = &import.collection.items[0] else {
+        panic!("folder")
+    };
+    let ImportedItem::Request(def) = &items[0] else {
+        panic!("request")
+    };
 
     assert_eq!(def.assertions.len(), 3, "{:?}", def.assertions);
-    assert_eq!(def.assertions[0].check, Check::StatusCode { op: NumberOp::Eq, value: 201 });
+    assert_eq!(
+        def.assertions[0].check,
+        Check::StatusCode {
+            op: NumberOp::Eq,
+            value: 201
+        }
+    );
     assert_eq!(
         def.assertions[1].check,
         Check::JsonPath {
@@ -97,11 +135,18 @@ fn maps_assert_block_to_declarative_assertions() {
             value: serde_json::json!("eur"),
         }
     );
-    assert_eq!(def.assertions[2].check, Check::ResponseTimeBelow { max_ms: 2000 });
+    assert_eq!(
+        def.assertions[2].check,
+        Check::ResponseTimeBelow { max_ms: 2000 }
+    );
 
     // The unsupported `isJson` operator lands in the skip report instead.
     assert!(
-        import.collection.skipped.iter().any(|s| s.contains("res.body.weird") && s.contains("isJson")),
+        import
+            .collection
+            .skipped
+            .iter()
+            .any(|s| s.contains("res.body.weird") && s.contains("isJson")),
         "{:?}",
         import.collection.skipped
     );
@@ -110,22 +155,40 @@ fn maps_assert_block_to_declarative_assertions() {
 #[test]
 fn maps_post_response_vars_to_extractors() {
     let import = import_bruno(&fixture_root()).expect("fixture should import");
-    let ImportedItem::Folder { items, .. } = &import.collection.items[0] else { panic!("folder") };
-    let ImportedItem::Request(def) = &items[0] else { panic!("request") };
+    let ImportedItem::Folder { items, .. } = &import.collection.items[0] else {
+        panic!("folder")
+    };
+    let ImportedItem::Request(def) = &items[0] else {
+        panic!("request")
+    };
 
     assert_eq!(def.extractors.len(), 3, "{:?}", def.extractors);
     assert_eq!(def.extractors[0].var, "chargeId");
     assert_eq!(
         def.extractors[0].source,
-        ExtractorSource::JsonPath { expr: "$.id".to_string() }
+        ExtractorSource::JsonPath {
+            expr: "$.id".to_string()
+        }
     );
     assert_eq!(def.extractors[1].var, "fullBody");
-    assert_eq!(def.extractors[1].source, ExtractorSource::JsonPath { expr: "$".to_string() });
-    assert!(!def.extractors[2].enabled, "~-prefixed var should import disabled");
+    assert_eq!(
+        def.extractors[1].source,
+        ExtractorSource::JsonPath {
+            expr: "$".to_string()
+        }
+    );
+    assert!(
+        !def.extractors[2].enabled,
+        "~-prefixed var should import disabled"
+    );
 
     // `res.headers.etag` is not a body read — reported, not silently dropped.
     assert!(
-        import.collection.skipped.iter().any(|s| s.contains("weird: res.headers.etag")),
+        import
+            .collection
+            .skipped
+            .iter()
+            .any(|s| s.contains("weird: res.headers.etag")),
         "{:?}",
         import.collection.skipped
     );
@@ -136,31 +199,67 @@ fn imports_path_params_basic_auth_multipart_and_graphql() {
     let import = import_bruno(&fixture_root()).expect("fixture should import");
     let items = &import.collection.items;
 
-    let ImportedItem::Folder { items: charges, .. } = &items[0] else { panic!("folder") };
-    let ImportedItem::Request(get_charge) = &charges[1] else { panic!("request") };
+    let ImportedItem::Folder { items: charges, .. } = &items[0] else {
+        panic!("folder")
+    };
+    let ImportedItem::Request(get_charge) = &charges[1] else {
+        panic!("request")
+    };
     assert_eq!(get_charge.url, "{{baseUrl}}/v1/charges/:chargeId");
-    let path: Vec<_> = get_charge.params.iter().filter(|p| p.kind == ParamKind::Path).collect();
+    let path: Vec<_> = get_charge
+        .params
+        .iter()
+        .filter(|p| p.kind == ParamKind::Path)
+        .collect();
     assert_eq!(path.len(), 1);
     assert_eq!(path[0].kv.key, "chargeId");
 
-    let ImportedItem::Request(login) = &items[1] else { panic!("request") };
+    let ImportedItem::Request(login) = &items[1] else {
+        panic!("request")
+    };
     assert_eq!(
         login.auth,
-        AuthConfig::Basic { username: "{{user}}".to_string(), password: "{{pass}}".to_string() }
+        AuthConfig::Basic {
+            username: "{{user}}".to_string(),
+            password: "{{pass}}".to_string()
+        }
     );
-    let BodyDef::FormUrlencoded { fields } = &login.body else { panic!("urlencoded") };
+    let BodyDef::FormUrlencoded { fields } = &login.body else {
+        panic!("urlencoded")
+    };
     assert_eq!(fields.len(), 2);
     assert!(!fields[1].enabled);
 
-    let ImportedItem::Request(upload) = &items[2] else { panic!("request") };
+    let ImportedItem::Request(upload) = &items[2] else {
+        panic!("request")
+    };
     assert_eq!(upload.auth, AuthConfig::None);
-    let BodyDef::Multipart { parts } = &upload.body else { panic!("multipart") };
-    assert_eq!(parts[0].content, PartContent::File { path: "/tmp/receipt.pdf".to_string() });
+    let BodyDef::Multipart { parts } = &upload.body else {
+        panic!("multipart")
+    };
+    assert_eq!(
+        parts[0].content,
+        PartContent::File {
+            path: "/tmp/receipt.pdf".to_string()
+        }
+    );
     assert_eq!(parts[0].content_type.as_deref(), Some("application/pdf"));
-    assert_eq!(parts[1].content, PartContent::Text { value: "Q3 receipt".to_string() });
+    assert_eq!(
+        parts[1].content,
+        PartContent::Text {
+            value: "Q3 receipt".to_string()
+        }
+    );
 
-    let ImportedItem::Request(search) = &items[3] else { panic!("request") };
-    let BodyDef::GraphQl { query, variables, .. } = &search.body else { panic!("graphql") };
+    let ImportedItem::Request(search) = &items[3] else {
+        panic!("request")
+    };
+    let BodyDef::GraphQl {
+        query, variables, ..
+    } = &search.body
+    else {
+        panic!("graphql")
+    };
     assert!(query.starts_with("query Charges"));
     assert_eq!(variables, "{ \"after\": null }");
     assert_eq!(
@@ -196,11 +295,20 @@ fn imports_environments_with_secret_declarations() {
 
     let (env, secrets) = &import.environments[0];
     assert_eq!(env.name, "staging");
-    assert_eq!(env.variables["baseUrl"].value.as_deref(), Some("https://staging.example.com"));
+    assert_eq!(
+        env.variables["baseUrl"].value.as_deref(),
+        Some("https://staging.example.com")
+    );
     assert!(env.variables["apiKey"].secret);
     assert_eq!(env.variables["apiKey"].value, None);
-    assert!(env.variables.contains_key("oldToken"), "disabled secret is still declared");
-    assert!(secrets.is_empty(), "Bruno exports never contain secret values");
+    assert!(
+        env.variables.contains_key("oldToken"),
+        "disabled secret is still declared"
+    );
+    assert!(
+        secrets.is_empty(),
+        "Bruno exports never contain secret values"
+    );
 }
 
 #[test]

@@ -59,7 +59,10 @@ pub struct GrpcResponse {
 
 /// Compile `.proto` files into a descriptor pool. `includes` are the import
 /// search paths; when empty, each file's parent directory is used.
-pub fn compile_protos(files: &[PathBuf], includes: &[PathBuf]) -> Result<DescriptorPool, GrpcError> {
+pub fn compile_protos(
+    files: &[PathBuf],
+    includes: &[PathBuf],
+) -> Result<DescriptorPool, GrpcError> {
     let mut include_paths: Vec<PathBuf> = includes.to_vec();
     if include_paths.is_empty() {
         for f in files {
@@ -71,7 +74,8 @@ pub fn compile_protos(files: &[PathBuf], includes: &[PathBuf]) -> Result<Descrip
         }
     }
     let file_names: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
-    let set = protox::compile(&file_names, &include_paths).map_err(|e| GrpcError::Compile(e.to_string()))?;
+    let set = protox::compile(&file_names, &include_paths)
+        .map_err(|e| GrpcError::Compile(e.to_string()))?;
     DescriptorPool::from_file_descriptor_set(set).map_err(|e| GrpcError::Compile(e.to_string()))
 }
 
@@ -94,8 +98,9 @@ pub fn list_methods(pool: &DescriptorPool) -> Vec<GrpcMethod> {
 }
 
 fn find_method(pool: &DescriptorPool, path: &str) -> Result<MethodDescriptor, GrpcError> {
-    let (service, method) =
-        path.rsplit_once('/').ok_or_else(|| GrpcError::MethodNotFound(path.to_string()))?;
+    let (service, method) = path
+        .rsplit_once('/')
+        .ok_or_else(|| GrpcError::MethodNotFound(path.to_string()))?;
     let svc = pool
         .get_service_by_name(service)
         .ok_or_else(|| GrpcError::MethodNotFound(path.to_string()))?;
@@ -122,10 +127,14 @@ pub async fn call(
     // Validate metadata before connecting, so a typo'd key fails fast.
     let mut request_metadata = tonic::metadata::MetadataMap::new();
     for (k, v) in metadata {
-        let key = MetadataKey::from_str(k)
-            .map_err(|e| GrpcError::Metadata { key: k.clone(), message: e.to_string() })?;
-        let value = MetadataValue::from_str(v)
-            .map_err(|e| GrpcError::Metadata { key: k.clone(), message: e.to_string() })?;
+        let key = MetadataKey::from_str(k).map_err(|e| GrpcError::Metadata {
+            key: k.clone(),
+            message: e.to_string(),
+        })?;
+        let value = MetadataValue::from_str(v).map_err(|e| GrpcError::Metadata {
+            key: k.clone(),
+            message: e.to_string(),
+        })?;
         request_metadata.insert(key, value);
     }
 
@@ -146,7 +155,9 @@ pub async fn call(
     let codec = DynamicCodec::new(method.output());
 
     let mut grpc = tonic::client::Grpc::new(channel);
-    grpc.ready().await.map_err(|e| GrpcError::Connect(e.to_string()))?;
+    grpc.ready()
+        .await
+        .map_err(|e| GrpcError::Connect(e.to_string()))?;
 
     let status_err = |status: Status| GrpcError::Call {
         code: format!("{:?}", status.code()),
@@ -166,27 +177,39 @@ pub async fn call(
         (true, false) => {
             let mut request = Request::new(tonic::codegen::tokio_stream::iter(inputs));
             *request.metadata_mut() = request_metadata;
-            let response = grpc.client_streaming(request, path, codec).await.map_err(status_err)?;
+            let response = grpc
+                .client_streaming(request, path, codec)
+                .await
+                .map_err(status_err)?;
             response_metadata = ascii_metadata(response.metadata());
             messages.push(message_to_json(response.get_ref())?);
         }
         (false, true) => {
             let mut request = Request::new(into_single(inputs));
             *request.metadata_mut() = request_metadata;
-            let response = grpc.server_streaming(request, path, codec).await.map_err(status_err)?;
+            let response = grpc
+                .server_streaming(request, path, codec)
+                .await
+                .map_err(status_err)?;
             response_metadata = ascii_metadata(response.metadata());
             drain_stream(response.into_inner(), &mut messages, &mut response_metadata).await?;
         }
         (true, true) => {
             let mut request = Request::new(tonic::codegen::tokio_stream::iter(inputs));
             *request.metadata_mut() = request_metadata;
-            let response = grpc.streaming(request, path, codec).await.map_err(status_err)?;
+            let response = grpc
+                .streaming(request, path, codec)
+                .await
+                .map_err(status_err)?;
             response_metadata = ascii_metadata(response.metadata());
             drain_stream(response.into_inner(), &mut messages, &mut response_metadata).await?;
         }
     }
 
-    Ok(GrpcResponse { messages, metadata: response_metadata })
+    Ok(GrpcResponse {
+        messages,
+        metadata: response_metadata,
+    })
 }
 
 /// Parse the request JSON into input messages: a single object for
@@ -202,8 +225,7 @@ fn parse_inputs(
         message: e.to_string(),
     };
 
-    let value: serde_json::Value =
-        serde_json::from_str(request_json).map_err(|e| json_err(&e))?;
+    let value: serde_json::Value = serde_json::from_str(request_json).map_err(|e| json_err(&e))?;
     let raw_messages: Vec<serde_json::Value> = match value {
         serde_json::Value::Array(items) => items,
         other => vec![other],
@@ -219,9 +241,7 @@ fn parse_inputs(
 
     raw_messages
         .into_iter()
-        .map(|v| {
-            DynamicMessage::deserialize(method.input(), v).map_err(|e| json_err(&e))
-        })
+        .map(|v| DynamicMessage::deserialize(method.input(), v).map_err(|e| json_err(&e)))
         .collect()
 }
 
@@ -267,7 +287,10 @@ fn message_to_json(message: &DynamicMessage) -> Result<String, GrpcError> {
             &mut serializer,
             &prost_reflect::SerializeOptions::new().skip_default_fields(false),
         )
-        .map_err(|e| GrpcError::Call { code: "Internal".to_string(), message: e.to_string() })?;
+        .map_err(|e| GrpcError::Call {
+            code: "Internal".to_string(),
+            message: e.to_string(),
+        })?;
     Ok(String::from_utf8_lossy(&json).into_owned())
 }
 
@@ -299,7 +322,9 @@ impl Codec for DynamicCodec {
     }
 
     fn decoder(&mut self) -> Self::Decoder {
-        DynamicDecoder { output: self.output.clone() }
+        DynamicDecoder {
+            output: self.output.clone(),
+        }
     }
 }
 

@@ -34,7 +34,10 @@ pub fn run_js_asset(path: &str, ctx_json: &Value, input: &Value) -> Result<Value
         ));
     }
     let source = std::fs::read_to_string(path).map_err(|e| {
-        Diagnostic::new(Code::AssetNotFound, format!("cannot read asset {path}: {e}"))
+        Diagnostic::new(
+            Code::AssetNotFound,
+            format!("cannot read asset {path}: {e}"),
+        )
     })?;
 
     let runtime = Runtime::new().map_err(|e| host_err(path, &format!("QuickJS start: {e}")))?;
@@ -66,9 +69,14 @@ pub fn run_js_asset(path: &str, ctx_json: &Value, input: &Value) -> Result<Value
             ctx_lit = js_string_literal(&ctx_text),
             input_lit = js_string_literal(&input_text),
         );
-        let out: String = ctx.eval(call_src.as_bytes()).map_err(|e| asset_err(&ctx, path, e))?;
+        let out: String = ctx
+            .eval(call_src.as_bytes())
+            .map_err(|e| asset_err(&ctx, path, e))?;
         serde_json::from_str(&out).map_err(|e| {
-            host_err(path, &format!("asset returned non-JSON-serializable value: {e}"))
+            host_err(
+                path,
+                &format!("asset returned non-JSON-serializable value: {e}"),
+            )
         })
     })
 }
@@ -150,13 +158,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = write_asset(dir.path(), "x.js", "var nothing = 1;");
         let err = run_js_asset(&path, &json!({}), &json!({})).unwrap_err();
-        assert!(err.message.contains("must define a global function run"), "{err:?}");
+        assert!(
+            err.message.contains("must define a global function run"),
+            "{err:?}"
+        );
     }
 
     #[test]
     fn thrown_error_is_reported() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_asset(dir.path(), "t.js", r#"function run() { throw new Error("boom"); }"#);
+        let path = write_asset(
+            dir.path(),
+            "t.js",
+            r#"function run() { throw new Error("boom"); }"#,
+        );
         let err = run_js_asset(&path, &json!({}), &json!({})).unwrap_err();
         assert!(err.message.contains("boom"), "{err:?}");
     }
@@ -167,7 +182,10 @@ mod tests {
         let path = write_asset(dir.path(), "l.js", "function run() { while (true) {} }");
         let started = Instant::now();
         let err = run_js_asset(&path, &json!({}), &json!({})).unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(30), "interrupt too slow");
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "interrupt too slow"
+        );
         assert_eq!(err.code, Code::AssetError.as_str());
     }
 

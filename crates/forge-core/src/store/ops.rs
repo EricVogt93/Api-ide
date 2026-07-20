@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::model::*;
 
 use super::{
-    io_err, load_json, save_json, slugify, validate_name, StoreError, StoreResult,
-    COLLECTIONS_DIR, COLLECTION_FILE, ENVIRONMENTS_DIR, ENV_SUFFIX, FOLDER_FILE, REQUEST_SUFFIX,
+    io_err, load_json, save_json, slugify, validate_name, StoreError, StoreResult, COLLECTIONS_DIR,
+    COLLECTION_FILE, ENVIRONMENTS_DIR, ENV_SUFFIX, FOLDER_FILE, REQUEST_SUFFIX,
 };
 
 pub fn save_request(file: &Path, def: &RequestDef) -> StoreResult<()> {
@@ -48,7 +48,10 @@ pub fn create_folder(parent_dir: &Path, name: &str) -> StoreResult<PathBuf> {
         return Err(StoreError::AlreadyExists(dir));
     }
     std::fs::create_dir_all(&dir).map_err(io_err(&dir))?;
-    let meta = FolderMeta { name: name.to_string(), ..FolderMeta::default() };
+    let meta = FolderMeta {
+        name: name.to_string(),
+        ..FolderMeta::default()
+    };
     save_folder_meta(&dir, &meta)?;
     Ok(dir)
 }
@@ -71,7 +74,9 @@ pub fn create_request(parent_dir: &Path, def: &RequestDef) -> StoreResult<PathBu
 pub fn create_environment(root: &Path, name: &str) -> StoreResult<PathBuf> {
     let slug = slugify(name);
     validate_name(&slug)?;
-    let file = root.join(ENVIRONMENTS_DIR).join(format!("{slug}{ENV_SUFFIX}"));
+    let file = root
+        .join(ENVIRONMENTS_DIR)
+        .join(format!("{slug}{ENV_SUFFIX}"));
     if file.exists() {
         return Err(StoreError::AlreadyExists(file));
     }
@@ -103,8 +108,11 @@ pub fn rename_folder(dir: &Path, new_name: &str) -> StoreResult<PathBuf> {
     let slug = slugify(new_name);
     validate_name(&slug)?;
     let meta_path = dir.join(FOLDER_FILE);
-    let mut meta: FolderMeta =
-        if meta_path.is_file() { load_json(&meta_path)? } else { FolderMeta::default() };
+    let mut meta: FolderMeta = if meta_path.is_file() {
+        load_json(&meta_path)?
+    } else {
+        FolderMeta::default()
+    };
     meta.name = new_name.to_string();
     save_json(&meta_path, &meta)?;
     let new_dir = dir.with_file_name(&slug);
@@ -159,8 +167,11 @@ pub fn set_order(dir: &Path, order: Vec<String>) -> StoreResult<()> {
         return save_json(&col_meta, &meta);
     }
     let folder_meta = dir.join(FOLDER_FILE);
-    let mut meta: FolderMeta =
-        if folder_meta.is_file() { load_json(&folder_meta)? } else { FolderMeta::default() };
+    let mut meta: FolderMeta = if folder_meta.is_file() {
+        load_json(&folder_meta)?
+    } else {
+        FolderMeta::default()
+    };
     meta.order = order;
     save_json(&folder_meta, &meta)
 }
@@ -180,8 +191,16 @@ fn parent_order_file(child: &Path) -> Option<(PathBuf, bool)> {
 
 fn rename_in_parent_order(old: &Path, new: &Path) -> StoreResult<()> {
     patch_parent_order(old, |order| {
-        let old_name = old.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        let new_name = new.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let old_name = old
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let new_name = new
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         for entry in order.iter_mut() {
             if *entry == old_name {
                 *entry = new_name.clone();
@@ -192,7 +211,11 @@ fn rename_in_parent_order(old: &Path, new: &Path) -> StoreResult<()> {
 
 fn remove_from_parent_order(child: &Path) -> StoreResult<()> {
     patch_parent_order(child, |order| {
-        let name = child.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = child
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         order.retain(|e| *e != name);
     })
 }

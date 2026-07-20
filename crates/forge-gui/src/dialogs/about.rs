@@ -19,24 +19,29 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
             ui.heading("Forge");
             ui.label("An IntelliJ-style API testing IDE.");
             ui.add_space(8.0);
-            egui::Grid::new("about-grid").num_columns(2).spacing([12.0, 4.0]).show(ui, |ui| {
-                ui.label("Version");
-                ui.monospace(env!("CARGO_PKG_VERSION"));
-                ui.end_row();
+            egui::Grid::new("about-grid")
+                .num_columns(2)
+                .spacing([12.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Version");
+                    ui.monospace(env!("CARGO_PKG_VERSION"));
+                    ui.end_row();
 
-                ui.label("Workspace format");
-                ui.monospace(forge_core::FORMAT_VERSION.to_string());
-                ui.end_row();
+                    ui.label("Workspace format");
+                    ui.monospace(forge_core::FORMAT_VERSION.to_string());
+                    ui.end_row();
 
-                ui.label("egui");
-                ui.monospace("0.35");
-                ui.end_row();
-            });
+                    ui.label("egui");
+                    ui.monospace("0.35");
+                    ui.end_row();
+                });
             ui.add_space(8.0);
             ui.separator();
             ui.add_space(4.0);
             ui.weak("Licensed under the terms in LICENSE.");
-            ui.weak("Monospace UI font: JetBrains Mono, licensed under the SIL Open Font License 1.1.");
+            ui.weak(
+                "Monospace UI font: JetBrains Mono, licensed under the SIL Open Font License 1.1.",
+            );
         });
     state.dialogs.about_open = open;
 }

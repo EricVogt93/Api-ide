@@ -70,13 +70,20 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             }
         }
         let can_refresh = state.assets.root.is_some();
-        if ui.add_enabled(can_refresh, egui::Button::new("Refresh")).clicked() {
+        if ui
+            .add_enabled(can_refresh, egui::Button::new("Refresh"))
+            .clicked()
+        {
             if let Some(root) = state.assets.root.clone() {
                 state.assets.load(root);
             }
         }
         if let Some(root) = state.assets.root.clone() {
-            if ui.button("New request").on_hover_text("Author a v1 request").clicked() {
+            if ui
+                .button("New request")
+                .on_hover_text("Author a v1 request")
+                .clicked()
+            {
                 let env = state.active_env.clone();
                 state.dialogs.v1_editor.open_new(root, env);
             }
@@ -108,7 +115,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
                         .monospace()
                         .small(),
                 );
-                ui.label(RichText::new(format!("  {} — {}", b.reference, b.message)).small().weak());
+                ui.label(
+                    RichText::new(format!("  {} — {}", b.reference, b.message))
+                        .small()
+                        .weak(),
+                );
             }
         });
         ui.separator();
@@ -120,37 +131,54 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
     let mut to_edit: Option<std::path::PathBuf> = None;
     let active_env = state.active_env.clone();
 
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        // Requests first — click "edit" to open the v1 editor on that file.
-        if !index.requests.is_empty() {
-            ui.label(RichText::new("requests").strong());
-            for r in &index.requests {
-                ui.horizontal(|ui| {
-                    let name = r.rel_path.rsplit('/').next().unwrap_or(&r.rel_path);
-                    ui.label(name).on_hover_text(&r.id);
-                    ui.label(RichText::new(format!("{} ref(s)", r.refs.len())).small().weak());
-                    if ui.small_button("edit").clicked() {
-                        to_edit = Some(std::path::PathBuf::from(&r.path));
-                    }
-                });
+    egui::ScrollArea::vertical()
+        .id_salt("assets-sa-1")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            // Requests first — click "edit" to open the v1 editor on that file.
+            if !index.requests.is_empty() {
+                ui.label(RichText::new("requests").strong());
+                for r in &index.requests {
+                    ui.horizontal(|ui| {
+                        let name = r.rel_path.rsplit('/').next().unwrap_or(&r.rel_path);
+                        ui.label(name).on_hover_text(&r.id);
+                        ui.label(
+                            RichText::new(format!("{} ref(s)", r.refs.len()))
+                                .small()
+                                .weak(),
+                        );
+                        if ui.small_button("edit").clicked() {
+                            to_edit = Some(std::path::PathBuf::from(&r.path));
+                        }
+                    });
+                }
+                ui.separator();
             }
-            ui.separator();
-        }
 
-        // Group assets by kind.
-        let mut current: Option<AssetKind> = None;
-        for asset in &index.assets {
-            if current != Some(asset.kind) {
-                current = Some(asset.kind);
-                ui.add_space(4.0);
-                ui.label(RichText::new(asset.kind.label()).strong());
+            // Group assets by kind.
+            let mut current: Option<AssetKind> = None;
+            for asset in &index.assets {
+                if current != Some(asset.kind) {
+                    current = Some(asset.kind);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(asset.kind.label()).strong());
+                }
+                asset_row(
+                    ui,
+                    index,
+                    asset,
+                    base_dir.as_deref(),
+                    &mut state.assets.expanded,
+                    &mut to_copy,
+                    &mut to_open,
+                );
             }
-            asset_row(ui, index, asset, base_dir.as_deref(), &mut state.assets.expanded, &mut to_copy, &mut to_open);
-        }
-    });
+        });
 
     if let Some(file) = to_edit {
-        state.dialogs.v1_editor.open_file(file, active_env);
+        if let Err(error) = state.dialogs.v1_editor.open_file(file, active_env) {
+            state.status = Some(StatusMessage::error(error));
+        }
     }
 
     if let Some((r, what)) = to_copy {
@@ -172,14 +200,20 @@ fn asset_row(
     to_copy: &mut Option<(String, String)>,
     to_open: &mut Option<String>,
 ) {
-    let base = base_dir.map(PathBuf::from).unwrap_or_else(|| PathBuf::from(&index.root));
+    let base = base_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(&index.root));
     let base_ref = index.suggest_ref(asset, &base);
     let browsable = asset.kind == AssetKind::Data && asset.data.is_some();
 
     ui.horizontal(|ui| {
         let is_open = expanded.contains(&asset.rel_path);
         if browsable {
-            let tri = if is_open { icons::TRIANGLE_DOWN } else { icons::TRIANGLE_RIGHT };
+            let tri = if is_open {
+                icons::TRIANGLE_DOWN
+            } else {
+                icons::TRIANGLE_RIGHT
+            };
             if ui.small_button(tri).clicked() {
                 if is_open {
                     expanded.remove(&asset.rel_path);
@@ -209,7 +243,11 @@ fn asset_row(
             }
         });
 
-        if ui.small_button("copy ref").on_hover_text(base_ref.clone()).clicked() {
+        if ui
+            .small_button("copy ref")
+            .on_hover_text(base_ref.clone())
+            .clicked()
+        {
             *to_copy = Some((base_ref.clone(), "ref".to_string()));
         }
     });
@@ -226,7 +264,13 @@ fn asset_row(
 
 /// Render a JSON node; clicking "copy" on any node copies
 /// `<base_ref>#<pointer>`. Only container children are shown as rows.
-fn json_node(ui: &mut Ui, base_ref: &str, pointer: &str, node: &Value, to_copy: &mut Option<(String, String)>) {
+fn json_node(
+    ui: &mut Ui,
+    base_ref: &str,
+    pointer: &str,
+    node: &Value,
+    to_copy: &mut Option<(String, String)>,
+) {
     match node {
         Value::Object(map) => {
             for (k, v) in map {
@@ -264,7 +308,11 @@ fn json_leaf_or_branch(
             .id_salt(pointer)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.small_button("copy ref").on_hover_text(full.clone()).clicked() {
+                    if ui
+                        .small_button("copy ref")
+                        .on_hover_text(full.clone())
+                        .clicked()
+                    {
                         *to_copy = Some((full.clone(), "ref".to_string()));
                     }
                     ui.label(RichText::new(pointer).small().weak());
@@ -274,8 +322,16 @@ fn json_leaf_or_branch(
     } else {
         ui.horizontal(|ui| {
             ui.add_space(18.0);
-            ui.label(RichText::new(format!("{key}: {}", preview(value))).monospace().small());
-            if ui.small_button("copy ref").on_hover_text(full.clone()).clicked() {
+            ui.label(
+                RichText::new(format!("{key}: {}", preview(value)))
+                    .monospace()
+                    .small(),
+            );
+            if ui
+                .small_button("copy ref")
+                .on_hover_text(full.clone())
+                .clicked()
+            {
                 *to_copy = Some((full.clone(), "ref".to_string()));
             }
         });
@@ -335,6 +391,9 @@ mod tests {
         st.load(root);
         assert!(st.is_loaded());
         let index = st.index.as_ref().unwrap();
-        assert!(index.assets.iter().any(|a| a.rel_path == "assets/data/users.json"));
+        assert!(index
+            .assets
+            .iter()
+            .any(|a| a.rel_path == "assets/data/users.json"));
     }
 }

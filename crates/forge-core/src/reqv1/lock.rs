@@ -32,7 +32,10 @@ impl Lockfile {
             let hash = hash_file(&asset.path)?;
             assets.insert(asset.rel_path.clone(), hash);
         }
-        Ok(Lockfile { format_version: 1, assets })
+        Ok(Lockfile {
+            format_version: 1,
+            assets,
+        })
     }
 
     /// Scan `root` and build a lockfile.
@@ -45,7 +48,9 @@ impl Lockfile {
         let dir = root.join(".forge");
         std::fs::create_dir_all(&dir)
             .map_err(|e| Diagnostic::new(Code::AssetError, format!("cannot create .forge: {e}")))?;
-        let text = serde_json::to_string_pretty(self).unwrap_or_default();
+        let text = serde_json::to_string_pretty(self).map_err(|e| {
+            Diagnostic::new(Code::AssetError, format!("cannot serialize lockfile: {e}"))
+        })?;
         std::fs::write(root.join(LOCK_REL_PATH), text)
             .map_err(|e| Diagnostic::new(Code::AssetError, format!("cannot write lockfile: {e}")))
     }
@@ -53,7 +58,10 @@ impl Lockfile {
     pub fn read(root: &Path) -> Result<Lockfile, Diagnostic> {
         let path = root.join(LOCK_REL_PATH);
         let text = std::fs::read_to_string(&path).map_err(|e| {
-            Diagnostic::new(Code::AssetNotFound, format!("no lockfile at {LOCK_REL_PATH}: {e}"))
+            Diagnostic::new(
+                Code::AssetNotFound,
+                format!("no lockfile at {LOCK_REL_PATH}: {e}"),
+            )
         })?;
         serde_json::from_str(&text)
             .map_err(|e| Diagnostic::new(Code::InvalidAssetInput, format!("invalid lockfile: {e}")))
@@ -95,7 +103,11 @@ fn hash_file(path: &str) -> Result<String, Diagnostic> {
         .map_err(|e| Diagnostic::new(Code::AssetNotFound, format!("cannot read {path}: {e}")))?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    let hex: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     Ok(format!("sha256:{hex}"))
 }
 
@@ -129,18 +141,25 @@ mod tests {
         // Corrupt one recorded hash to simulate drift.
         *lock.assets.get_mut("assets/data/users.json").unwrap() = "sha256:deadbeef".to_string();
         let diags = lock.verify(&root).expect("verify");
-        assert!(diags.iter().any(|d| d.message.contains("users.json") && d.message.contains("changed")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("users.json") && d.message.contains("changed")));
     }
 
     #[test]
     fn verify_detects_a_missing_and_a_new_asset() {
         let root = fixture_root();
         let mut lock = Lockfile::build(&root).expect("build");
-        lock.assets.insert("assets/data/ghost.json".to_string(), "sha256:x".to_string());
+        lock.assets
+            .insert("assets/data/ghost.json".to_string(), "sha256:x".to_string());
         lock.assets.remove("assets/data/tenants.json");
         let diags = lock.verify(&root).expect("verify");
-        assert!(diags.iter().any(|d| d.message.contains("ghost.json") && d.message.contains("missing")));
-        assert!(diags.iter().any(|d| d.message.contains("tenants.json") && d.message.contains("not in the lockfile")));
+        assert!(diags
+            .iter()
+            .any(|d| d.message.contains("ghost.json") && d.message.contains("missing")));
+        assert!(diags.iter().any(
+            |d| d.message.contains("tenants.json") && d.message.contains("not in the lockfile")
+        ));
     }
 
     #[test]

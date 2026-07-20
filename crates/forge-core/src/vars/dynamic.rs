@@ -82,13 +82,19 @@ fn parse_usize(args: Option<&str>) -> Option<usize> {
 }
 
 fn random_alnum(len: usize) -> String {
-    rand::rng().sample_iter(&Alphanumeric).take(len).map(char::from).collect()
+    rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(len)
+        .map(char::from)
+        .collect()
 }
 
 fn random_hex(len: usize) -> String {
     const HEX: &[u8] = b"0123456789abcdef";
     let mut rng = rand::rng();
-    (0..len).map(|_| HEX[rng.random_range(0..16usize)] as char).collect()
+    (0..len)
+        .map(|_| HEX[rng.random_range(0..16usize)] as char)
+        .collect()
 }
 
 #[cfg(test)]
@@ -109,10 +115,8 @@ mod tests {
 
     #[test]
     fn uuid_and_guid_match_uuid_format() {
-        let re = Regex::new(
-            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        )
-        .unwrap();
+        let re =
+            Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$").unwrap();
         assert!(re.is_match(&resolve("$uuid").unwrap()));
         assert!(re.is_match(&resolve("$guid").unwrap()));
     }

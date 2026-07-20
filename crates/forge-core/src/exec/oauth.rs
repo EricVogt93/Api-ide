@@ -82,7 +82,10 @@ pub async fn client_credentials_token(
         .join("&");
 
     let response = builder
-        .header(reqwest::header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(
+            reqwest::header::CONTENT_TYPE,
+            "application/x-www-form-urlencoded",
+        )
         .body(body)
         .send()
         .await
@@ -194,7 +197,9 @@ impl TokenCache {
     }
 
     fn lock_entries(&self) -> std::sync::MutexGuard<'_, HashMap<TokenCacheKey, CachedToken>> {
-        self.entries.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -213,10 +218,9 @@ mod tests {
 
     #[test]
     fn token_response_honors_explicit_token_type() {
-        let parsed: TokenResponse = serde_json::from_str(
-            r#"{"access_token":"abc","token_type":"mac","expires_in":10}"#,
-        )
-        .unwrap();
+        let parsed: TokenResponse =
+            serde_json::from_str(r#"{"access_token":"abc","token_type":"mac","expires_in":10}"#)
+                .unwrap();
         assert_eq!(parsed.token_type, "mac");
     }
 

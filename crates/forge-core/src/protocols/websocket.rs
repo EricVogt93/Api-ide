@@ -34,11 +34,20 @@ pub enum WsOutgoing {
 pub enum WsEvent {
     /// The handshake completed; the socket is open.
     Connected,
-    Text { text: String, at: DateTime<Utc> },
-    Binary { data: Vec<u8>, at: DateTime<Utc> },
+    Text {
+        text: String,
+        at: DateTime<Utc>,
+    },
+    Binary {
+        data: Vec<u8>,
+        at: DateTime<Utc>,
+    },
     /// A pong was received (in reply to our ping, or unsolicited).
     Pong,
-    Closed { code: Option<u16>, reason: String },
+    Closed {
+        code: Option<u16>,
+        reason: String,
+    },
     Error(String),
 }
 
@@ -79,8 +88,9 @@ pub async fn connect(
     for (name, value) in headers {
         let header_name = HeaderName::from_bytes(name.as_bytes())
             .map_err(|e| ProtocolError::Connect(format!("invalid header name {name:?}: {e}")))?;
-        let header_value = HeaderValue::from_str(value)
-            .map_err(|e| ProtocolError::Connect(format!("invalid header value for {name:?}: {e}")))?;
+        let header_value = HeaderValue::from_str(value).map_err(|e| {
+            ProtocolError::Connect(format!("invalid header value for {name:?}: {e}"))
+        })?;
         request.headers_mut().insert(header_name, header_value);
     }
 

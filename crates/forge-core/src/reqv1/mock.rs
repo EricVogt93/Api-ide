@@ -5,14 +5,14 @@
 //!
 //! Matching and response generation live in [`MockServerConfig::handle`],
 //! which is a pure function of (method, path) — unit-testable without a
-//! socket. [`serve_mock`] is the thin blocking loop over a bound server.
+//! socket. Socket ownership belongs to the CLI adapter.
 
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::diag::{Code, Diagnostic};
+use super::diag::{Code, Diagnostic, Errors};
 use super::index::ProjectIndex;
 use super::model::RequestDocument;
 use super::runner::{render_mock, validate};
@@ -67,14 +67,14 @@ impl MockServerConfig {
         root: &Path,
         mut env: Value,
         secret: &(dyn Fn(&str) -> Option<String> + Sync),
-    ) -> Result<MockServerConfig, Diagnostic> {
+    ) -> Result<MockServerConfig, Errors> {
         if env.get("baseUrl").is_none() {
             if let Value::Object(map) = &mut env {
                 map.insert("baseUrl".to_string(), Value::from("http://mock.local"));
             }
         }
 
-        let index = ProjectIndex::scan(root)?;
+        let index = ProjectIndex::scan(root).map_err(|diagnostic| Errors(vec![diagnostic]))?;
         // meta.id -> file, for route overrides.
         let mut id_to_file = std::collections::BTreeMap::new();
 
@@ -82,22 +82,24 @@ impl MockServerConfig {
         for req in &index.requests {
             let file = PathBuf::from(&req.path);
             let text = std::fs::read_to_string(&file).map_err(|e| {
-                Diagnostic::new(Code::AssetNotFound, format!("{}: {e}", req.rel_path))
+                Errors(vec![Diagnostic::new(
+                    Code::AssetNotFound,
+                    format!("{}: {e}", req.rel_path),
+                )])
             })?;
-            let doc = match RequestDocument::parse(&text) {
-                Ok(d) => d,
-                Err(_) => continue,
-            };
+            let doc = RequestDocument::parse(&text).map_err(|e| {
+                Errors(vec![Diagnostic::new(
+                    Code::InvalidAssetInput,
+                    format!("{}: {e}", req.rel_path),
+                )])
+            })?;
             id_to_file.insert(doc.meta.id.clone(), file.clone());
             if doc.mock.is_none() {
                 continue;
             }
             // Resolve to get a concrete URL path for the pattern. Secrets use
             // a placeholder provider — a mock route needs no real secret.
-            let ir = match validate(&doc, root, &file, env.clone(), secret) {
-                Ok(ir) => ir,
-                Err(_) => continue,
-            };
+            let ir = validate(&doc, root, &file, env.clone(), secret).map_err(Errors)?;
             let path = url_path(&ir.url);
             routes.push(MockRoute {
                 method: ir.method.as_str().to_string(),
@@ -112,21 +114,42 @@ impl MockServerConfig {
         // Apply mocks.routes.json overrides (added as extra routes; an
         // override for an existing method+path replaces the derived one).
         let overrides_path = root.join("mocks.routes.json");
-        if let Ok(text) = std::fs::read_to_string(&overrides_path) {
-            let overrides: Vec<RouteOverride> = serde_json::from_str(&text).map_err(|e| {
-                Diagnostic::new(Code::InvalidAssetInput, format!("mocks.routes.json: {e}"))
-            })?;
+        let overrides = match std::fs::read_to_string(&overrides_path) {
+            Ok(text) => Some(
+                serde_json::from_str::<Vec<RouteOverride>>(&text).map_err(|e| {
+                    Errors(vec![Diagnostic::new(
+                        Code::InvalidAssetInput,
+                        format!("mocks.routes.json: {e}"),
+                    )])
+                })?,
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(Errors(vec![Diagnostic::new(
+                    Code::AssetNotFound,
+                    format!("mocks.routes.json: {error}"),
+                )]));
+            }
+        };
+        if let Some(overrides) = overrides {
             for ov in overrides {
                 let Some(file) = id_to_file.get(&ov.request) else {
-                    return Err(Diagnostic::new(
+                    return Err(Errors(vec![Diagnostic::new(
                         Code::AssetNotFound,
-                        format!("mocks.routes.json references unknown request {:?}", ov.request),
-                    ));
+                        format!(
+                            "mocks.routes.json references unknown request {:?}",
+                            ov.request
+                        ),
+                    )]));
                 };
-                let text = std::fs::read_to_string(file)
-                    .map_err(|e| Diagnostic::new(Code::AssetNotFound, e.to_string()))?;
+                let text = std::fs::read_to_string(file).map_err(|e| {
+                    Errors(vec![Diagnostic::new(Code::AssetNotFound, e.to_string())])
+                })?;
                 let doc = RequestDocument::parse(&text).map_err(|e| {
-                    Diagnostic::new(Code::InvalidAssetInput, e.to_string())
+                    Errors(vec![Diagnostic::new(
+                        Code::InvalidAssetInput,
+                        e.to_string(),
+                    )])
                 })?;
                 let method = ov.method.to_uppercase();
                 routes.retain(|r| !(r.method == method && seg_str(&r.pattern) == ov.path));
@@ -141,7 +164,11 @@ impl MockServerConfig {
             }
         }
 
-        Ok(MockServerConfig { routes, root: root.to_path_buf(), env })
+        Ok(MockServerConfig {
+            routes,
+            root: root.to_path_buf(),
+            env,
+        })
     }
 
     pub fn route_count(&self) -> usize {
@@ -149,7 +176,13 @@ impl MockServerConfig {
     }
 
     pub fn routes(&self) -> impl Iterator<Item = (&str, String, &str)> {
-        self.routes.iter().map(|r| (r.method.as_str(), seg_str(&r.pattern), r.request_id.as_str()))
+        self.routes.iter().map(|r| {
+            (
+                r.method.as_str(),
+                seg_str(&r.pattern),
+                r.request_id.as_str(),
+            )
+        })
     }
 
     /// Handle one incoming request. Literal routes are tried before wildcard
@@ -159,7 +192,7 @@ impl MockServerConfig {
         method: &str,
         path: &str,
         secret: &(dyn Fn(&str) -> Option<String> + Sync),
-    ) -> Option<MockHttpResponse> {
+    ) -> Result<Option<MockHttpResponse>, Errors> {
         let incoming = parse_incoming(path);
         let method = method.to_uppercase();
 
@@ -168,48 +201,40 @@ impl MockServerConfig {
             .routes
             .iter()
             .filter(|r| !r.wildcard && r.method == method && pattern_matches(&r.pattern, &incoming))
-            .chain(
-                self.routes
-                    .iter()
-                    .filter(|r| r.wildcard && r.method == method && pattern_matches(&r.pattern, &incoming)),
-            )
-            .next()?;
+            .chain(self.routes.iter().filter(|r| {
+                r.wildcard && r.method == method && pattern_matches(&r.pattern, &incoming)
+            }))
+            .next();
+        let Some(matched) = matched else {
+            return Ok(None);
+        };
 
         // Re-resolve so a dynamic JS mock runs fresh, then render its mock.
-        let ir = validate(&matched.doc, &self.root, &matched.file, self.env.clone(), secret).ok()?;
-        let (response, _diags) = render_mock(&ir);
-        response.map(|r| MockHttpResponse { status: r.status, headers: r.headers, body: r.body })
-    }
-}
-
-/// Serve `config` on a bound `tiny_http::Server`, blocking until the process
-/// exits. `secret` supplies secrets for dynamic mocks.
-pub fn serve_mock(
-    config: &MockServerConfig,
-    server: &tiny_http::Server,
-    secret: &(dyn Fn(&str) -> Option<String> + Sync),
-) {
-    for request in server.incoming_requests() {
-        let method = request.method().as_str().to_string();
-        let url = request.url().to_string();
-        let path = url.split('?').next().unwrap_or(&url);
-
-        let response = match config.handle(&method, path, secret) {
-            Some(r) => {
-                let data = r.body;
-                let mut resp = tiny_http::Response::from_data(data).with_status_code(r.status);
-                for (k, v) in r.headers {
-                    if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-                        resp = resp.with_header(h);
-                    }
-                }
-                request.respond(resp)
-            }
-            None => request.respond(
-                tiny_http::Response::from_string("no mock route").with_status_code(404),
-            ),
-        };
-        let _ = response;
+        let ir = validate(
+            &matched.doc,
+            &self.root,
+            &matched.file,
+            self.env.clone(),
+            secret,
+        )
+        .map_err(Errors)?;
+        let (response, diagnostics) = render_mock(&ir);
+        if !diagnostics.is_empty() {
+            return Err(Errors(diagnostics));
+        }
+        response
+            .map(|r| MockHttpResponse {
+                status: r.status,
+                headers: r.headers,
+                body: r.body,
+            })
+            .map(Some)
+            .ok_or_else(|| {
+                Errors::one(
+                    Code::AssetError,
+                    format!("mock route {} produced no response", matched.request_id),
+                )
+            })
     }
 }
 
@@ -289,10 +314,22 @@ mod tests {
 
     #[test]
     fn pattern_matching_literal_and_wildcard() {
-        assert!(pattern_matches(&parse_pattern("/users"), &parse_incoming("/users")));
-        assert!(!pattern_matches(&parse_pattern("/users"), &parse_incoming("/users/1")));
-        assert!(pattern_matches(&parse_pattern("/users/:id"), &parse_incoming("/users/42")));
-        assert!(!pattern_matches(&parse_pattern("/users/:id"), &parse_incoming("/users")));
+        assert!(pattern_matches(
+            &parse_pattern("/users"),
+            &parse_incoming("/users")
+        ));
+        assert!(!pattern_matches(
+            &parse_pattern("/users"),
+            &parse_incoming("/users/1")
+        ));
+        assert!(pattern_matches(
+            &parse_pattern("/users/:id"),
+            &parse_incoming("/users/42")
+        ));
+        assert!(!pattern_matches(
+            &parse_pattern("/users/:id"),
+            &parse_incoming("/users")
+        ));
     }
 
     #[test]
@@ -310,10 +347,16 @@ mod tests {
         // Two fixture docs both mock POST /users (a static one -> u-1 and a
         // dynamic JS one -> u-mock); first-match wins. Either is a valid 201
         // with an id — this asserts the route resolves and a mock is served.
-        let resp = config.handle("POST", "/users", &secret).expect("route matched");
+        let resp = config
+            .handle("POST", "/users", &secret)
+            .expect("valid mock")
+            .expect("route matched");
         assert_eq!(resp.status, 201);
         let body: Value = serde_json::from_slice(&resp.body).unwrap();
-        assert!(matches!(body["id"].as_str(), Some("u-1" | "u-mock")), "{body}");
+        assert!(
+            matches!(body["id"].as_str(), Some("u-1" | "u-mock")),
+            "{body}"
+        );
     }
 
     #[test]
@@ -324,7 +367,10 @@ mod tests {
         // Both create.request.json and create-js.request.json map to
         // POST /users; the literal route from whichever scanned — assert one
         // of the known bodies is returned.
-        let resp = config.handle("POST", "/users", &secret).expect("route matched");
+        let resp = config
+            .handle("POST", "/users", &secret)
+            .expect("valid mock")
+            .expect("route matched");
         assert_eq!(resp.status, 201);
     }
 
@@ -332,6 +378,9 @@ mod tests {
     fn unmatched_route_is_none() {
         let env = serde_json::json!({ "baseUrl": "http://mock.local" });
         let config = MockServerConfig::scan(&fixture_root(), env, &secret).expect("scan");
-        assert!(config.handle("DELETE", "/nope", &secret).is_none());
+        assert!(config
+            .handle("DELETE", "/nope", &secret)
+            .expect("valid mock")
+            .is_none());
     }
 }

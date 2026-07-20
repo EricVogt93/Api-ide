@@ -25,6 +25,9 @@ pub const HOVERED: Color32 = Color32::from_rgb(0x39, 0x3B, 0x40);
 pub const ACTIVE: Color32 = Color32::from_rgb(0x43, 0x45, 0x4A);
 /// Border/outline color (subtle, New UI keeps borders faint).
 pub const BORDER: Color32 = Color32::from_rgb(0x39, 0x3B, 0x40);
+/// Seam between major regions (panels ↔ editor, strip separators) — the
+/// near-black hairline JetBrains uses instead of a visible border.
+pub const SEAM: Color32 = Color32::from_rgb(0x13, 0x14, 0x17);
 /// Hyperlink color.
 pub const HYPERLINK: Color32 = Color32::from_rgb(0x54, 0x8A, 0xF7);
 /// Failure/error accent.
@@ -58,7 +61,9 @@ pub fn style() -> Style {
 
     visuals.widgets.noninteractive.bg_fill = PANEL_BG;
     visuals.widgets.noninteractive.weak_bg_fill = PANEL_BG;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
+    // Region separators (`ui.separator()`) and panel boundaries read as
+    // near-black hairline seams, JetBrains-style, not visible gray borders.
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, SEAM);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(ROUNDING);
 

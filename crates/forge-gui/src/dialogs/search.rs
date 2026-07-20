@@ -69,8 +69,13 @@ pub fn detect_double_shift(ctx: &egui::Context, search: &mut SearchState) -> boo
     ctx.input(|input| {
         for event in &input.events {
             match event {
-                egui::Event::Key { key: Key::ShiftLeft | Key::ShiftRight, pressed, repeat: false, modifiers, .. } =>
-                {
+                egui::Event::Key {
+                    key: Key::ShiftLeft | Key::ShiftRight,
+                    pressed,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } => {
                     let bare = !modifiers.ctrl && !modifiers.alt && !modifiers.command;
                     if *pressed {
                         search.shift_down = true;
@@ -108,9 +113,19 @@ pub fn detect_double_shift(ctx: &egui::Context, search: &mut SearchState) -> boo
 
 /// One flattened, selectable result row.
 enum Item {
-    Request { rel_id: String, method: Method, label: String },
-    Action { id: ActionId, title: &'static str, shortcut: Option<String> },
-    Environment { name: String },
+    Request {
+        rel_id: String,
+        method: Method,
+        label: String,
+    },
+    Action {
+        id: ActionId,
+        title: &'static str,
+        shortcut: Option<String>,
+    },
+    Environment {
+        name: String,
+    },
 }
 
 /// Case-insensitive subsequence fuzzy scorer: returns `None` if `query`'s
@@ -166,11 +181,20 @@ fn request_entries(workspace: &Workspace) -> Vec<(String, Method, String)> {
     out
 }
 
-fn collect(children: &[TreeNode], workspace: &Workspace, prefix: &str, out: &mut Vec<(String, Method, String)>) {
+fn collect(
+    children: &[TreeNode],
+    workspace: &Workspace,
+    prefix: &str,
+    out: &mut Vec<(String, Method, String)>,
+) {
     for child in children {
         match child {
             TreeNode::Request(r) => {
-                out.push((workspace.rel_id(&r.file), r.def.method, format!("{prefix} / {}", r.def.name)));
+                out.push((
+                    workspace.rel_id(&r.file),
+                    r.def.method,
+                    format!("{prefix} / {}", r.def.name),
+                ));
             }
             TreeNode::Folder(f) => {
                 let name = child.display_name();
@@ -196,19 +220,45 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             let mut scored: Vec<(i32, Item)> = request_entries(ws)
                 .into_iter()
                 .filter_map(|(rel_id, method, label)| {
-                    fuzzy_score(&query_lower, &label).map(|s| (s, Item::Request { rel_id, method, label }))
+                    fuzzy_score(&query_lower, &label).map(|s| {
+                        (
+                            s,
+                            Item::Request {
+                                rel_id,
+                                method,
+                                label,
+                            },
+                        )
+                    })
                 })
                 .collect();
             scored.sort_by_key(|s| std::cmp::Reverse(s.0));
-            request_items = scored.into_iter().take(MAX_PER_SECTION).map(|(_, i)| i).collect();
+            request_items = scored
+                .into_iter()
+                .take(MAX_PER_SECTION)
+                .map(|(_, i)| i)
+                .collect();
 
             let mut scored: Vec<(i32, Item)> = ws
                 .environments
                 .iter()
-                .filter_map(|e| fuzzy_score(&query_lower, &e.env.name).map(|s| (s, Item::Environment { name: e.env.name.clone() })))
+                .filter_map(|e| {
+                    fuzzy_score(&query_lower, &e.env.name).map(|s| {
+                        (
+                            s,
+                            Item::Environment {
+                                name: e.env.name.clone(),
+                            },
+                        )
+                    })
+                })
                 .collect();
             scored.sort_by_key(|s| std::cmp::Reverse(s.0));
-            env_items = scored.into_iter().take(MAX_PER_SECTION).map(|(_, i)| i).collect();
+            env_items = scored
+                .into_iter()
+                .take(MAX_PER_SECTION)
+                .map(|(_, i)| i)
+                .collect();
         }
     }
 
@@ -217,12 +267,23 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
         .filter_map(|a| {
             fuzzy_score(&query_lower, a.title).map(|s| {
                 let shortcut = a.shortcut.map(|sc| ctx.format_shortcut(&sc));
-                (s, Item::Action { id: a.id, title: a.title, shortcut })
+                (
+                    s,
+                    Item::Action {
+                        id: a.id,
+                        title: a.title,
+                        shortcut,
+                    },
+                )
             })
         })
         .collect();
     scored.sort_by_key(|s| std::cmp::Reverse(s.0));
-    let action_items: Vec<Item> = scored.into_iter().take(MAX_PER_SECTION).map(|(_, i)| i).collect();
+    let action_items: Vec<Item> = scored
+        .into_iter()
+        .take(MAX_PER_SECTION)
+        .map(|(_, i)| i)
+        .collect();
 
     let total = request_items.len() + action_items.len() + env_items.len();
     if state.dialogs.search.selected >= total.max(1) {
@@ -236,12 +297,18 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
         ui.set_min_width(480.0);
         ui.set_max_width(560.0);
 
-        let title = if state.dialogs.search.actions_only { "Search Actions" } else { "Search Everywhere" };
+        let title = if state.dialogs.search.actions_only {
+            "Search Actions"
+        } else {
+            "Search Everywhere"
+        };
         ui.heading(title);
         ui.add_space(4.0);
 
         let response = ui.add(
-            TextEdit::singleline(&mut state.dialogs.search.query).desired_width(f32::INFINITY).hint_text("Type to search..."),
+            TextEdit::singleline(&mut state.dialogs.search.query)
+                .desired_width(f32::INFINITY)
+                .hint_text("Type to search..."),
         );
         if state.dialogs.search.just_opened {
             response.request_focus();
@@ -266,40 +333,43 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
         ui.add_space(6.0);
         ui.separator();
 
-        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-            let mut flat_idx = 0usize;
-            if !request_items.is_empty() {
-                section_header(ui, "Requests");
-                for item in &request_items {
-                    if row(ui, item, flat_idx == state.dialogs.search.selected) {
-                        activate = Some(flat_idx);
+        egui::ScrollArea::vertical()
+            .id_salt("search-sa-1")
+            .max_height(360.0)
+            .show(ui, |ui| {
+                let mut flat_idx = 0usize;
+                if !request_items.is_empty() {
+                    section_header(ui, "Requests");
+                    for item in &request_items {
+                        if row(ui, item, flat_idx == state.dialogs.search.selected) {
+                            activate = Some(flat_idx);
+                        }
+                        flat_idx += 1;
                     }
-                    flat_idx += 1;
                 }
-            }
-            if !action_items.is_empty() {
-                section_header(ui, "Actions");
-                for item in &action_items {
-                    if row(ui, item, flat_idx == state.dialogs.search.selected) {
-                        activate = Some(flat_idx);
+                if !action_items.is_empty() {
+                    section_header(ui, "Actions");
+                    for item in &action_items {
+                        if row(ui, item, flat_idx == state.dialogs.search.selected) {
+                            activate = Some(flat_idx);
+                        }
+                        flat_idx += 1;
                     }
-                    flat_idx += 1;
                 }
-            }
-            if !env_items.is_empty() {
-                section_header(ui, "Environments");
-                for item in &env_items {
-                    if row(ui, item, flat_idx == state.dialogs.search.selected) {
-                        activate = Some(flat_idx);
+                if !env_items.is_empty() {
+                    section_header(ui, "Environments");
+                    for item in &env_items {
+                        if row(ui, item, flat_idx == state.dialogs.search.selected) {
+                            activate = Some(flat_idx);
+                        }
+                        flat_idx += 1;
                     }
-                    flat_idx += 1;
                 }
-            }
-            if flat_idx == 0 {
-                ui.add_space(8.0);
-                ui.weak("No matches.");
-            }
-        });
+                if flat_idx == 0 {
+                    ui.add_space(8.0);
+                    ui.weak("No matches.");
+                }
+            });
     });
 
     if modal.should_close() {
@@ -314,7 +384,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
         if let Some(item) = all.into_iter().nth(idx) {
             match item {
                 Item::Request { rel_id, .. } => {
-                    let def = state.workspace.as_ref().and_then(|ws| ws.find_request(&rel_id).map(|n| n.def.clone()));
+                    let def = state
+                        .workspace
+                        .as_ref()
+                        .and_then(|ws| ws.find_request(&rel_id).map(|n| n.def.clone()));
                     if let Some(def) = def {
                         state.open_tab(rel_id, def);
                     }
@@ -338,33 +411,46 @@ fn section_header(ui: &mut Ui, label: &str) {
 
 /// Render one result row; returns `true` if it was activated (clicked).
 fn row(ui: &mut Ui, item: &Item, selected: bool) -> bool {
-    let frame = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(6, 3)).fill(if selected {
-        ui.visuals().selection.bg_fill.gamma_multiply(0.35)
-    } else {
-        egui::Color32::TRANSPARENT
-    });
+    let frame = egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(6, 3))
+        .fill(if selected {
+            ui.visuals().selection.bg_fill.gamma_multiply(0.35)
+        } else {
+            egui::Color32::TRANSPARENT
+        });
     let mut clicked = false;
     frame.show(ui, |ui| {
-        ui.horizontal(|ui| {
-            match item {
-                Item::Request { method, label, .. } => {
-                    ui.label(egui::RichText::new(method.as_str()).color(method_color(*method)).monospace().strong().size(11.0));
-                    if ui.selectable_label(false, label).clicked() {
-                        clicked = true;
-                    }
+        ui.horizontal(|ui| match item {
+            Item::Request { method, label, .. } => {
+                ui.label(
+                    egui::RichText::new(method.as_str())
+                        .color(method_color(*method))
+                        .monospace()
+                        .strong()
+                        .size(13.0),
+                );
+                if ui.selectable_label(false, label).clicked() {
+                    clicked = true;
                 }
-                Item::Action { title, shortcut, .. } => {
-                    if ui.selectable_label(false, *title).clicked() {
-                        clicked = true;
-                    }
-                    if let Some(sc) = shortcut {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(sc));
-                    }
+            }
+            Item::Action {
+                title, shortcut, ..
+            } => {
+                if ui.selectable_label(false, *title).clicked() {
+                    clicked = true;
                 }
-                Item::Environment { name } => {
-                    if ui.selectable_label(false, format!("\u{1F30D} {name}")).clicked() {
-                        clicked = true;
-                    }
+                if let Some(sc) = shortcut {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(sc)
+                    });
+                }
+            }
+            Item::Environment { name } => {
+                if ui
+                    .selectable_label(false, format!("\u{1F30D} {name}"))
+                    .clicked()
+                {
+                    clicked = true;
                 }
             }
         });
@@ -402,7 +488,10 @@ mod tests {
     fn consecutive_run_beats_same_length_with_gaps() {
         let consecutive = fuzzy_score("abc", "abcxxxx").unwrap();
         let gappy = fuzzy_score("abc", "axbxcxxx").unwrap();
-        assert!(consecutive > gappy, "consecutive={consecutive} gappy={gappy}");
+        assert!(
+            consecutive > gappy,
+            "consecutive={consecutive} gappy={gappy}"
+        );
     }
 
     #[test]

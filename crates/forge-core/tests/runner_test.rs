@@ -6,19 +6,23 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use forge_core::assert::AssertionOutcome;
-use forge_core::exec::{ExecutionResult, HttpEngine, PartData, ResolvedBody, Sizes, TimingBreakdown};
+use forge_core::exec::{
+    ExecutionResult, HttpEngine, PartData, ResolvedBody, Sizes, TimingBreakdown,
+};
 use forge_core::model::{
     ApiKeyPlacement, AssertionDef, AuthConfig, BodyDef, Check, CollectionMeta, EnvVar, Environment,
-    ExtractScope, Extractor, ExtractorSource, FolderMeta, KeyValue, Method, MultipartPart, NumberOp,
-    Param, ParamKind, PartContent, RawLanguage, RequestDef, ScriptLang, SecretValues, SuiteHooks,
+    ExtractScope, Extractor, ExtractorSource, FolderMeta, KeyValue, Method, MultipartPart,
+    NumberOp, Param, ParamKind, PartContent, RawLanguage, RequestDef, ScriptLang, SecretValues,
+    SuiteHooks,
 };
 use forge_core::runner::{
     junit_xml, resolve_assertions, resolve_request, run, AuthChain, CancellationToken, DataSource,
     RequestOutcome, ResolveError, RunError, RunEvent, RunOptions, RunScope, RunSummary,
 };
 use forge_core::store::{
-    create_collection, create_environment, create_folder, create_request, load_json, save_collection_meta,
-    save_environment, save_folder_meta, save_secrets, Workspace, COLLECTION_FILE, FOLDER_FILE,
+    create_collection, create_environment, create_folder, create_request, load_json,
+    save_collection_meta, save_environment, save_folder_meta, save_secrets, Workspace,
+    COLLECTION_FILE, FOLDER_FILE,
 };
 use forge_core::vars::VarScopes;
 
@@ -75,10 +79,17 @@ fn sample_exec_result(status: u16, body: &[u8], total_ms: u64) -> ExecutionResul
 fn charge_create_def() -> RequestDef {
     let mut def = RequestDef::new("Create Charge", Method::Post, "{{baseUrl}}/charges");
     def.headers.push(KeyValue::new("X-Api-Key", "{{apiKey}}"));
-    def.body = BodyDef::Json { text: "{}".to_string() };
-    def.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 201 }));
+    def.body = BodyDef::Json {
+        text: "{}".to_string(),
+    };
+    def.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 201,
+    }));
     def.extractors.push(Extractor {
-        source: ExtractorSource::JsonPath { expr: "$.id".to_string() },
+        source: ExtractorSource::JsonPath {
+            expr: "$.id".to_string(),
+        },
         var: "chargeId".to_string(),
         scope: ExtractScope::Runtime,
         enabled: true,
@@ -87,19 +98,30 @@ fn charge_create_def() -> RequestDef {
 }
 
 fn charge_get_def() -> RequestDef {
-    let mut def = RequestDef::new("Get Charge", Method::Get, "{{baseUrl}}/charges/{{chargeId}}");
-    def.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    let mut def = RequestDef::new(
+        "Get Charge",
+        Method::Get,
+        "{{baseUrl}}/charges/{{chargeId}}",
+    );
+    def.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 200,
+    }));
     def
 }
 
 fn always_fails_def() -> RequestDef {
     let mut def = RequestDef::new("Should Fail", Method::Get, "{{baseUrl}}/maybe-fail");
-    def.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 500 }));
+    def.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 500,
+    }));
     def
 }
 
 fn set_collection_hooks(dir: &std::path::Path, hooks: SuiteHooks) {
-    let mut meta: CollectionMeta = load_json(&dir.join(COLLECTION_FILE)).expect("load collection meta");
+    let mut meta: CollectionMeta =
+        load_json(&dir.join(COLLECTION_FILE)).expect("load collection meta");
     meta.hooks = hooks;
     save_collection_meta(dir, &meta).expect("save collection meta");
 }
@@ -145,7 +167,12 @@ async fn chained_requests_extract_assert_and_report() {
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
     Workspace::create(root, "Test WS").expect("create workspace");
-    write_env(root, "dev", &[("baseUrl", &server.uri())], &[("apiKey", "s3cret")]);
+    write_env(
+        root,
+        "dev",
+        &[("baseUrl", &server.uri())],
+        &[("apiKey", "s3cret")],
+    );
     let col_dir = create_collection(root, "Payments").expect("create collection");
     create_request(&col_dir, &charge_create_def()).expect("create request A");
     create_request(&col_dir, &charge_get_def()).expect("create request B");
@@ -154,7 +181,12 @@ async fn chained_requests_extract_assert_and_report() {
     let workspace = Workspace::load(root).expect("load workspace");
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
 
     let summary = run(
         &workspace,
@@ -173,8 +205,17 @@ async fn chained_requests_extract_assert_and_report() {
     assert_eq!(summary.skipped, 0);
 
     let events = drain(rx).await;
-    assert!(matches!(events[0], RunEvent::RunStarted { total: 3, iterations: 1 }));
-    assert!(matches!(events[1], RunEvent::IterationStarted { iteration: 0 }));
+    assert!(matches!(
+        events[0],
+        RunEvent::RunStarted {
+            total: 3,
+            iterations: 1
+        }
+    ));
+    assert!(matches!(
+        events[1],
+        RunEvent::IterationStarted { iteration: 0 }
+    ));
 
     let mut outcomes = Vec::new();
     for ev in &events {
@@ -185,7 +226,10 @@ async fn chained_requests_extract_assert_and_report() {
     assert_eq!(outcomes.len(), 3);
     assert_eq!(outcomes[0].name, "Create Charge");
     assert!(outcomes[0].passed(), "{:?}", outcomes[0]);
-    assert_eq!(outcomes[0].extracted, vec![("chargeId".to_string(), "abc".to_string())]);
+    assert_eq!(
+        outcomes[0].extracted,
+        vec![("chargeId".to_string(), "abc".to_string())]
+    );
 
     assert_eq!(outcomes[1].name, "Get Charge");
     assert!(outcomes[1].passed(), "{:?}", outcomes[1]);
@@ -224,14 +268,23 @@ async fn csv_data_driven_iterations_parametrize_path() {
     let col_dir = create_collection(root, "Items").expect("create collection");
 
     let mut def = RequestDef::new("Get Item", Method::Get, "{{baseUrl}}/items/:id");
-    def.params.push(Param { kv: KeyValue::new("id", "{{id}}"), kind: ParamKind::Path });
-    def.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    def.params.push(Param {
+        kv: KeyValue::new("id", "{{id}}"),
+        kind: ParamKind::Path,
+    });
+    def.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 200,
+    }));
     let file = create_request(&col_dir, &def).expect("create request");
 
     let workspace = Workspace::load(root).expect("load workspace");
     let rel_id = workspace.rel_id(&file);
 
-    let csv_path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/runner/items.csv"));
+    let csv_path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/runner/items.csv"
+    ));
     let options = RunOptions {
         environment: Some("dev".to_string()),
         data: Some(DataSource::CsvFile(csv_path)),
@@ -241,9 +294,16 @@ async fn csv_data_driven_iterations_parametrize_path() {
 
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let summary = run(&workspace, RunScope::Request(rel_id), options, &engine, tx, CancellationToken::new())
-        .await
-        .expect("run ok");
+    let summary = run(
+        &workspace,
+        RunScope::Request(rel_id),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
 
     drop(drain(rx).await);
 
@@ -270,14 +330,23 @@ async fn json_data_driven_iterations_parametrize_path() {
     let col_dir = create_collection(root, "Items").expect("create collection");
 
     let mut def = RequestDef::new("Get Item", Method::Get, "{{baseUrl}}/items/:id");
-    def.params.push(Param { kv: KeyValue::new("id", "{{id}}"), kind: ParamKind::Path });
-    def.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    def.params.push(Param {
+        kv: KeyValue::new("id", "{{id}}"),
+        kind: ParamKind::Path,
+    });
+    def.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 200,
+    }));
     let file = create_request(&col_dir, &def).expect("create request");
 
     let workspace = Workspace::load(root).expect("load workspace");
     let rel_id = workspace.rel_id(&file);
 
-    let json_path = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/runner/items.json"));
+    let json_path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/runner/items.json"
+    ));
     let options = RunOptions {
         environment: Some("dev".to_string()),
         data: Some(DataSource::JsonFile(json_path)),
@@ -287,9 +356,16 @@ async fn json_data_driven_iterations_parametrize_path() {
 
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let summary = run(&workspace, RunScope::Request(rel_id), options, &engine, tx, CancellationToken::new())
-        .await
-        .expect("run ok");
+    let summary = run(
+        &workspace,
+        RunScope::Request(rel_id),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
     drop(drain(rx).await);
 
     assert_eq!(summary.total, 2);
@@ -313,7 +389,11 @@ async fn runtime_vars_do_not_leak_across_iterations() {
         .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
         .mount(&server)
         .await;
-    Mock::given(method("GET")).and(path("/use")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/use"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
@@ -322,9 +402,14 @@ async fn runtime_vars_do_not_leak_across_iterations() {
     let col_dir = create_collection(root, "Items").expect("create collection");
 
     let mut extract_def = RequestDef::new("Extract Token", Method::Get, "{{baseUrl}}/items/:id");
-    extract_def.params.push(Param { kv: KeyValue::new("id", "{{id}}"), kind: ParamKind::Path });
+    extract_def.params.push(Param {
+        kv: KeyValue::new("id", "{{id}}"),
+        kind: ParamKind::Path,
+    });
     extract_def.extractors.push(Extractor {
-        source: ExtractorSource::JsonPath { expr: "$.token".to_string() },
+        source: ExtractorSource::JsonPath {
+            expr: "$.token".to_string(),
+        },
         var: "token".to_string(),
         scope: ExtractScope::Runtime,
         enabled: true,
@@ -370,7 +455,10 @@ async fn runtime_vars_do_not_leak_across_iterations() {
 
     // Iteration 0: extraction succeeds, and "Use Token" resolves fine.
     assert_eq!(outcomes[0].name, "Extract Token");
-    assert_eq!(outcomes[0].extracted, vec![("token".to_string(), "row1-token".to_string())]);
+    assert_eq!(
+        outcomes[0].extracted,
+        vec![("token".to_string(), "row1-token".to_string())]
+    );
     assert_eq!(outcomes[1].name, "Use Token");
     assert!(outcomes[1].result.is_ok(), "{:?}", outcomes[1].result);
 
@@ -414,7 +502,9 @@ async fn before_all_runs_once_and_its_var_is_visible_to_every_request() {
     set_collection_hooks(
         &col_dir,
         SuiteHooks {
-            before_all: Some(r#"vars.set("suiteVar", "hello"); log("before-all-ran");"#.to_string()),
+            before_all: Some(
+                r#"vars.set("suiteVar", "hello"); log("before-all-ran");"#.to_string(),
+            ),
             ..Default::default()
         },
     );
@@ -427,7 +517,12 @@ async fn before_all_runs_once_and_its_var_is_visible_to_every_request() {
     create_request(&col_dir, &b).expect("create b");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -445,12 +540,28 @@ async fn before_all_runs_once_and_its_var_is_visible_to_every_request() {
     let outcomes: Vec<RequestOutcome> = drain(rx)
         .await
         .into_iter()
-        .filter_map(|ev| if let RunEvent::RequestFinished(o) = ev { Some(*o) } else { None })
+        .filter_map(|ev| {
+            if let RunEvent::RequestFinished(o) = ev {
+                Some(*o)
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(outcomes.len(), 2);
-    assert!(outcomes[0].script_log.iter().any(|l| l.contains("before-all-ran")), "{:?}", outcomes[0].script_log);
     assert!(
-        !outcomes[1].script_log.iter().any(|l| l.contains("before-all-ran")),
+        outcomes[0]
+            .script_log
+            .iter()
+            .any(|l| l.contains("before-all-ran")),
+        "{:?}",
+        outcomes[0].script_log
+    );
+    assert!(
+        !outcomes[1]
+            .script_log
+            .iter()
+            .any(|l| l.contains("before-all-ran")),
         "beforeAll must only run once: {:?}",
         outcomes[1].script_log
     );
@@ -490,7 +601,12 @@ async fn before_each_overrides_a_var_set_by_before_all_for_every_request() {
     create_request(&col_dir, &b).expect("create b");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -505,13 +621,20 @@ async fn before_each_overrides_a_var_set_by_before_all_for_every_request() {
     .expect("run ok");
     drop(drain(rx).await);
 
-    assert_eq!(summary.passed, 2, "beforeEach must override the value for both requests");
+    assert_eq!(
+        summary.passed, 2,
+        "beforeEach must override the value for both requests"
+    );
 }
 
 #[tokio::test]
 async fn after_each_assertion_failure_flips_the_request_to_failed() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/a")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
@@ -520,12 +643,24 @@ async fn after_each_assertion_failure_flips_the_request_to_failed() {
     let col_dir = create_collection(root, "Coll").expect("create collection");
     set_collection_hooks(
         &col_dir,
-        SuiteHooks { after_each: Some(r#"assert(res.status == 201, "expected 201");"#.to_string()), ..Default::default() },
+        SuiteHooks {
+            after_each: Some(r#"assert(res.status == 201, "expected 201");"#.to_string()),
+            ..Default::default()
+        },
     );
-    create_request(&col_dir, &RequestDef::new("A", Method::Get, "{{baseUrl}}/a")).expect("create a");
+    create_request(
+        &col_dir,
+        &RequestDef::new("A", Method::Get, "{{baseUrl}}/a"),
+    )
+    .expect("create a");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -545,12 +680,21 @@ async fn after_each_assertion_failure_flips_the_request_to_failed() {
     let outcomes: Vec<RequestOutcome> = drain(rx)
         .await
         .into_iter()
-        .filter_map(|ev| if let RunEvent::RequestFinished(o) = ev { Some(*o) } else { None })
+        .filter_map(|ev| {
+            if let RunEvent::RequestFinished(o) = ev {
+                Some(*o)
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(outcomes.len(), 1);
     assert!(outcomes[0].result.is_ok(), "the transport itself succeeded");
     assert!(!outcomes[0].passed());
-    assert!(outcomes[0].assertions.iter().any(|a| !a.passed && a.summary == "expected 201"));
+    assert!(outcomes[0]
+        .assertions
+        .iter()
+        .any(|a| !a.passed && a.summary == "expected 201"));
 }
 
 #[tokio::test]
@@ -596,7 +740,12 @@ async fn collection_before_each_runs_before_folder_before_each() {
     create_request(&folder_dir, &a).expect("create a");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -611,7 +760,10 @@ async fn collection_before_each_runs_before_folder_before_each() {
     .expect("run ok");
     drop(drain(rx).await);
 
-    assert_eq!(summary.passed, 1, "collection beforeEach must run before the folder's");
+    assert_eq!(
+        summary.passed, 1,
+        "collection beforeEach must run before the folder's"
+    );
 }
 
 #[tokio::test]
@@ -631,13 +783,29 @@ async fn before_each_error_fails_the_request_and_respects_bail() {
     let col_dir = create_collection(root, "Coll").expect("create collection");
     set_collection_hooks(
         &col_dir,
-        SuiteHooks { before_each: Some(r#"undefined_fn();"#.to_string()), ..Default::default() },
+        SuiteHooks {
+            before_each: Some(r#"undefined_fn();"#.to_string()),
+            ..Default::default()
+        },
     );
-    create_request(&col_dir, &RequestDef::new("A", Method::Get, "{{baseUrl}}/a")).expect("create a");
-    create_request(&col_dir, &RequestDef::new("B", Method::Get, "{{baseUrl}}/b")).expect("create b");
+    create_request(
+        &col_dir,
+        &RequestDef::new("A", Method::Get, "{{baseUrl}}/a"),
+    )
+    .expect("create a");
+    create_request(
+        &col_dir,
+        &RequestDef::new("B", Method::Get, "{{baseUrl}}/b"),
+    )
+    .expect("create b");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: true, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: true,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -657,7 +825,13 @@ async fn before_each_error_fails_the_request_and_respects_bail() {
     let outcomes: Vec<RequestOutcome> = drain(rx)
         .await
         .into_iter()
-        .filter_map(|ev| if let RunEvent::RequestFinished(o) = ev { Some(*o) } else { None })
+        .filter_map(|ev| {
+            if let RunEvent::RequestFinished(o) = ev {
+                Some(*o)
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(outcomes.len(), 1);
     assert!(
@@ -696,7 +870,12 @@ async fn javascript_language_hook_runs_end_to_end() {
     create_request(&col_dir, &a).expect("create a");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -721,7 +900,11 @@ async fn javascript_language_hook_runs_end_to_end() {
 #[tokio::test]
 async fn bail_stops_after_first_failure() {
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/a")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
     Mock::given(method("GET"))
         .and(path("/b"))
         .respond_with(ResponseTemplate::new(200))
@@ -736,14 +919,25 @@ async fn bail_stops_after_first_failure() {
     let col_dir = create_collection(root, "Coll").expect("create collection");
 
     let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
-    a.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    a.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 200,
+    }));
     let mut b = RequestDef::new("B", Method::Get, "{{baseUrl}}/b");
-    b.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    b.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 200,
+    }));
     create_request(&col_dir, &a).expect("create a");
     create_request(&col_dir, &b).expect("create b");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: true, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: true,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let summary = run(
@@ -772,7 +966,11 @@ async fn bail_suppresses_iteration_started_for_fully_skipped_iterations() {
     // request in iteration 1 is skipped without executing. `IterationStarted`
     // should not be emitted for an iteration that will be skipped entirely.
     let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/a")).respond_with(ResponseTemplate::new(500)).mount(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/a"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
 
     let dir = tempfile::tempdir().expect("tempdir");
     let root = dir.path();
@@ -781,7 +979,10 @@ async fn bail_suppresses_iteration_started_for_fully_skipped_iterations() {
     let col_dir = create_collection(root, "Coll").expect("create collection");
 
     let mut a = RequestDef::new("A", Method::Get, "{{baseUrl}}/a");
-    a.assertions.push(AssertionDef::from(Check::StatusCode { op: NumberOp::Eq, value: 200 }));
+    a.assertions.push(AssertionDef::from(Check::StatusCode {
+        op: NumberOp::Eq,
+        value: 200,
+    }));
     create_request(&col_dir, &a).expect("create a");
 
     let data_path = root.join("data.json");
@@ -812,9 +1013,14 @@ async fn bail_suppresses_iteration_started_for_fully_skipped_iterations() {
     assert_eq!(summary.skipped, 1);
 
     let events = drain(rx).await;
-    let iteration_started_count =
-        events.iter().filter(|ev| matches!(ev, RunEvent::IterationStarted { .. })).count();
-    assert_eq!(iteration_started_count, 1, "iteration 1 is fully skipped and should not emit IterationStarted");
+    let iteration_started_count = events
+        .iter()
+        .filter(|ev| matches!(ev, RunEvent::IterationStarted { .. }))
+        .count();
+    assert_eq!(
+        iteration_started_count, 1,
+        "iteration 1 is fully skipped and should not emit IterationStarted"
+    );
 }
 
 #[tokio::test]
@@ -839,12 +1045,24 @@ async fn skip_in_runs_is_not_executed() {
 
     let workspace = Workspace::load(root).expect("load workspace");
     let rel_id = workspace.rel_id(&file);
-    let options = RunOptions { environment: Some("dev".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("dev".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let summary = run(&workspace, RunScope::Request(rel_id), options, &engine, tx, CancellationToken::new())
-        .await
-        .expect("run ok");
+    let summary = run(
+        &workspace,
+        RunScope::Request(rel_id),
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect("run ok");
     drop(drain(rx).await);
 
     assert_eq!(summary.total, 1);
@@ -861,16 +1079,31 @@ async fn unknown_environment_is_a_run_error() {
     let root = dir.path();
     Workspace::create(root, "Test WS").expect("create workspace");
     let col_dir = create_collection(root, "Coll").expect("create collection");
-    create_request(&col_dir, &RequestDef::new("R", Method::Get, "https://example.com")).expect("create request");
+    create_request(
+        &col_dir,
+        &RequestDef::new("R", Method::Get, "https://example.com"),
+    )
+    .expect("create request");
 
     let workspace = Workspace::load(root).expect("load workspace");
-    let options =
-        RunOptions { environment: Some("nope".to_string()), data: None, bail: false, delay_ms: 0 };
+    let options = RunOptions {
+        environment: Some("nope".to_string()),
+        data: None,
+        bail: false,
+        delay_ms: 0,
+    };
     let engine = HttpEngine::new();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let err = run(&workspace, RunScope::Workspace, options, &engine, tx, CancellationToken::new())
-        .await
-        .expect_err("should fail: unknown environment");
+    let err = run(
+        &workspace,
+        RunScope::Workspace,
+        options,
+        &engine,
+        tx,
+        CancellationToken::new(),
+    )
+    .await
+    .expect_err("should fail: unknown environment");
     assert!(matches!(err, RunError::EnvironmentNotFound(name) if name == "nope"));
 }
 
@@ -882,13 +1115,20 @@ async fn unknown_environment_is_a_run_error() {
 async fn basic_auth_produces_expected_base64() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Get, "https://example.com");
-    def.auth = AuthConfig::Basic { username: "user".to_string(), password: "pass".to_string() };
+    def.auth = AuthConfig::Basic {
+        username: "user".to_string(),
+        password: "pass".to_string(),
+    };
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
-    let auth = resolved.header("Authorization").expect("authorization header present");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
+    let auth = resolved
+        .header("Authorization")
+        .expect("authorization header present");
     assert_eq!(auth, "Basic dXNlcjpwYXNz");
 }
 
@@ -896,12 +1136,17 @@ async fn basic_auth_produces_expected_base64() {
 async fn bearer_auth_uses_custom_prefix() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Get, "https://example.com");
-    def.auth = AuthConfig::Bearer { token: "tok123".to_string(), prefix: Some("Token".to_string()) };
+    def.auth = AuthConfig::Bearer {
+        token: "tok123".to_string(),
+        prefix: Some("Token".to_string()),
+    };
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     assert_eq!(resolved.header("Authorization"), Some("Token tok123"));
 }
 
@@ -918,7 +1163,9 @@ async fn api_key_header_placement() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     assert_eq!(resolved.header("X-Key"), Some("secret123"));
 }
 
@@ -935,16 +1182,23 @@ async fn api_key_query_placement() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     let url = url::Url::parse(&resolved.url).expect("valid url");
-    assert!(url.query_pairs().any(|(k, v)| k == "key" && v == "secret123"));
+    assert!(url
+        .query_pairs()
+        .any(|(k, v)| k == "key" && v == "secret123"));
 }
 
 #[tokio::test]
 async fn explicit_query_param_wins_over_api_key_query_auth() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Get, "https://example.com/search");
-    def.params.push(Param { kv: KeyValue::new("api_key", "user"), kind: ParamKind::Query });
+    def.params.push(Param {
+        kv: KeyValue::new("api_key", "user"),
+        kind: ParamKind::Query,
+    });
     def.auth = AuthConfig::ApiKey {
         key: "api_key".to_string(),
         value: "auth-value".to_string(),
@@ -954,9 +1208,15 @@ async fn explicit_query_param_wins_over_api_key_query_auth() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     let url = url::Url::parse(&resolved.url).expect("valid url");
-    let values: Vec<_> = url.query_pairs().filter(|(k, _)| k == "api_key").map(|(_, v)| v.into_owned()).collect();
+    let values: Vec<_> = url
+        .query_pairs()
+        .filter(|(k, _)| k == "api_key")
+        .map(|(_, v)| v.into_owned())
+        .collect();
     assert_eq!(values, vec!["user".to_string()]);
 }
 
@@ -984,8 +1244,94 @@ async fn oauth2_client_credentials_fetches_and_sets_bearer() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     assert_eq!(resolved.header("Authorization"), Some("Bearer tok-xyz"));
+}
+
+#[tokio::test]
+async fn oauth2_client_credentials_uses_workspace_proxy() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"access_token":"must-not-arrive","token_type":"Bearer","expires_in":3600}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let (_dir, mut ws) = dummy_workspace();
+    ws.meta.settings.proxy = Some(forge_core::model::ProxyConfig {
+        url: "http://127.0.0.1:1".to_string(),
+        no_proxy: String::new(),
+    });
+    let mut def = RequestDef::new("r", Method::Get, "https://example.com");
+    def.auth = AuthConfig::OAuth2ClientCredentials {
+        token_url: format!("{}/token", server.uri()),
+        client_id: "proxy-regression-client".to_string(),
+        client_secret: "csecret".to_string(),
+        scopes: vec![],
+        credentials_in_body: false,
+    };
+
+    let error = resolve_request(
+        &ws,
+        &def,
+        &Vec::new(),
+        &VarScopes::new(),
+        &HttpEngine::new(),
+    )
+    .await
+    .expect_err("token request must use the configured proxy");
+
+    assert!(error.to_string().contains("OAuth2 token request failed"));
+    assert!(
+        server
+            .received_requests()
+            .await
+            .expect("request log")
+            .is_empty(),
+        "the token endpoint must not be reached directly"
+    );
+}
+
+#[tokio::test]
+async fn oauth2_client_credentials_honors_workspace_no_proxy() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"access_token":"bypassed","token_type":"Bearer","expires_in":3600}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let (_dir, mut ws) = dummy_workspace();
+    ws.meta.settings.proxy = Some(forge_core::model::ProxyConfig {
+        url: "http://127.0.0.1:1".to_string(),
+        no_proxy: "127.0.0.1".to_string(),
+    });
+    let mut def = RequestDef::new("r", Method::Get, "https://example.com");
+    def.auth = AuthConfig::OAuth2ClientCredentials {
+        token_url: format!("{}/token", server.uri()),
+        client_id: "no-proxy-regression-client".to_string(),
+        client_secret: "csecret".to_string(),
+        scopes: vec![],
+        credentials_in_body: false,
+    };
+
+    let resolved = resolve_request(
+        &ws,
+        &def,
+        &Vec::new(),
+        &VarScopes::new(),
+        &HttpEngine::new(),
+    )
+    .await
+    .expect("no-proxy host must bypass the invalid proxy");
+
+    assert_eq!(resolved.header("Authorization"), Some("Bearer bypassed"));
 }
 
 #[tokio::test]
@@ -1005,7 +1351,9 @@ async fn oauth2_auth_code_is_rejected_headless() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let err = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect_err("should fail");
+    let err = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect_err("should fail");
     assert!(matches!(err, ResolveError::Auth(_)));
 }
 
@@ -1013,15 +1361,24 @@ async fn oauth2_auth_code_is_rejected_headless() {
 async fn explicit_authorization_header_wins_over_auth_config() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Get, "https://example.com");
-    def.headers.push(KeyValue::new("Authorization", "Bearer explicit-token"));
-    def.auth = AuthConfig::Basic { username: "u".to_string(), password: "p".to_string() };
+    def.headers
+        .push(KeyValue::new("Authorization", "Bearer explicit-token"));
+    def.auth = AuthConfig::Basic {
+        username: "u".to_string(),
+        password: "p".to_string(),
+    };
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
-    let auth_headers: Vec<_> =
-        resolved.headers.iter().filter(|(k, _)| k.eq_ignore_ascii_case("authorization")).collect();
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
+    let auth_headers: Vec<_> = resolved
+        .headers
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        .collect();
     assert_eq!(auth_headers.len(), 1);
     assert_eq!(auth_headers[0].1, "Bearer explicit-token");
 }
@@ -1031,12 +1388,17 @@ async fn auth_inherit_walks_chain_to_first_concrete_config() {
     let (_dir, ws) = dummy_workspace();
     let def = RequestDef::new("r", Method::Get, "https://example.com"); // auth defaults to Inherit
     let folder_auth = AuthConfig::Inherit;
-    let collection_auth = AuthConfig::Bearer { token: "col-token".to_string(), prefix: None };
+    let collection_auth = AuthConfig::Bearer {
+        token: "col-token".to_string(),
+        prefix: None,
+    };
     let auth_chain: AuthChain = vec![&folder_auth, &collection_auth];
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     assert_eq!(resolved.header("Authorization"), Some("Bearer col-token"));
 }
 
@@ -1048,25 +1410,39 @@ async fn auth_inherit_walks_chain_to_first_concrete_config() {
 async fn path_param_is_percent_encoded() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Get, "https://example.com/users/:name");
-    def.params.push(Param { kv: KeyValue::new("name", "john doe"), kind: ParamKind::Path });
+    def.params.push(Param {
+        kv: KeyValue::new("name", "john doe"),
+        kind: ParamKind::Path,
+    });
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
-    assert!(resolved.url.contains("/users/john%20doe"), "{}", resolved.url);
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
+    assert!(
+        resolved.url.contains("/users/john%20doe"),
+        "{}",
+        resolved.url
+    );
 }
 
 #[tokio::test]
 async fn query_param_round_trips_special_characters() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Get, "https://example.com/search");
-    def.params.push(Param { kv: KeyValue::new("q", "a b&c"), kind: ParamKind::Query });
+    def.params.push(Param {
+        kv: KeyValue::new("q", "a b&c"),
+        kind: ParamKind::Query,
+    });
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     let url = url::Url::parse(&resolved.url).expect("valid url");
     assert!(url.query_pairs().any(|(k, v)| k == "q" && v == "a b&c"));
 }
@@ -1079,8 +1455,14 @@ async fn missing_scheme_defaults_to_https() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
-    assert!(resolved.url.starts_with("https://example.com/ping"), "{}", resolved.url);
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
+    assert!(
+        resolved.url.starts_with("https://example.com/ping"),
+        "{}",
+        resolved.url
+    );
 }
 
 #[tokio::test]
@@ -1089,12 +1471,18 @@ async fn scheme_less_url_with_scheme_looking_query_still_gets_https_prefix() {
     // a naive `.contains("://")` check would wrongly treat this as already
     // having a scheme and leave it unprefixed (which then fails to parse).
     let (_dir, ws) = dummy_workspace();
-    let def = RequestDef::new("r", Method::Get, "api.example.com/redirect?next=https://evil.com");
+    let def = RequestDef::new(
+        "r",
+        Method::Get,
+        "api.example.com/redirect?next=https://evil.com",
+    );
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     assert!(
         resolved.url.starts_with("https://api.example.com/redirect"),
         "{}",
@@ -1110,12 +1498,17 @@ async fn scheme_less_url_with_scheme_looking_query_still_gets_https_prefix() {
 async fn json_body_sets_content_type_and_interpolates() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Post, "https://example.com");
-    def.body = BodyDef::Json { text: "{\"name\":\"{{name}}\"}".to_string() };
+    def.body = BodyDef::Json {
+        text: "{\"name\":\"{{name}}\"}".to_string(),
+    };
     let engine = HttpEngine::new();
-    let scopes = VarScopes::new().with_collection(&BTreeMap::from([("name".to_string(), "forge".to_string())]));
+    let scopes = VarScopes::new()
+        .with_collection(&BTreeMap::from([("name".to_string(), "forge".to_string())]));
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     match resolved.body {
         ResolvedBody::Bytes { content_type, data } => {
             assert_eq!(content_type.as_deref(), Some("application/json"));
@@ -1129,14 +1522,21 @@ async fn json_body_sets_content_type_and_interpolates() {
 async fn raw_body_language_maps_to_content_type() {
     let (_dir, ws) = dummy_workspace();
     let mut def = RequestDef::new("r", Method::Post, "https://example.com");
-    def.body = BodyDef::Raw { text: "<a/>".to_string(), language: RawLanguage::Xml };
+    def.body = BodyDef::Raw {
+        text: "<a/>".to_string(),
+        language: RawLanguage::Xml,
+    };
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     match resolved.body {
-        ResolvedBody::Bytes { content_type, .. } => assert_eq!(content_type.as_deref(), Some("application/xml")),
+        ResolvedBody::Bytes { content_type, .. } => {
+            assert_eq!(content_type.as_deref(), Some("application/xml"))
+        }
         other => panic!("expected Bytes body, got {other:?}"),
     }
 }
@@ -1147,12 +1547,16 @@ async fn form_body_collects_only_enabled_fields() {
     let mut disabled = KeyValue::new("b", "2");
     disabled.enabled = false;
     let mut def = RequestDef::new("r", Method::Post, "https://example.com");
-    def.body = BodyDef::FormUrlencoded { fields: vec![KeyValue::new("a", "1"), disabled] };
+    def.body = BodyDef::FormUrlencoded {
+        fields: vec![KeyValue::new("a", "1"), disabled],
+    };
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     match resolved.body {
         ResolvedBody::Form(pairs) => assert_eq!(pairs, vec![("a".to_string(), "1".to_string())]),
         other => panic!("expected Form body, got {other:?}"),
@@ -1172,7 +1576,9 @@ async fn graphql_body_builds_json_envelope() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     match resolved.body {
         ResolvedBody::Bytes { content_type, data } => {
             assert_eq!(content_type.as_deref(), Some("application/json"));
@@ -1190,12 +1596,16 @@ async fn binary_body_reads_file_relative_to_workspace_root() {
     let (_dir, ws) = dummy_workspace();
     std::fs::write(ws.root.join("payload.bin"), b"hello-bytes").expect("write file");
     let mut def = RequestDef::new("r", Method::Post, "https://example.com");
-    def.body = BodyDef::Binary { path: "payload.bin".to_string() };
+    def.body = BodyDef::Binary {
+        path: "payload.bin".to_string(),
+    };
     let engine = HttpEngine::new();
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     match resolved.body {
         ResolvedBody::Bytes { content_type, data } => {
             assert_eq!(content_type.as_deref(), Some("application/octet-stream"));
@@ -1214,13 +1624,17 @@ async fn multipart_body_resolves_text_and_file_parts() {
         parts: vec![
             MultipartPart {
                 name: "field".to_string(),
-                content: PartContent::Text { value: "hello".to_string() },
+                content: PartContent::Text {
+                    value: "hello".to_string(),
+                },
                 content_type: None,
                 enabled: true,
             },
             MultipartPart {
                 name: "file".to_string(),
-                content: PartContent::File { path: "up.txt".to_string() },
+                content: PartContent::File {
+                    path: "up.txt".to_string(),
+                },
                 content_type: Some("text/plain".to_string()),
                 enabled: true,
             },
@@ -1230,7 +1644,9 @@ async fn multipart_body_resolves_text_and_file_parts() {
     let scopes = VarScopes::new();
     let auth_chain: AuthChain = vec![];
 
-    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine).await.expect("resolve ok");
+    let resolved = resolve_request(&ws, &def, &auth_chain, &scopes, &engine)
+        .await
+        .expect("resolve ok");
     match resolved.body {
         ResolvedBody::Multipart(parts) => {
             assert_eq!(parts.len(), 2);
@@ -1267,7 +1683,13 @@ fn junit_xml_escapes_special_characters() {
         script_error: None,
         extracted: Vec::new(),
     };
-    let summary = RunSummary { total: 1, passed: 0, failed: 1, skipped: 0, duration_ms: 5 };
+    let summary = RunSummary {
+        total: 1,
+        passed: 0,
+        failed: 1,
+        skipped: 0,
+        duration_ms: 5,
+    };
 
     let xml = junit_xml("Suite <1>", std::slice::from_ref(&outcome), &summary);
 
@@ -1290,7 +1712,13 @@ fn junit_xml_reports_transport_errors_as_error_elements() {
         script_error: None,
         extracted: Vec::new(),
     };
-    let summary = RunSummary { total: 1, passed: 0, failed: 1, skipped: 0, duration_ms: 1 };
+    let summary = RunSummary {
+        total: 1,
+        passed: 0,
+        failed: 1,
+        skipped: 0,
+        duration_ms: 1,
+    };
 
     let xml = junit_xml("Suite", std::slice::from_ref(&outcome), &summary);
 
@@ -1314,9 +1742,16 @@ fn resolve_assertions_interpolates_variables_and_leaves_unresolved_verbatim() {
             value: serde_json::json!("{{baseUrl}}/post"),
         }
         .into(),
-        Check::Header { name: "X-{{baseUrl}}".into(), op: StringOp::Equals, value: "{{missing}}".into() }
-            .into(),
-        Check::BodyContains { value: "{{baseUrl}}".into() }.into(),
+        Check::Header {
+            name: "X-{{baseUrl}}".into(),
+            op: StringOp::Equals,
+            value: "{{missing}}".into(),
+        }
+        .into(),
+        Check::BodyContains {
+            value: "{{baseUrl}}".into(),
+        }
+        .into(),
         Check::JsonPath {
             path: "$.list".into(),
             op: ValueOp::Equals,
@@ -1344,7 +1779,12 @@ fn resolve_assertions_interpolates_variables_and_leaves_unresolved_verbatim() {
             value: "{{missing}}".into(),
         }
     );
-    assert_eq!(resolved[2].check, Check::BodyContains { value: "http://api.test".into() });
+    assert_eq!(
+        resolved[2].check,
+        Check::BodyContains {
+            value: "http://api.test".into()
+        }
+    );
     assert_eq!(
         resolved[3].check,
         Check::JsonPath {
@@ -1373,8 +1813,14 @@ async fn resolve_loads_workspace_tls_material_and_concatenates_separate_key() {
         .await
         .expect("resolve should succeed");
 
-    assert_eq!(resolved.client_pem.as_deref(), Some(b"CERT\nKEY\n".as_slice()));
-    assert_eq!(resolved.extra_roots_pem.as_deref(), Some(b"CA\n".as_slice()));
+    assert_eq!(
+        resolved.client_pem.as_deref(),
+        Some(b"CERT\nKEY\n".as_slice())
+    );
+    assert_eq!(
+        resolved.extra_roots_pem.as_deref(),
+        Some(b"CA\n".as_slice())
+    );
 }
 
 #[tokio::test]
@@ -1391,5 +1837,8 @@ async fn resolve_fails_clearly_when_a_tls_file_is_missing() {
     let err = resolve_request(&ws, &def, &Vec::new(), &VarScopes::new(), &engine)
         .await
         .expect_err("missing TLS file must fail resolution");
-    assert!(err.to_string().contains("does-not-exist.pem"), "unexpected error: {err}");
+    assert!(
+        err.to_string().contains("does-not-exist.pem"),
+        "unexpected error: {err}"
+    );
 }

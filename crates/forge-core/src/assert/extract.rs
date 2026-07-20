@@ -36,19 +36,27 @@ pub fn apply_extractors(extractors: &[Extractor], res: &ExecutionResult) -> Extr
 fn extract_one(ext: &Extractor, res: &ExecutionResult) -> Result<String, String> {
     match &ext.source {
         ExtractorSource::JsonPath { expr } => {
-            let body = res.json().ok_or_else(|| "response body is not valid JSON".to_string())?;
-            let query =
-                JsonPath::parse(expr).map_err(|e| format!("invalid JSONPath expression {expr:?}: {e}"))?;
-            let node = query.query(&body).first().ok_or_else(|| format!("no match for {expr}"))?;
+            let body = res
+                .json()
+                .ok_or_else(|| "response body is not valid JSON".to_string())?;
+            let query = JsonPath::parse(expr)
+                .map_err(|e| format!("invalid JSONPath expression {expr:?}: {e}"))?;
+            let node = query
+                .query(&body)
+                .first()
+                .ok_or_else(|| format!("no match for {expr}"))?;
             Ok(stringify_node(node))
         }
-        ExtractorSource::Header { name } => {
-            res.header(name).map(str::to_string).ok_or_else(|| format!("header {name:?} not found"))
-        }
+        ExtractorSource::Header { name } => res
+            .header(name)
+            .map(str::to_string)
+            .ok_or_else(|| format!("header {name:?} not found")),
         ExtractorSource::Regex { pattern, group } => {
             let re = Regex::new(pattern).map_err(|e| format!("invalid regex /{pattern}/: {e}"))?;
             let text = res.text();
-            let caps = re.captures(&text).ok_or_else(|| format!("pattern /{pattern}/ did not match"))?;
+            let caps = re
+                .captures(&text)
+                .ok_or_else(|| format!("pattern /{pattern}/ did not match"))?;
             caps.get(*group)
                 .map(|m| m.as_str().to_string())
                 .ok_or_else(|| format!("capture group {group} not found"))
@@ -74,7 +82,12 @@ mod tests {
     use crate::model::ExtractScope;
 
     fn extractor(source: ExtractorSource, var: &str) -> Extractor {
-        Extractor { source, var: var.to_string(), scope: ExtractScope::Runtime, enabled: true }
+        Extractor {
+            source,
+            var: var.to_string(),
+            scope: ExtractScope::Runtime,
+            enabled: true,
+        }
     }
 
     #[test]
@@ -82,13 +95,30 @@ mod tests {
         let res = exec_result(
             200,
             &[("Content-Type", "application/json")],
-            json!({"token": "abc123", "count": 5, "nested": {"id": 7}}).to_string().as_bytes(),
+            json!({"token": "abc123", "count": 5, "nested": {"id": 7}})
+                .to_string()
+                .as_bytes(),
             10,
         );
         let extractors = vec![
-            extractor(ExtractorSource::JsonPath { expr: "$.token".into() }, "token"),
-            extractor(ExtractorSource::JsonPath { expr: "$.count".into() }, "count"),
-            extractor(ExtractorSource::JsonPath { expr: "$.nested".into() }, "nested"),
+            extractor(
+                ExtractorSource::JsonPath {
+                    expr: "$.token".into(),
+                },
+                "token",
+            ),
+            extractor(
+                ExtractorSource::JsonPath {
+                    expr: "$.count".into(),
+                },
+                "count",
+            ),
+            extractor(
+                ExtractorSource::JsonPath {
+                    expr: "$.nested".into(),
+                },
+                "nested",
+            ),
         ];
         let report = apply_extractors(&extractors, &res);
         assert!(report.errors.is_empty());
@@ -105,8 +135,10 @@ mod tests {
     #[test]
     fn json_path_extraction_errors() {
         let res = exec_result(200, &[], b"not json", 10);
-        let extractors =
-            vec![extractor(ExtractorSource::JsonPath { expr: "$.a".into() }, "a")];
+        let extractors = vec![extractor(
+            ExtractorSource::JsonPath { expr: "$.a".into() },
+            "a",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert!(report.values.is_empty());
         assert_eq!(report.errors.len(), 1);
@@ -116,7 +148,10 @@ mod tests {
     #[test]
     fn json_path_extraction_no_match() {
         let res = exec_result(200, &[], b"{\"a\":1}", 10);
-        let extractors = vec![extractor(ExtractorSource::JsonPath { expr: "$.b".into() }, "b")];
+        let extractors = vec![extractor(
+            ExtractorSource::JsonPath { expr: "$.b".into() },
+            "b",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert!(report.values.is_empty());
         assert_eq!(report.errors.len(), 1);
@@ -125,17 +160,34 @@ mod tests {
 
     #[test]
     fn header_extraction_case_insensitive_first() {
-        let res = exec_result(200, &[("X-Request-Id", "req-1"), ("X-Request-Id", "req-2")], b"", 10);
-        let extractors =
-            vec![extractor(ExtractorSource::Header { name: "x-request-id".into() }, "rid")];
+        let res = exec_result(
+            200,
+            &[("X-Request-Id", "req-1"), ("X-Request-Id", "req-2")],
+            b"",
+            10,
+        );
+        let extractors = vec![extractor(
+            ExtractorSource::Header {
+                name: "x-request-id".into(),
+            },
+            "rid",
+        )];
         let report = apply_extractors(&extractors, &res);
-        assert_eq!(report.values, vec![("rid".to_string(), "req-1".to_string())]);
+        assert_eq!(
+            report.values,
+            vec![("rid".to_string(), "req-1".to_string())]
+        );
     }
 
     #[test]
     fn header_extraction_missing() {
         let res = exec_result(200, &[], b"", 10);
-        let extractors = vec![extractor(ExtractorSource::Header { name: "x-missing".into() }, "m")];
+        let extractors = vec![extractor(
+            ExtractorSource::Header {
+                name: "x-missing".into(),
+            },
+            "m",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert!(report.values.is_empty());
         assert!(report.errors[0].contains("not found"));
@@ -145,18 +197,29 @@ mod tests {
     fn regex_extraction_capture_group() {
         let res = exec_result(200, &[], b"session=abc-123-xyz;", 10);
         let extractors = vec![extractor(
-            ExtractorSource::Regex { pattern: r"session=([a-z0-9-]+);".into(), group: 1 },
+            ExtractorSource::Regex {
+                pattern: r"session=([a-z0-9-]+);".into(),
+                group: 1,
+            },
             "session",
         )];
         let report = apply_extractors(&extractors, &res);
-        assert_eq!(report.values, vec![("session".to_string(), "abc-123-xyz".to_string())]);
+        assert_eq!(
+            report.values,
+            vec![("session".to_string(), "abc-123-xyz".to_string())]
+        );
     }
 
     #[test]
     fn regex_extraction_whole_match_group_zero() {
         let res = exec_result(200, &[], b"foo123bar", 10);
-        let extractors =
-            vec![extractor(ExtractorSource::Regex { pattern: r"\d+".into(), group: 0 }, "num")];
+        let extractors = vec![extractor(
+            ExtractorSource::Regex {
+                pattern: r"\d+".into(),
+                group: 0,
+            },
+            "num",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert_eq!(report.values, vec![("num".to_string(), "123".to_string())]);
     }
@@ -164,7 +227,13 @@ mod tests {
     #[test]
     fn regex_extraction_invalid_pattern_errors() {
         let res = exec_result(200, &[], b"foo", 10);
-        let extractors = vec![extractor(ExtractorSource::Regex { pattern: "(".into(), group: 0 }, "x")];
+        let extractors = vec![extractor(
+            ExtractorSource::Regex {
+                pattern: "(".into(),
+                group: 0,
+            },
+            "x",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert!(report.values.is_empty());
         assert!(report.errors[0].contains("invalid regex"));
@@ -173,7 +242,13 @@ mod tests {
     #[test]
     fn regex_extraction_no_match_errors() {
         let res = exec_result(200, &[], b"foo", 10);
-        let extractors = vec![extractor(ExtractorSource::Regex { pattern: "bar".into(), group: 0 }, "x")];
+        let extractors = vec![extractor(
+            ExtractorSource::Regex {
+                pattern: "bar".into(),
+                group: 0,
+            },
+            "x",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert!(report.values.is_empty());
         assert!(report.errors[0].contains("did not match"));
@@ -182,8 +257,13 @@ mod tests {
     #[test]
     fn regex_extraction_missing_group_errors() {
         let res = exec_result(200, &[], b"foo123", 10);
-        let extractors =
-            vec![extractor(ExtractorSource::Regex { pattern: r"foo(\d+)?".into(), group: 5 }, "x")];
+        let extractors = vec![extractor(
+            ExtractorSource::Regex {
+                pattern: r"foo(\d+)?".into(),
+                group: 5,
+            },
+            "x",
+        )];
         let report = apply_extractors(&extractors, &res);
         assert!(report.values.is_empty());
         assert!(report.errors[0].contains("capture group 5 not found"));

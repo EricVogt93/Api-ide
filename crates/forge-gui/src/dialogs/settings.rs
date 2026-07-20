@@ -24,7 +24,12 @@ enum Category {
 }
 
 impl Category {
-    const ALL: [Category; 4] = [Category::Appearance, Category::Http, Category::Editor, Category::Keymap];
+    const ALL: [Category; 4] = [
+        Category::Appearance,
+        Category::Http,
+        Category::Editor,
+        Category::Keymap,
+    ];
 
     fn label(&self) -> &'static str {
         match self {
@@ -51,6 +56,7 @@ struct HttpDraft {
     tls_client_cert: String,
     tls_client_key: String,
     tls_ca_bundle: String,
+    openapi_url: String,
 }
 
 impl HttpDraft {
@@ -62,15 +68,28 @@ impl HttpDraft {
             verify_tls: s.verify_tls,
             proxy_enabled: s.proxy.is_some(),
             proxy_url: s.proxy.as_ref().map(|p| p.url.clone()).unwrap_or_default(),
-            proxy_no_proxy: s.proxy.as_ref().map(|p| p.no_proxy.clone()).unwrap_or_default(),
+            proxy_no_proxy: s
+                .proxy
+                .as_ref()
+                .map(|p| p.no_proxy.clone())
+                .unwrap_or_default(),
             user_agent: s.user_agent.clone().unwrap_or_default(),
             tls_client_cert: s
                 .tls
                 .as_ref()
                 .and_then(|t| t.client_cert.clone())
                 .unwrap_or_default(),
-            tls_client_key: s.tls.as_ref().and_then(|t| t.client_key.clone()).unwrap_or_default(),
-            tls_ca_bundle: s.tls.as_ref().and_then(|t| t.ca_bundle.clone()).unwrap_or_default(),
+            tls_client_key: s
+                .tls
+                .as_ref()
+                .and_then(|t| t.client_key.clone())
+                .unwrap_or_default(),
+            tls_ca_bundle: s
+                .tls
+                .as_ref()
+                .and_then(|t| t.ca_bundle.clone())
+                .unwrap_or_default(),
+            openapi_url: s.openapi_url.clone().unwrap_or_default(),
         }
     }
 
@@ -81,22 +100,45 @@ impl HttpDraft {
             max_redirects: self.max_redirects,
             verify_tls: self.verify_tls,
             proxy: if self.proxy_enabled {
-                Some(ProxyConfig { url: self.proxy_url.clone(), no_proxy: self.proxy_no_proxy.clone() })
+                Some(ProxyConfig {
+                    url: self.proxy_url.clone(),
+                    no_proxy: self.proxy_no_proxy.clone(),
+                })
             } else {
                 None
             },
-            user_agent: if self.user_agent.is_empty() { None } else { Some(self.user_agent.clone()) },
+            user_agent: if self.user_agent.is_empty() {
+                None
+            } else {
+                Some(self.user_agent.clone())
+            },
             tls: {
                 let opt = |s: &str| {
                     let s = s.trim();
-                    if s.is_empty() { None } else { Some(s.to_string()) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.to_string())
+                    }
                 };
                 let tls = TlsSettings {
                     client_cert: opt(&self.tls_client_cert),
                     client_key: opt(&self.tls_client_key),
                     ca_bundle: opt(&self.tls_ca_bundle),
                 };
-                if tls.is_empty() { None } else { Some(tls) }
+                if tls.is_empty() {
+                    None
+                } else {
+                    Some(tls)
+                }
+            },
+            openapi_url: {
+                let s = self.openapi_url.trim();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_string())
+                }
             },
         }
     }
@@ -117,7 +159,11 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
         return;
     }
     if state.dialogs.settings.draft.is_none() {
-        let settings = state.workspace.as_ref().map(|w| w.meta.settings.clone()).unwrap_or_default();
+        let settings = state
+            .workspace
+            .as_ref()
+            .map(|w| w.meta.settings.clone())
+            .unwrap_or_default();
         state.dialogs.settings.draft = Some(HttpDraft::from_settings(&settings));
     }
 
@@ -137,7 +183,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                 ui.vertical(|ui| {
                     ui.set_width(130.0);
                     for cat in Category::ALL {
-                        if ui.selectable_label(state.dialogs.settings.category == cat, cat.label()).clicked() {
+                        if ui
+                            .selectable_label(state.dialogs.settings.category == cat, cat.label())
+                            .clicked()
+                        {
                             state.dialogs.settings.category = cat;
                         }
                     }
@@ -212,7 +261,10 @@ fn editor_tab(ui: &mut Ui, state: &mut AppState) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label("Monospace font size:");
-        if ui.add(egui::Slider::new(&mut state.editor_font_size, 9.0..=24.0).suffix(" px")).changed() {
+        if ui
+            .add(egui::Slider::new(&mut state.editor_font_size, 9.0..=24.0).suffix(" px"))
+            .changed()
+        {
             apply_editor_font_size(ui.ctx(), state.editor_font_size);
         }
     });
@@ -231,57 +283,101 @@ pub fn apply_editor_font_size(ctx: &egui::Context, size: f32) {
 fn http_tab(ui: &mut Ui, draft: &mut HttpDraft) {
     ui.heading("HTTP");
     ui.add_space(8.0);
-    egui::Grid::new("http-settings-grid").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
-        ui.label("Timeout (ms)");
-        ui.add(egui::DragValue::new(&mut draft.timeout_ms).range(1..=600_000));
-        ui.end_row();
+    egui::Grid::new("http-settings-grid")
+        .num_columns(2)
+        .spacing([8.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("Timeout (ms)");
+            ui.add(egui::DragValue::new(&mut draft.timeout_ms).range(1..=600_000));
+            ui.end_row();
 
-        ui.label("Follow redirects");
-        ui.checkbox(&mut draft.follow_redirects, "");
-        ui.end_row();
+            ui.label("Follow redirects");
+            ui.checkbox(&mut draft.follow_redirects, "");
+            ui.end_row();
 
-        ui.label("Max redirects");
-        ui.add(egui::DragValue::new(&mut draft.max_redirects).range(0..=50));
-        ui.end_row();
+            ui.label("Max redirects");
+            ui.add(egui::DragValue::new(&mut draft.max_redirects).range(0..=50));
+            ui.end_row();
 
-        ui.label("Verify TLS certificates");
-        ui.checkbox(&mut draft.verify_tls, "");
-        ui.end_row();
+            ui.label("Verify TLS certificates");
+            ui.checkbox(&mut draft.verify_tls, "");
+            ui.end_row();
 
-        ui.label("User-Agent");
-        ui.add(TextEdit::singleline(&mut draft.user_agent).hint_text("(default)"));
-        ui.end_row();
-    });
+            ui.label("User-Agent");
+            ui.add(TextEdit::singleline(&mut draft.user_agent).hint_text("(default)"));
+            ui.end_row();
+        });
 
     ui.add_space(8.0);
     ui.label("Client certificate (mTLS) — PEM paths, workspace-relative or absolute:");
-    egui::Grid::new("http-tls-grid").num_columns(3).spacing([8.0, 8.0]).show(ui, |ui| {
-        path_row(ui, "Client cert", &mut draft.tls_client_cert, "certs/client.pem");
-        path_row(ui, "Client key", &mut draft.tls_client_key, "(empty if key is in the cert file)");
-        path_row(ui, "Extra CA bundle", &mut draft.tls_ca_bundle, "certs/internal-ca.pem");
-    });
+    egui::Grid::new("http-tls-grid")
+        .num_columns(3)
+        .spacing([8.0, 8.0])
+        .show(ui, |ui| {
+            path_row(
+                ui,
+                "Client cert",
+                &mut draft.tls_client_cert,
+                "certs/client.pem",
+            );
+            path_row(
+                ui,
+                "Client key",
+                &mut draft.tls_client_key,
+                "(empty if key is in the cert file)",
+            );
+            path_row(
+                ui,
+                "Extra CA bundle",
+                &mut draft.tls_ca_bundle,
+                "certs/internal-ca.pem",
+            );
+        });
+
+    ui.add_space(8.0);
+    ui.label("OpenAPI spec (editor assistance — URL suggestions, validation):");
+    ui.add(
+        TextEdit::singleline(&mut draft.openapi_url)
+            .hint_text("https://api.example.com/openapi.json or specs/api.yaml")
+            .desired_width(360.0),
+    );
 
     ui.add_space(8.0);
     ui.checkbox(&mut draft.proxy_enabled, "Use a proxy");
     ui.add_enabled_ui(draft.proxy_enabled, |ui| {
-        egui::Grid::new("http-proxy-grid").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
-            ui.label("Proxy URL");
-            ui.add(TextEdit::singleline(&mut draft.proxy_url).hint_text("http://127.0.0.1:8080"));
-            ui.end_row();
+        egui::Grid::new("http-proxy-grid")
+            .num_columns(2)
+            .spacing([8.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Proxy URL");
+                ui.add(
+                    TextEdit::singleline(&mut draft.proxy_url).hint_text("http://127.0.0.1:8080"),
+                );
+                ui.end_row();
 
-            ui.label("No proxy for");
-            ui.add(TextEdit::singleline(&mut draft.proxy_no_proxy).hint_text("comma-separated host suffixes"));
-            ui.end_row();
-        });
+                ui.label("No proxy for");
+                ui.add(
+                    TextEdit::singleline(&mut draft.proxy_no_proxy)
+                        .hint_text("comma-separated host suffixes"),
+                );
+                ui.end_row();
+            });
     });
 }
 
 /// One "label / editable path / Browse…" row of the TLS grid.
 fn path_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
     ui.label(label);
-    ui.add(TextEdit::singleline(value).hint_text(hint).desired_width(260.0));
+    ui.add(
+        TextEdit::singleline(value)
+            .hint_text(hint)
+            .desired_width(260.0),
+    );
     if ui.button("Browse…").clicked() {
-        if let Some(path) = rfd::FileDialog::new().add_filter("PEM", &["pem", "crt", "key"]).pick_file() {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("PEM", &["pem", "crt", "key"])
+            .pick_file()
+        {
             *value = path.display().to_string();
         }
     }
@@ -291,19 +387,25 @@ fn path_row(ui: &mut Ui, label: &str, value: &mut String, hint: &str) {
 fn keymap_tab(ui: &mut Ui) {
     ui.heading("Keymap");
     ui.add_space(8.0);
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("keymap-grid").num_columns(2).striped(true).spacing([16.0, 4.0]).show(ui, |ui| {
-            ui.strong("Action");
-            ui.strong("Shortcut");
-            ui.end_row();
-            for action in keymap::ACTIONS {
-                ui.label(action.title);
-                match action.shortcut {
-                    Some(shortcut) => ui.monospace(ui.ctx().format_shortcut(&shortcut)),
-                    None => ui.weak("—"),
-                };
-                ui.end_row();
-            }
+    egui::ScrollArea::vertical()
+        .id_salt("settings-sa-1")
+        .show(ui, |ui| {
+            egui::Grid::new("keymap-grid")
+                .num_columns(2)
+                .striped(true)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    ui.strong("Action");
+                    ui.strong("Shortcut");
+                    ui.end_row();
+                    for action in keymap::ACTIONS {
+                        ui.label(action.title);
+                        match action.shortcut {
+                            Some(shortcut) => ui.monospace(ui.ctx().format_shortcut(&shortcut)),
+                            None => ui.weak("—"),
+                        };
+                        ui.end_row();
+                    }
+                });
         });
-    });
 }

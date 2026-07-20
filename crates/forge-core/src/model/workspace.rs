@@ -34,6 +34,11 @@ pub struct WorkspaceSettings {
     pub user_agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsSettings>,
+    /// OpenAPI 3.x spec source powering editor assistance (URL-bar
+    /// suggestions, path/method validation, required-parameter hints):
+    /// an `http(s)` URL or a workspace-relative file path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub openapi_url: Option<String>,
 }
 
 impl Default for WorkspaceSettings {
@@ -46,6 +51,7 @@ impl Default for WorkspaceSettings {
             proxy: None,
             user_agent: None,
             tls: None,
+            openapi_url: None,
         }
     }
 }

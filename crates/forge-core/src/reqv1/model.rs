@@ -289,7 +289,8 @@ mod tests {
 
     #[test]
     fn parses_canonical_example() {
-        let doc = include_str!("../../tests/fixtures/reqv1/project/requests/users/create.request.json");
+        let doc =
+            include_str!("../../tests/fixtures/reqv1/project/requests/users/create.request.json");
         let parsed = RequestDocument::parse(doc).expect("canonical example must parse");
         assert_eq!(parsed.meta.id, "users.create");
         assert_eq!(parsed.pipeline.len(), 4);

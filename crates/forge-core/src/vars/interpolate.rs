@@ -53,7 +53,11 @@ fn scan(template: &str) -> Vec<RawRef<'_>> {
                 let inner_end = search_start + rel_end;
                 let end = inner_end + 2;
                 let name = template[search_start..inner_end].trim();
-                refs.push(RawRef { start: i, end, name });
+                refs.push(RawRef {
+                    start: i,
+                    end,
+                    name,
+                });
                 i = end;
                 continue;
             } else {
@@ -130,29 +134,47 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn scopes_with(pairs: &[(&str, &str)]) -> VarScopes {
-        let map: BTreeMap<String, String> =
-            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let map: BTreeMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         VarScopes::new().with_collection(&map)
     }
 
     #[test]
     fn no_vars_fast_path_returns_same_text() {
         let scopes = VarScopes::new();
-        assert_eq!(interpolate("plain text, no vars", &scopes).unwrap(), "plain text, no vars");
+        assert_eq!(
+            interpolate("plain text, no vars", &scopes).unwrap(),
+            "plain text, no vars"
+        );
         assert!(spans("plain text, no vars", &scopes).is_empty());
     }
 
     #[test]
     fn basic_substitution() {
         let scopes = scopes_with(&[("name", "world")]);
-        assert_eq!(interpolate("hello {{name}}!", &scopes).unwrap(), "hello world!");
+        assert_eq!(
+            interpolate("hello {{name}}!", &scopes).unwrap(),
+            "hello world!"
+        );
     }
 
     #[test]
     fn whitespace_forms() {
         let scopes = scopes_with(&[("name", "world")]);
-        for tpl in ["{{name}}", "{{ name}}", "{{name }}", "{{  name  }}", "{{\tname\t}}"] {
-            assert_eq!(interpolate(tpl, &scopes).unwrap(), "world", "template: {tpl:?}");
+        for tpl in [
+            "{{name}}",
+            "{{ name}}",
+            "{{name }}",
+            "{{  name  }}",
+            "{{\tname\t}}",
+        ] {
+            assert_eq!(
+                interpolate(tpl, &scopes).unwrap(),
+                "world",
+                "template: {tpl:?}"
+            );
         }
     }
 
@@ -192,7 +214,10 @@ mod tests {
     #[test]
     fn unmatched_open_brace_left_verbatim() {
         let scopes = VarScopes::new();
-        assert_eq!(interpolate("just {{ opening", &scopes).unwrap(), "just {{ opening");
+        assert_eq!(
+            interpolate("just {{ opening", &scopes).unwrap(),
+            "just {{ opening"
+        );
     }
 
     #[test]

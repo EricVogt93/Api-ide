@@ -10,7 +10,9 @@
 use egui::{TextEdit, Window};
 
 use forge_core::model::EnvVar;
-use forge_core::store::{create_environment, save_environment, save_secrets, secrets_path, Workspace};
+use forge_core::store::{
+    create_environment, save_environment, save_secrets, secrets_path, Workspace,
+};
 
 use crate::state::{AppState, StatusMessage};
 
@@ -43,7 +45,9 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
     }
     let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else {
         state.dialogs.env_editor.open = false;
-        state.status = Some(StatusMessage::error("Open a workspace before managing environments"));
+        state.status = Some(StatusMessage::error(
+            "Open a workspace before managing environments",
+        ));
         return;
     };
 
@@ -68,7 +72,11 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
         });
 
     if new_env_clicked {
-        let n = state.workspace.as_ref().map(|w| w.environments.len()).unwrap_or(0);
+        let n = state
+            .workspace
+            .as_ref()
+            .map(|w| w.environments.len())
+            .unwrap_or(0);
         let name = format!("Environment {}", n + 1);
         match create_environment(&root, &name) {
             Ok(_) => {
@@ -94,16 +102,23 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
 fn render_env_list(ui: &mut egui::Ui, state: &mut AppState, new_env_clicked: &mut bool) {
     ui.vertical(|ui| {
         ui.set_width(160.0);
-        let names: Vec<String> =
-            state.workspace.as_ref().map(|w| w.environments.iter().map(|e| e.env.name.clone()).collect()).unwrap_or_default();
-        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-            for name in &names {
-                let selected = state.dialogs.env_editor.selected.as_deref() == Some(name.as_str());
-                if ui.selectable_label(selected, name).clicked() {
-                    state.dialogs.env_editor.selected = Some(name.clone());
+        let names: Vec<String> = state
+            .workspace
+            .as_ref()
+            .map(|w| w.environments.iter().map(|e| e.env.name.clone()).collect())
+            .unwrap_or_default();
+        egui::ScrollArea::vertical()
+            .id_salt("env-list-scroll")
+            .max_height(300.0)
+            .show(ui, |ui| {
+                for name in &names {
+                    let selected =
+                        state.dialogs.env_editor.selected.as_deref() == Some(name.as_str());
+                    if ui.selectable_label(selected, name).clicked() {
+                        state.dialogs.env_editor.selected = Some(name.clone());
+                    }
                 }
-            }
-        });
+            });
         ui.add_space(6.0);
         if ui.button("+ New Environment").clicked() {
             *new_env_clicked = true;
@@ -127,81 +142,99 @@ fn render_selected_env(ui: &mut egui::Ui, state: &mut AppState) -> bool {
             ui.weak("Select an environment, or create a new one.");
             return;
         };
-        let Some(loaded) = state.workspace.as_ref().and_then(|w| w.environment(&name)).cloned() else {
+        let Some(loaded) = state
+            .workspace
+            .as_ref()
+            .and_then(|w| w.environment(&name))
+            .cloned()
+        else {
             ui.weak("Environment not found.");
             return;
         };
         let mut env = loaded.env.clone();
         let mut secrets = loaded.secrets.clone();
 
-        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-            egui::Grid::new("env-editor-grid").num_columns(5).striped(true).spacing([8.0, 4.0]).show(ui, |ui| {
-                ui.strong("Name");
-                ui.strong("Value");
-                ui.strong("Secret");
-                ui.strong("Description");
-                ui.strong("");
-                ui.end_row();
+        egui::ScrollArea::vertical()
+            .id_salt("env-vars-scroll")
+            .max_height(320.0)
+            .show(ui, |ui| {
+                egui::Grid::new("env-editor-grid")
+                    .num_columns(5)
+                    .striped(true)
+                    .spacing([8.0, 4.0])
+                    .show(ui, |ui| {
+                        ui.strong("Name");
+                        ui.strong("Value");
+                        ui.strong("Secret");
+                        ui.strong("Description");
+                        ui.strong("");
+                        ui.end_row();
 
-                let mut remove: Option<String> = None;
-                for (key, var) in env.variables.iter_mut() {
-                    ui.monospace(key.as_str());
-                    if var.secret {
-                        let revealed = state.dialogs.env_editor.revealed.contains(key);
-                        let mut value = secrets.get(key).cloned().unwrap_or_default();
-                        if ui.add(TextEdit::singleline(&mut value).password(!revealed)).changed() {
-                            secrets.insert(key.clone(), value);
-                            changed = true;
-                        }
-                    } else {
-                        let mut value = var.value.clone().unwrap_or_default();
-                        if ui.text_edit_singleline(&mut value).changed() {
-                            var.value = Some(value);
-                            changed = true;
-                        }
-                    }
-                    let mut secret = var.secret;
-                    if ui.checkbox(&mut secret, "").changed() {
-                        if secret {
-                            var.value = None;
-                        } else {
-                            secrets.remove(key);
-                        }
-                        var.secret = secret;
-                        changed = true;
-                    }
-                    if var.secret {
-                        let mut revealed = state.dialogs.env_editor.revealed.contains(key);
-                        if ui.checkbox(&mut revealed, "show").changed() {
-                            if revealed {
-                                state.dialogs.env_editor.revealed.insert(key.clone());
+                        let mut remove: Option<String> = None;
+                        for (key, var) in env.variables.iter_mut() {
+                            ui.monospace(key.as_str());
+                            if var.secret {
+                                let revealed = state.dialogs.env_editor.revealed.contains(key);
+                                let mut value = secrets.get(key).cloned().unwrap_or_default();
+                                if ui
+                                    .add(TextEdit::singleline(&mut value).password(!revealed))
+                                    .changed()
+                                {
+                                    secrets.insert(key.clone(), value);
+                                    changed = true;
+                                }
                             } else {
-                                state.dialogs.env_editor.revealed.remove(key);
+                                let mut value = var.value.clone().unwrap_or_default();
+                                if ui.text_edit_singleline(&mut value).changed() {
+                                    var.value = Some(value);
+                                    changed = true;
+                                }
                             }
+                            let mut secret = var.secret;
+                            if ui.checkbox(&mut secret, "").changed() {
+                                if secret {
+                                    var.value = None;
+                                } else {
+                                    secrets.remove(key);
+                                }
+                                var.secret = secret;
+                                changed = true;
+                            }
+                            if var.secret {
+                                let mut revealed = state.dialogs.env_editor.revealed.contains(key);
+                                if ui.checkbox(&mut revealed, "show").changed() {
+                                    if revealed {
+                                        state.dialogs.env_editor.revealed.insert(key.clone());
+                                    } else {
+                                        state.dialogs.env_editor.revealed.remove(key);
+                                    }
+                                }
+                            } else {
+                                ui.label("");
+                            }
+                            if ui.text_edit_singleline(&mut var.description).changed() {
+                                changed = true;
+                            }
+                            if ui.small_button("\u{2715}").clicked() {
+                                remove = Some(key.clone());
+                            }
+                            ui.end_row();
                         }
-                    } else {
-                        ui.label("");
-                    }
-                    if ui.text_edit_singleline(&mut var.description).changed() {
-                        changed = true;
-                    }
-                    if ui.small_button("\u{2715}").clicked() {
-                        remove = Some(key.clone());
-                    }
-                    ui.end_row();
-                }
-                if let Some(key) = remove {
-                    env.variables.remove(&key);
-                    secrets.remove(&key);
-                    changed = true;
-                }
+                        if let Some(key) = remove {
+                            env.variables.remove(&key);
+                            secrets.remove(&key);
+                            changed = true;
+                        }
+                    });
             });
-        });
 
         ui.horizontal(|ui| {
             ui.text_edit_singleline(&mut state.dialogs.env_editor.new_var_key);
             let key = state.dialogs.env_editor.new_var_key.trim().to_string();
-            if ui.add_enabled(!key.is_empty(), egui::Button::new("+ Add variable")).clicked() {
+            if ui
+                .add_enabled(!key.is_empty(), egui::Button::new("+ Add variable"))
+                .clicked()
+            {
                 env.variables.insert(key, EnvVar::default());
                 state.dialogs.env_editor.new_var_key.clear();
                 changed = true;
@@ -220,7 +253,9 @@ fn render_selected_env(ui: &mut egui::Ui, state: &mut AppState) -> bool {
 }
 
 fn show_delete_confirm(ctx: &egui::Context, state: &mut AppState) {
-    let Some(name) = state.dialogs.env_editor.pending_delete.clone() else { return };
+    let Some(name) = state.dialogs.env_editor.pending_delete.clone() else {
+        return;
+    };
     let mut confirmed = false;
     let mut cancelled = false;
     let mut keep_open = true;
@@ -243,7 +278,11 @@ fn show_delete_confirm(ctx: &egui::Context, state: &mut AppState) {
         });
 
     if confirmed {
-        let file = state.workspace.as_ref().and_then(|w| w.environment(&name)).map(|e| e.file.clone());
+        let file = state
+            .workspace
+            .as_ref()
+            .and_then(|w| w.environment(&name))
+            .map(|e| e.file.clone());
         if let Some(file) = file {
             let _ = std::fs::remove_file(secrets_path(&file));
             match std::fs::remove_file(&file) {
@@ -266,7 +305,9 @@ fn show_delete_confirm(ctx: &egui::Context, state: &mut AppState) {
 }
 
 fn reload_workspace(state: &mut AppState) {
-    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else { return };
+    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else {
+        return;
+    };
     match Workspace::load(&root) {
         Ok(ws) => state.workspace = Some(ws),
         Err(e) => state.status = Some(StatusMessage::error(e.to_string())),

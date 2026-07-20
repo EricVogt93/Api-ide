@@ -32,7 +32,10 @@ fn paint(text: &str, code: &str, color: bool) -> String {
 /// Drain `rx`, printing each event as it arrives, and return every
 /// `RequestOutcome` seen (for JUnit reporting) together with the final
 /// summary.
-pub async fn run_printer(mut rx: UnboundedReceiver<RunEvent>, color: bool) -> (Vec<RequestOutcome>, RunSummary) {
+pub async fn run_printer(
+    mut rx: UnboundedReceiver<RunEvent>,
+    color: bool,
+) -> (Vec<RequestOutcome>, RunSummary) {
     let mut outcomes = Vec::new();
     let mut summary = RunSummary::default();
     let mut iteration_count = 1usize;
@@ -71,7 +74,11 @@ fn print_outcome(outcome: &RequestOutcome, color: bool) {
         Ok(res) => res.timing.total.as_millis(),
         Err(_) => 0,
     };
-    let mark = if ok { paint("\u{2713}", GREEN, color) } else { paint("\u{2717}", RED, color) };
+    let mark = if ok {
+        paint("\u{2713}", GREEN, color)
+    } else {
+        paint("\u{2717}", RED, color)
+    };
     println!("{mark} {ms}ms");
 
     match &outcome.result {
@@ -80,7 +87,10 @@ fn print_outcome(outcome: &RequestOutcome, color: bool) {
         }
         Ok(_) => {
             if let Some(err) = &outcome.script_error {
-                println!("      {}", paint(&format!("script error: {err}"), RED, color));
+                println!(
+                    "      {}",
+                    paint(&format!("script error: {err}"), RED, color)
+                );
             }
             for assertion in &outcome.assertions {
                 if assertion.passed {

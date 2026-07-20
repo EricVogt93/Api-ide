@@ -4,15 +4,15 @@
 use egui::{Color32, RichText, Ui};
 use forge_core::model::Method;
 
-/// Color conventionally associated with each HTTP method (loosely matching
-/// Postman/Insomnia/IntelliJ HTTP client palettes).
+/// Color associated with each HTTP method — the Relay design palette
+/// (GET green, POST amber, PUT blue, PATCH violet, DELETE red).
 pub fn method_color(method: Method) -> Color32 {
     match method {
-        Method::Get => Color32::from_rgb(0x49, 0x9C, 0x54),
-        Method::Post => Color32::from_rgb(0x35, 0x92, 0xC4),
-        Method::Put => Color32::from_rgb(0xC7, 0x7D, 0x2E),
-        Method::Patch => Color32::from_rgb(0x2A, 0xA1, 0x98),
-        Method::Delete => Color32::from_rgb(0xC7, 0x54, 0x50),
+        Method::Get => Color32::from_rgb(0x59, 0xA8, 0x69),
+        Method::Post => Color32::from_rgb(0xD9, 0xA3, 0x43),
+        Method::Put => Color32::from_rgb(0x4A, 0x90, 0xD9),
+        Method::Patch => Color32::from_rgb(0xC5, 0x86, 0xC0),
+        Method::Delete => Color32::from_rgb(0xDB, 0x5C, 0x5C),
         Method::Head | Method::Options | Method::Trace => Color32::from_gray(0x9E),
     }
 }
@@ -25,6 +25,6 @@ pub fn method_badge(ui: &mut Ui, method: Method) {
             .color(color)
             .monospace()
             .strong()
-            .size(11.0),
+            .size(13.0),
     );
 }

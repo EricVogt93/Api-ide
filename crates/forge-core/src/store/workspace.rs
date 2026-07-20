@@ -66,13 +66,21 @@ impl TreeNode {
             TreeNode::Folder(f) => &f.dir,
             TreeNode::Request(r) => &r.file,
         };
-        p.file_name().unwrap_or_default().to_string_lossy().into_owned()
+        p.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned()
     }
 
     pub fn display_name(&self) -> String {
         match self {
             TreeNode::Folder(f) if !f.meta.name.is_empty() => f.meta.name.clone(),
-            TreeNode::Folder(f) => f.dir.file_name().unwrap_or_default().to_string_lossy().into_owned(),
+            TreeNode::Folder(f) => f
+                .dir
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
             TreeNode::Request(r) => r.def.name.clone(),
         }
     }
@@ -116,7 +124,12 @@ impl Workspace {
         let environments = load_environments(&root.join(ENVIRONMENTS_DIR))?;
         let collections = load_collections(&root.join(COLLECTIONS_DIR))?;
 
-        Ok(Workspace { root, meta, environments, collections })
+        Ok(Workspace {
+            root,
+            meta,
+            environments,
+            collections,
+        })
     }
 
     /// Create a fresh workspace directory skeleton.
@@ -188,7 +201,10 @@ fn load_environments(dir: &Path) -> StoreResult<Vec<LoadedEnvironment>> {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
         .map_err(io_err(dir))?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(ENV_SUFFIX)))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(ENV_SUFFIX))
+        })
         .collect();
     entries.sort();
     for file in entries {
@@ -236,7 +252,11 @@ fn load_collections(dir: &Path) -> StoreResult<Vec<CollectionNode>> {
         let meta: CollectionMeta = load_json(&meta_path)?;
         check_format(meta.format, &meta_path)?;
         let children = load_children(&col_dir, &meta.order)?;
-        cols.push(CollectionNode { dir: col_dir, meta, children });
+        cols.push(CollectionNode {
+            dir: col_dir,
+            meta,
+            children,
+        });
     }
     Ok(cols)
 }
@@ -245,16 +265,27 @@ fn load_children(dir: &Path, order: &[String]) -> StoreResult<Vec<TreeNode>> {
     let mut nodes: Vec<TreeNode> = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(io_err(dir))? {
         let path = entry.map_err(io_err(dir))?.path();
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         if path.is_dir() {
             if name.starts_with('.') {
                 continue;
             }
             let meta_path = path.join(FOLDER_FILE);
-            let meta: FolderMeta =
-                if meta_path.is_file() { load_json(&meta_path)? } else { FolderMeta::default() };
+            let meta: FolderMeta = if meta_path.is_file() {
+                load_json(&meta_path)?
+            } else {
+                FolderMeta::default()
+            };
             let children = load_children(&path, &meta.order)?;
-            nodes.push(TreeNode::Folder(FolderNode { dir: path, meta, children }));
+            nodes.push(TreeNode::Folder(FolderNode {
+                dir: path,
+                meta,
+                children,
+            }));
         } else if name.ends_with(REQUEST_SUFFIX) {
             let def: RequestDef = load_json(&path)?;
             check_format(def.format, &path)?;
@@ -285,7 +316,11 @@ fn sort_by_order(nodes: &mut [TreeNode], order: &[String]) {
 pub fn ensure_gitignore(root: &Path) -> StoreResult<()> {
     let path = root.join(".gitignore");
     let required = [format!("{LOCAL_DIR}/"), format!("*{SECRETS_SUFFIX}")];
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(io_err(&path)(error)),
+    };
     let mut lines: Vec<String> = existing.lines().map(str::to_string).collect();
     let mut changed = false;
     for req in required {
@@ -298,4 +333,22 @@ pub fn ensure_gitignore(root: &Path) -> StoreResult<()> {
         std::fs::write(&path, lines.join("\n") + "\n").map_err(io_err(&path))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_gitignore;
+
+    #[test]
+    fn invalid_utf8_gitignore_is_not_overwritten() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let path = root.path().join(".gitignore");
+        let original = [0xff, 0xfe, b'\n'];
+        std::fs::write(&path, original).expect("fixture");
+
+        let error = ensure_gitignore(root.path()).expect_err("invalid UTF-8 must fail");
+
+        assert!(error.to_string().contains(".gitignore"));
+        assert_eq!(std::fs::read(path).expect("read back"), original);
+    }
 }

@@ -48,7 +48,9 @@ fn worker() -> &'static mpsc::Sender<Job> {
         std::thread::Builder::new()
             .name("forge-pm-send-request".to_string())
             .spawn(move || {
-                let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build()
+                let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
                 else {
                     // Without a runtime every job just gets an error reply.
                     while let Ok(job) = rx.recv() {
@@ -59,10 +61,20 @@ fn worker() -> &'static mpsc::Sender<Job> {
                     }
                     return;
                 };
-                let client = reqwest::Client::builder()
-                    .timeout(REQUEST_TIMEOUT)
-                    .build()
-                    .unwrap_or_default();
+                let client = match reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() {
+                    Ok(client) => client,
+                    Err(error) => {
+                        while let Ok(job) = rx.recv() {
+                            let _ = job.reply.send(SendOutcome {
+                                error: Some(format!(
+                                    "pm.sendRequest: failed to build HTTP client: {error}"
+                                )),
+                                ..SendOutcome::default()
+                            });
+                        }
+                        return;
+                    }
+                };
                 while let Ok(job) = rx.recv() {
                     let outcome = rt.block_on(perform(&client, job.spec));
                     let _ = job.reply.send(outcome);
@@ -76,7 +88,10 @@ fn worker() -> &'static mpsc::Sender<Job> {
 async fn perform(client: &reqwest::Client, spec: SendSpec) -> SendOutcome {
     let method = spec.method.as_deref().unwrap_or("GET").to_ascii_uppercase();
     let Ok(method) = reqwest::Method::from_bytes(method.as_bytes()) else {
-        return SendOutcome { error: Some(format!("invalid method {method:?}")), ..Default::default() };
+        return SendOutcome {
+            error: Some(format!("invalid method {method:?}")),
+            ..Default::default()
+        };
     };
 
     let started = std::time::Instant::now();
@@ -93,11 +108,20 @@ async fn perform(client: &reqwest::Client, spec: SendSpec) -> SendOutcome {
     match builder.send().await {
         Ok(response) => {
             let code = response.status().as_u16();
-            let status = response.status().canonical_reason().unwrap_or("").to_string();
+            let status = response
+                .status()
+                .canonical_reason()
+                .unwrap_or("")
+                .to_string();
             let headers = response
                 .headers()
                 .iter()
-                .map(|(k, v)| (k.to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+                .map(|(k, v)| {
+                    (
+                        k.to_string(),
+                        String::from_utf8_lossy(v.as_bytes()).into_owned(),
+                    )
+                })
                 .collect();
             let body = match response.text().await {
                 Ok(t) => t,
@@ -117,7 +141,10 @@ async fn perform(client: &reqwest::Client, spec: SendSpec) -> SendOutcome {
                 time_ms: started.elapsed().as_millis() as u64,
             }
         }
-        Err(e) => SendOutcome { error: Some(e.to_string()), ..Default::default() },
+        Err(e) => SendOutcome {
+            error: Some(e.to_string()),
+            ..Default::default()
+        },
     }
 }
 
@@ -128,7 +155,10 @@ pub(super) fn send_blocking(spec_json: &str) -> String {
     let outcome = match serde_json::from_str::<SendSpec>(spec_json) {
         Ok(spec) => {
             let (reply_tx, reply_rx) = mpsc::channel();
-            match worker().send(Job { spec, reply: reply_tx }) {
+            match worker().send(Job {
+                spec,
+                reply: reply_tx,
+            }) {
                 Ok(()) => reply_rx.recv().unwrap_or_else(|_| SendOutcome {
                     error: Some("pm.sendRequest: worker thread died".to_string()),
                     ..Default::default()
@@ -139,7 +169,10 @@ pub(super) fn send_blocking(spec_json: &str) -> String {
                 },
             }
         }
-        Err(e) => SendOutcome { error: Some(format!("invalid request: {e}")), ..Default::default() },
+        Err(e) => SendOutcome {
+            error: Some(format!("invalid request: {e}")),
+            ..Default::default()
+        },
     };
     serde_json::to_string(&outcome)
         .unwrap_or_else(|_| r#"{"error":"failed to serialize response"}"#.to_string())

@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 pub struct AssertionDef {
     #[serde(flatten)]
     pub check: Check,
-    #[serde(default = "super::default_true", skip_serializing_if = "super::is_true")]
+    #[serde(
+        default = "super::default_true",
+        skip_serializing_if = "super::is_true"
+    )]
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
@@ -14,7 +17,11 @@ pub struct AssertionDef {
 
 impl From<Check> for AssertionDef {
     fn from(check: Check) -> Self {
-        Self { check, enabled: true, note: String::new() }
+        Self {
+            check,
+            enabled: true,
+            note: String::new(),
+        }
     }
 }
 
@@ -22,16 +29,23 @@ impl From<Check> for AssertionDef {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Check {
     /// Compare the HTTP status code.
-    StatusCode { op: NumberOp, value: u16 },
+    StatusCode {
+        op: NumberOp,
+        value: u16,
+    },
     /// Status code class shortcut: 2 = 2xx, 4 = 4xx ...
-    StatusClass { class: u8 },
+    StatusClass {
+        class: u8,
+    },
     Header {
         name: String,
         op: StringOp,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         value: String,
     },
-    ContentType { value: String },
+    ContentType {
+        value: String,
+    },
     /// Evaluate a JSONPath expression against the response body.
     JsonPath {
         path: String,
@@ -39,12 +53,20 @@ pub enum Check {
         #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         value: serde_json::Value,
     },
-    BodyContains { value: String },
-    BodyMatches { regex: String },
+    BodyContains {
+        value: String,
+    },
+    BodyMatches {
+        regex: String,
+    },
     #[serde(rename_all = "camelCase")]
-    ResponseTimeBelow { max_ms: u64 },
+    ResponseTimeBelow {
+        max_ms: u64,
+    },
     /// Validate the (JSON) response body against a JSON Schema.
-    JsonSchema { schema: serde_json::Value },
+    JsonSchema {
+        schema: serde_json::Value,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,7 +113,9 @@ impl Check {
         match self {
             Check::StatusCode { op, value } => format!("status {} {}", op.symbol(), value),
             Check::StatusClass { class } => format!("status is {class}xx"),
-            Check::Header { name, op, value } => format!("header {name} {op:?} {value}").to_lowercase(),
+            Check::Header { name, op, value } => {
+                format!("header {name} {op:?} {value}").to_lowercase()
+            }
             Check::ContentType { value } => format!("content-type is {value}"),
             Check::JsonPath { path, op, value } => match op {
                 ValueOp::Exists | ValueOp::NotExists => format!("{path} {op:?}").to_lowercase(),

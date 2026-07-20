@@ -8,10 +8,10 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use super::diag::{Code, Diagnostic, Errors};
-use super::ir::{ResolvedBody, ResolvedHeader, ResolvedMock, ResolvedPipelineEntry, ResolvedRequest};
-use super::model::{
-    Binding, BodySpec, MockDef, PipelineEntry, RequestDocument, RequestSpec,
+use super::ir::{
+    ResolvedBody, ResolvedHeader, ResolvedMock, ResolvedPipelineEntry, ResolvedRequest,
 };
+use super::model::{Binding, BodySpec, MockDef, PipelineEntry, RequestDocument, RequestSpec};
 use super::refs::{RefResolver, RefScheme};
 use super::resolve::DataStore;
 use super::vars::{interpolate, Scopes, SecretSink};
@@ -227,11 +227,24 @@ fn collect_binding_refs(node: &Value, out: &mut BTreeSet<String>) {
 /// Kahn topological sort. Returns node order, or a cycle path on failure.
 /// Edges only to nodes that exist in `deps` (external refs are ignored here;
 /// missing bindings surface as MISSING_VARIABLE during interpolation).
-fn topo_order<'a>(deps: &'a BTreeMap<&'a str, BTreeSet<String>>) -> Result<Vec<&'a str>, Vec<String>> {
+fn topo_order<'a>(
+    deps: &'a BTreeMap<&'a str, BTreeSet<String>>,
+) -> Result<Vec<&'a str>, Vec<String>> {
     // `pending[n]` = how many of n's dependencies are not yet resolved.
-    let mut pending: BTreeMap<&str, usize> =
-        deps.iter().map(|(k, ds)| (*k, ds.iter().filter(|d| deps.contains_key(d.as_str())).count())).collect();
-    let mut queue: Vec<&str> = pending.iter().filter(|(_, n)| **n == 0).map(|(k, _)| *k).collect();
+    let mut pending: BTreeMap<&str, usize> = deps
+        .iter()
+        .map(|(k, ds)| {
+            (
+                *k,
+                ds.iter().filter(|d| deps.contains_key(d.as_str())).count(),
+            )
+        })
+        .collect();
+    let mut queue: Vec<&str> = pending
+        .iter()
+        .filter(|(_, n)| **n == 0)
+        .map(|(k, _)| *k)
+        .collect();
     queue.sort();
     let mut order = Vec::new();
     while let Some(node) = queue.pop() {
@@ -252,14 +265,22 @@ fn topo_order<'a>(deps: &'a BTreeMap<&'a str, BTreeSet<String>>) -> Result<Vec<&
     if order.len() == deps.len() {
         Ok(order)
     } else {
-        let cycle: Vec<String> =
-            deps.keys().filter(|k| !order.contains(k)).map(|k| k.to_string()).collect();
+        let cycle: Vec<String> = deps
+            .keys()
+            .filter(|k| !order.contains(k))
+            .map(|k| k.to_string())
+            .collect();
         Err(cycle)
     }
 }
 
 /// Built-in generators (§5). Deterministic sources only.
-fn run_generator(name: &str, version: Option<u32>, _input: &Value, raw: &str) -> Result<Value, Diagnostic> {
+fn run_generator(
+    name: &str,
+    version: Option<u32>,
+    _input: &Value,
+    raw: &str,
+) -> Result<Value, Diagnostic> {
     // Builtins require an explicit version (§16). Default to 1 if omitted for
     // ergonomics but reject an unknown one.
     if let Some(v) = version {
@@ -297,7 +318,13 @@ fn build_request(
     let headers = resolve_headers(&spec.headers, scopes, sink, "/request/headers", errors);
     let query = resolve_headers(&spec.query, scopes, sink, "/request/query", errors);
     let body = build_body(spec.body.as_ref(), _inp, scopes, sink, errors);
-    Some(ResolvedReqParts { method: spec.method, url, headers, query, body })
+    Some(ResolvedReqParts {
+        method: spec.method,
+        url,
+        headers,
+        query,
+        body,
+    })
 }
 
 fn resolve_headers(
@@ -314,7 +341,10 @@ fn resolve_headers(
         }
         let path = format!("{base_path}/{i}/value");
         if let Some(value) = interp_string(&h.value, scopes, sink, &path, errors) {
-            out.push(ResolvedHeader { name: h.name.clone(), value });
+            out.push(ResolvedHeader {
+                name: h.name.clone(),
+                value,
+            });
         }
     }
     out
@@ -348,10 +378,13 @@ fn build_body(
                 BodyType::Form => ResolvedBody::Form(value_to_form(&value)),
                 BodyType::None => ResolvedBody::None,
                 BodyType::Multipart | BodyType::Binary => {
-                    errors.push(Diagnostic::new(
-                        Code::InvalidAssetInput,
-                        "multipart/binary bodies are not supported in v1",
-                    ).at("/request/body"));
+                    errors.push(
+                        Diagnostic::new(
+                            Code::InvalidAssetInput,
+                            "multipart/binary bodies are not supported in v1",
+                        )
+                        .at("/request/body"),
+                    );
                     ResolvedBody::None
                 }
             }
@@ -422,7 +455,11 @@ fn build_pipeline(
                 continue;
             }
         };
-        out.push(ResolvedPipelineEntry { phase: e.phase, asset, input });
+        out.push(ResolvedPipelineEntry {
+            phase: e.phase,
+            asset,
+            input,
+        });
     }
     out
 }
@@ -454,7 +491,14 @@ fn build_mock(
                     return None;
                 }
             };
-            let input = interpolate(&Value::Object(m.with.clone()), scopes, sink).ok()?;
+            let input = match interpolate(&Value::Object(m.with.clone()), scopes, sink) {
+                Ok(input) => input,
+                Err(mut diagnostic) => {
+                    diagnostic.instance_path = Some("/mock/with".to_string());
+                    errors.push(diagnostic);
+                    return None;
+                }
+            };
             Some(ResolvedMock::Dynamic { asset, input })
         }
     }

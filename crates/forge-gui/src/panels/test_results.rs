@@ -98,7 +98,11 @@ impl RunLog {
     /// the `filter_passed` preference across runs.
     pub fn start(&mut self, run_id: u64) {
         let filter_passed = self.filter_passed;
-        *self = RunLog { run_id: Some(run_id), filter_passed, ..Default::default() };
+        *self = RunLog {
+            run_id: Some(run_id),
+            filter_passed,
+            ..Default::default()
+        };
     }
 
     pub fn is_running(&self) -> bool {
@@ -125,7 +129,11 @@ impl RunLog {
             RunEvent::IterationStarted { iteration } => {
                 self.iteration_mut(*iteration);
             }
-            RunEvent::RequestStarted { id, name, iteration } => {
+            RunEvent::RequestStarted {
+                id,
+                name,
+                iteration,
+            } => {
                 let iter_node = self.iteration_mut(*iteration);
                 iter_node.requests.push(RequestTreeNode {
                     id: id.clone(),
@@ -141,10 +149,17 @@ impl RunLog {
             RunEvent::RequestFinished(outcome) => {
                 let passed = outcome.passed();
                 let iter_node = self.iteration_mut(outcome.iteration);
-                if let Some(node) =
-                    iter_node.requests.iter_mut().rev().find(|r| r.id == outcome.id && r.status == NodeStatus::Running)
+                if let Some(node) = iter_node
+                    .requests
+                    .iter_mut()
+                    .rev()
+                    .find(|r| r.id == outcome.id && r.status == NodeStatus::Running)
                 {
-                    node.status = if passed { NodeStatus::Passed } else { NodeStatus::Failed };
+                    node.status = if passed {
+                        NodeStatus::Passed
+                    } else {
+                        NodeStatus::Failed
+                    };
                     node.assertions = outcome.assertions.clone();
                     node.script_log = outcome.script_log.clone();
                     match &outcome.result {
@@ -186,10 +201,17 @@ impl RunLog {
     }
 
     fn iteration_mut(&mut self, iteration: usize) -> &mut IterationNode {
-        if let Some(pos) = self.iterations.iter().position(|it| it.iteration == iteration) {
+        if let Some(pos) = self
+            .iterations
+            .iter()
+            .position(|it| it.iteration == iteration)
+        {
             return &mut self.iterations[pos];
         }
-        self.iterations.push(IterationNode { iteration, requests: Vec::new() });
+        self.iterations.push(IterationNode {
+            iteration,
+            requests: Vec::new(),
+        });
         let idx = self.iterations.len() - 1;
         &mut self.iterations[idx]
     }
@@ -205,7 +227,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         let progress = state.run_log.completed as f32 / state.run_log.total as f32;
         ui.add(egui::ProgressBar::new(progress).text(format!(
             "{}/{} \u{2014} {} passed, {} failed",
-            state.run_log.completed, state.run_log.total, state.run_log.passed, state.run_log.failed
+            state.run_log.completed,
+            state.run_log.total,
+            state.run_log.passed,
+            state.run_log.failed
         )));
         ui.add_space(4.0);
     }
@@ -222,23 +247,37 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         // panes must switch back to top-down explicitly or tree rows flow
         // sideways.
         ui.allocate_ui_with_layout(egui::vec2(tree_width, available.y), top_down, |ui| {
-            egui::ScrollArea::vertical().id_salt("run-tree-scroll").auto_shrink([false, false]).show(ui, |ui| {
-                render_tree(ui, state, theme, &mut new_selected, &mut open_tab);
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("run-tree-scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    render_tree(ui, state, theme, &mut new_selected, &mut open_tab);
+                });
         });
         ui.separator();
-        ui.allocate_ui_with_layout(egui::vec2((available.x - tree_width - 12.0).max(100.0), available.y), top_down, |ui| {
-            egui::ScrollArea::vertical().id_salt("run-detail-scroll").auto_shrink([false, false]).show(ui, |ui| {
-                render_detail(ui, state, theme);
-            });
-        });
+        ui.allocate_ui_with_layout(
+            egui::vec2((available.x - tree_width - 12.0).max(100.0), available.y),
+            top_down,
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("run-detail-scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        render_detail(ui, state, theme);
+                    });
+            },
+        );
     });
 
     if let Some(sel) = new_selected {
         state.run_log.selected = Some(sel);
     }
     if let Some(rel_id) = open_tab {
-        if let Some(def) = state.workspace.as_ref().and_then(|ws| ws.find_request(&rel_id).map(|n| n.def.clone())) {
+        if let Some(def) = state
+            .workspace
+            .as_ref()
+            .and_then(|ws| ws.find_request(&rel_id).map(|n| n.def.clone()))
+        {
             state.open_tab(rel_id, def);
         }
     }
@@ -247,7 +286,10 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
 fn toolbar(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     ui.horizontal(|ui| {
         let mut filter_passed = state.run_log.filter_passed;
-        if ui.selectable_label(filter_passed, "Failures only").clicked() {
+        if ui
+            .selectable_label(filter_passed, "Failures only")
+            .clicked()
+        {
             filter_passed = !filter_passed;
         }
         state.run_log.filter_passed = filter_passed;
@@ -256,29 +298,66 @@ fn toolbar(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
             state.run_log = RunLog::default();
         }
 
-        let can_rerun = state.last_run.is_some() && state.workspace.is_some() && !state.run_log.is_running();
-        if ui.add_enabled(can_rerun, egui::Button::new(format!("{} Re-run", crate::theme::icons::PLAY))).clicked() {
+        let can_rerun =
+            state.last_run.is_some() && state.workspace.is_some() && !state.run_log.is_running();
+        if ui
+            .add_enabled(
+                can_rerun,
+                egui::Button::new(format!("{} Re-run", crate::theme::icons::PLAY)),
+            )
+            .clicked()
+        {
             rerun_last(state, bridge);
         }
 
-        if state.run_log.is_running() && ui.button(format!("{} Stop", crate::theme::icons::STOP)).clicked() {
+        if state.run_log.is_running()
+            && ui
+                .button(format!("{} Stop", crate::theme::icons::STOP))
+                .clicked()
+        {
             if let Some(run_id) = state.run_log.run_id {
-                bridge.send(Cmd::Cancel { run_id });
+                if let Err(error) = bridge.send(Cmd::Cancel { run_id }) {
+                    state.status = Some(crate::state::StatusMessage::error(error));
+                }
             }
         }
     });
 }
 
 fn rerun_last(state: &mut AppState, bridge: &Bridge) {
-    let Some((scope, options)) = state.last_run.clone() else { return };
-    let Some(ws) = state.workspace.clone() else { return };
+    let Some((scope, options)) = state.last_run.clone() else {
+        return;
+    };
+    let Some(ws) = state.workspace.clone() else {
+        return;
+    };
     let run_id = state.alloc_run_id();
-    state.run_state = RunState { run_id: Some(run_id), total: 0, completed: 0 };
+    state.run_state = RunState {
+        run_id: Some(run_id),
+        total: 0,
+        completed: 0,
+    };
     state.run_log.start(run_id);
-    bridge.send(Cmd::Run { run_id, workspace: Box::new(ws), scope, options });
+    if let Err(error) = bridge.send(Cmd::Run {
+        run_id,
+        workspace: Box::new(ws),
+        scope,
+        options,
+    }) {
+        state.run_state = RunState::default();
+        state.run_log.run_id = None;
+        state.run_log.mark_stopped();
+        state.status = Some(crate::state::StatusMessage::error(error));
+    }
 }
 
-fn render_tree(ui: &mut Ui, state: &AppState, theme: ThemeKind, selected: &mut Option<Selected>, open_tab: &mut Option<String>) {
+fn render_tree(
+    ui: &mut Ui,
+    state: &AppState,
+    theme: ThemeKind,
+    selected: &mut Option<Selected>,
+    open_tab: &mut Option<String>,
+) {
     let run_log = &state.run_log;
     if run_log.iterations.iter().all(|it| it.requests.is_empty()) {
         ui.weak("No run yet. Use Run \u{25B6} from a request tab, the collections tree, or the Run menu.");
@@ -300,7 +379,8 @@ fn render_tree(ui: &mut Ui, state: &AppState, theme: ThemeKind, selected: &mut O
             ui.horizontal(|ui| {
                 ui.add_space(indent);
                 ui.colored_label(status_color(theme, req.status), req.status.icon());
-                let label = ui.selectable_label(is_sel, format!("{}  ({} ms)", req.name, req.duration_ms));
+                let label =
+                    ui.selectable_label(is_sel, format!("{}  ({} ms)", req.name, req.duration_ms));
                 if label.clicked() {
                     *selected = Some(Selected::Request(iter_idx, req_idx));
                 }
@@ -314,7 +394,8 @@ fn render_tree(ui: &mut Ui, state: &AppState, theme: ThemeKind, selected: &mut O
                     if a.passed {
                         continue;
                     }
-                    let is_a_sel = run_log.selected == Some(Selected::Assertion(iter_idx, req_idx, a_idx));
+                    let is_a_sel =
+                        run_log.selected == Some(Selected::Assertion(iter_idx, req_idx, a_idx));
                     ui.horizontal(|ui| {
                         ui.add_space(indent + 20.0);
                         ui.colored_label(theme.error_color(), "\u{2715}");
@@ -337,7 +418,12 @@ fn render_detail(ui: &mut Ui, state: &AppState, theme: ThemeKind) {
         Selected::Request(i, r) => (i, r),
         Selected::Assertion(i, r, _) => (i, r),
     };
-    let Some(req) = state.run_log.iterations.get(iter_idx).and_then(|it| it.requests.get(req_idx)) else {
+    let Some(req) = state
+        .run_log
+        .iterations
+        .get(iter_idx)
+        .and_then(|it| it.requests.get(req_idx))
+    else {
         ui.weak("No details available.");
         return;
     };
@@ -413,7 +499,10 @@ mod tests {
             assertions: if passed {
                 vec![AssertionOutcome::pass("status is 200")]
             } else {
-                vec![AssertionOutcome::fail("status is 200", "expected 200 got 500")]
+                vec![AssertionOutcome::fail(
+                    "status is 200",
+                    "expected 200 got 500",
+                )]
             },
             script_log: Vec::new(),
             script_error: None,
@@ -425,13 +514,48 @@ mod tests {
     fn builds_tree_from_event_sequence() {
         let mut log = RunLog::default();
         log.start(1);
-        log.apply(1, &RunEvent::RunStarted { total: 2, iterations: 1 });
+        log.apply(
+            1,
+            &RunEvent::RunStarted {
+                total: 2,
+                iterations: 1,
+            },
+        );
         log.apply(1, &RunEvent::IterationStarted { iteration: 0 });
-        log.apply(1, &RunEvent::RequestStarted { id: "a".into(), name: "A".into(), iteration: 0 });
-        log.apply(1, &RunEvent::RequestFinished(Box::new(outcome("a", 0, true))));
-        log.apply(1, &RunEvent::RequestStarted { id: "b".into(), name: "B".into(), iteration: 0 });
-        log.apply(1, &RunEvent::RequestFinished(Box::new(outcome("b", 0, false))));
-        log.apply(1, &RunEvent::RunFinished(RunSummary { total: 2, passed: 1, failed: 1, skipped: 0, duration_ms: 10 }));
+        log.apply(
+            1,
+            &RunEvent::RequestStarted {
+                id: "a".into(),
+                name: "A".into(),
+                iteration: 0,
+            },
+        );
+        log.apply(
+            1,
+            &RunEvent::RequestFinished(Box::new(outcome("a", 0, true))),
+        );
+        log.apply(
+            1,
+            &RunEvent::RequestStarted {
+                id: "b".into(),
+                name: "B".into(),
+                iteration: 0,
+            },
+        );
+        log.apply(
+            1,
+            &RunEvent::RequestFinished(Box::new(outcome("b", 0, false))),
+        );
+        log.apply(
+            1,
+            &RunEvent::RunFinished(RunSummary {
+                total: 2,
+                passed: 1,
+                failed: 1,
+                skipped: 0,
+                duration_ms: 10,
+            }),
+        );
 
         assert!(!log.is_running());
         assert_eq!(log.iterations.len(), 1);
@@ -448,7 +572,13 @@ mod tests {
     fn multi_iteration_flag_tracks_run_started() {
         let mut log = RunLog::default();
         log.start(1);
-        log.apply(1, &RunEvent::RunStarted { total: 4, iterations: 2 });
+        log.apply(
+            1,
+            &RunEvent::RunStarted {
+                total: 4,
+                iterations: 2,
+            },
+        );
         assert!(log.multi_iteration);
         log.apply(1, &RunEvent::IterationStarted { iteration: 0 });
         log.apply(1, &RunEvent::IterationStarted { iteration: 1 });
@@ -459,7 +589,13 @@ mod tests {
     fn events_for_a_different_run_id_are_ignored() {
         let mut log = RunLog::default();
         log.start(1);
-        log.apply(2, &RunEvent::RunStarted { total: 5, iterations: 1 });
+        log.apply(
+            2,
+            &RunEvent::RunStarted {
+                total: 5,
+                iterations: 1,
+            },
+        );
         assert_eq!(log.total, 0);
     }
 
@@ -467,9 +603,22 @@ mod tests {
     fn mark_stopped_turns_running_nodes_into_skipped() {
         let mut log = RunLog::default();
         log.start(1);
-        log.apply(1, &RunEvent::RunStarted { total: 1, iterations: 1 });
+        log.apply(
+            1,
+            &RunEvent::RunStarted {
+                total: 1,
+                iterations: 1,
+            },
+        );
         log.apply(1, &RunEvent::IterationStarted { iteration: 0 });
-        log.apply(1, &RunEvent::RequestStarted { id: "a".into(), name: "A".into(), iteration: 0 });
+        log.apply(
+            1,
+            &RunEvent::RequestStarted {
+                id: "a".into(),
+                name: "A".into(),
+                iteration: 0,
+            },
+        );
         log.mark_stopped();
         assert_eq!(log.iterations[0].requests[0].status, NodeStatus::Skipped);
     }

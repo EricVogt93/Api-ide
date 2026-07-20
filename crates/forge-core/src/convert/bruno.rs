@@ -76,7 +76,10 @@ pub fn import_bruno(root: &Path) -> Result<BrunoImport, BrunoError> {
         env_files.sort();
         for file in env_files {
             let text = std::fs::read_to_string(&file).map_err(|e| io_err(&file, e))?;
-            let env_name = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            let env_name = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
             environments.push(parse_bruno_environment(&text, &env_name));
         }
     }
@@ -137,10 +140,15 @@ fn read_dir_items(
             let (folder_name, seq, auth, folder_desc) = match std::fs::read_to_string(&folder_bru) {
                 Ok(text) => {
                     let blocks = parse_blocks(&text);
-                    let meta: BTreeMap<String, String> =
-                        dict_block(&blocks, "meta").into_iter().map(|(k, v, _)| (k, v)).collect();
+                    let meta: BTreeMap<String, String> = dict_block(&blocks, "meta")
+                        .into_iter()
+                        .map(|(k, v, _)| (k, v))
+                        .collect();
                     let name = meta.get("name").cloned().unwrap_or_else(|| fname.clone());
-                    let seq = meta.get("seq").and_then(|s| s.parse::<f64>().ok()).unwrap_or(f64::MAX);
+                    let seq = meta
+                        .get("seq")
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(f64::MAX);
                     let item_path = join_path(path, &name);
                     note_scripts(&blocks, &item_path, skipped);
                     let auth = auth_from_blocks(&blocks, &item_path, skipped);
@@ -178,8 +186,9 @@ fn read_dir_items(
 // Request files
 // ---------------------------------------------------------------------
 
-const METHOD_BLOCKS: [&str; 9] =
-    ["get", "post", "put", "patch", "delete", "options", "head", "trace", "connect"];
+const METHOD_BLOCKS: [&str; 9] = [
+    "get", "post", "put", "patch", "delete", "options", "head", "trace", "connect",
+];
 
 /// Parse one request `.bru` file into a [`RequestDef`] plus its `meta.seq`
 /// sort key.
@@ -190,10 +199,18 @@ fn parse_bru_request(
     skipped: &mut Vec<String>,
 ) -> (RequestDef, f64) {
     let blocks = parse_blocks(text);
-    let meta: BTreeMap<String, String> =
-        dict_block(&blocks, "meta").into_iter().map(|(k, v, _)| (k, v)).collect();
-    let name = meta.get("name").cloned().unwrap_or_else(|| fallback_name.to_string());
-    let seq = meta.get("seq").and_then(|s| s.parse::<f64>().ok()).unwrap_or(f64::MAX);
+    let meta: BTreeMap<String, String> = dict_block(&blocks, "meta")
+        .into_iter()
+        .map(|(k, v, _)| (k, v))
+        .collect();
+    let name = meta
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| fallback_name.to_string());
+    let seq = meta
+        .get("seq")
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(f64::MAX);
     let path = join_path(parent_path, &name);
 
     // The method block: `get { url: …, body: json, auth: bearer }`.
@@ -201,14 +218,19 @@ fn parse_bru_request(
         .iter()
         .find_map(|verb| {
             blocks.iter().find(|(n, _)| n == verb).map(|(_, block)| {
-                let fields: BTreeMap<String, String> =
-                    block.as_dict().into_iter().map(|(k, v, _)| (k, v)).collect();
+                let fields: BTreeMap<String, String> = block
+                    .as_dict()
+                    .into_iter()
+                    .map(|(k, v, _)| (k, v))
+                    .collect();
                 (*verb, fields)
             })
         })
         .map(|(verb, fields)| {
             let method = Method::parse(verb).unwrap_or_else(|| {
-                skipped.push(format!("{path}: unsupported method '{verb}', imported as GET"));
+                skipped.push(format!(
+                    "{path}: unsupported method '{verb}', imported as GET"
+                ));
                 Method::Get
             });
             (method, fields)
@@ -223,25 +245,45 @@ fn parse_bru_request(
     def.description = text_block(&blocks, "docs").unwrap_or_default();
 
     for (key, value, enabled) in dict_block(&blocks, "headers") {
-        def.headers.push(KeyValue { key, value, description: String::new(), enabled });
+        def.headers.push(KeyValue {
+            key,
+            value,
+            description: String::new(),
+            enabled,
+        });
     }
     // `query` is the legacy spelling of `params:query`.
     for block_name in ["params:query", "query"] {
         for (key, value, enabled) in dict_block(&blocks, block_name) {
             def.params.push(Param {
-                kv: KeyValue { key, value, description: String::new(), enabled },
+                kv: KeyValue {
+                    key,
+                    value,
+                    description: String::new(),
+                    enabled,
+                },
                 kind: ParamKind::Query,
             });
         }
     }
     for (key, value, enabled) in dict_block(&blocks, "params:path") {
         def.params.push(Param {
-            kv: KeyValue { key, value, description: String::new(), enabled },
+            kv: KeyValue {
+                key,
+                value,
+                description: String::new(),
+                enabled,
+            },
             kind: ParamKind::Path,
         });
     }
 
-    def.body = body_from_blocks(&blocks, verb_fields.get("body").map(String::as_str), &path, skipped);
+    def.body = body_from_blocks(
+        &blocks,
+        verb_fields.get("body").map(String::as_str),
+        &path,
+        skipped,
+    );
     def.auth = match verb_fields.get("auth").map(String::as_str) {
         Some("none") => AuthConfig::None,
         Some("inherit") | None => {
@@ -267,7 +309,11 @@ fn body_from_blocks(
     // The verb block's `body:` field names the active body; without it, the
     // first body block present wins.
     let want = selector.map(|s| {
-        if s == "none" { "none".to_string() } else { format!("body:{s}") }
+        if s == "none" {
+            "none".to_string()
+        } else {
+            format!("body:{s}")
+        }
     });
     if want.as_deref() == Some("none") {
         return BodyDef::None;
@@ -277,18 +323,35 @@ fn body_from_blocks(
         Some(w) => n == w || (w == "body:json" && n == "body"),
         None => n == "body" || (n.starts_with("body:") && n != "body:graphql:vars"),
     });
-    let Some((name, block)) = body_block else { return BodyDef::None };
+    let Some((name, block)) = body_block else {
+        return BodyDef::None;
+    };
 
     match name.as_str() {
-        "body" | "body:json" => BodyDef::Json { text: block.as_text() },
-        "body:text" => BodyDef::Raw { text: block.as_text(), language: RawLanguage::Text },
-        "body:sparql" => BodyDef::Raw { text: block.as_text(), language: RawLanguage::Text },
-        "body:xml" => BodyDef::Xml { text: block.as_text() },
+        "body" | "body:json" => BodyDef::Json {
+            text: block.as_text(),
+        },
+        "body:text" => BodyDef::Raw {
+            text: block.as_text(),
+            language: RawLanguage::Text,
+        },
+        "body:sparql" => BodyDef::Raw {
+            text: block.as_text(),
+            language: RawLanguage::Text,
+        },
+        "body:xml" => BodyDef::Xml {
+            text: block.as_text(),
+        },
         "body:form-urlencoded" => BodyDef::FormUrlencoded {
             fields: block
                 .as_dict()
                 .into_iter()
-                .map(|(key, value, enabled)| KeyValue { key, value, description: String::new(), enabled })
+                .map(|(key, value, enabled)| KeyValue {
+                    key,
+                    value,
+                    description: String::new(),
+                    enabled,
+                })
                 .collect(),
         },
         "body:multipart-form" => BodyDef::Multipart {
@@ -297,7 +360,12 @@ fn body_from_blocks(
                 .into_iter()
                 .map(|(key, value, enabled)| {
                     let (content, content_type) = parse_part_value(&value);
-                    MultipartPart { name: key, content, content_type, enabled }
+                    MultipartPart {
+                        name: key,
+                        content,
+                        content_type,
+                        enabled,
+                    }
                 })
                 .collect(),
         },
@@ -315,7 +383,9 @@ fn body_from_blocks(
             }
         }
         other => {
-            skipped.push(format!("{path}: unsupported body block '{other}', body dropped"));
+            skipped.push(format!(
+                "{path}: unsupported body block '{other}', body dropped"
+            ));
             BodyDef::None
         }
     }
@@ -329,13 +399,21 @@ fn parse_part_value(value: &str) -> (PartContent, Option<String>) {
         .map(str::to_string);
     match parse_file_ref(value) {
         Some(path) => (PartContent::File { path }, content_type),
-        None => (PartContent::Text { value: value.to_string() }, content_type),
+        None => (
+            PartContent::Text {
+                value: value.to_string(),
+            },
+            content_type,
+        ),
     }
 }
 
 fn parse_file_ref(value: &str) -> Option<String> {
     let start = value.find("@file(")?;
-    value[start + "@file(".len()..].split(')').next().map(str::to_string)
+    value[start + "@file(".len()..]
+        .split(')')
+        .next()
+        .map(str::to_string)
 }
 
 fn auth_from_blocks(
@@ -344,15 +422,29 @@ fn auth_from_blocks(
     skipped: &mut Vec<String>,
 ) -> AuthConfig {
     let auth_block = blocks.iter().find(|(n, _)| n.starts_with("auth:"));
-    let Some((name, block)) = auth_block else { return AuthConfig::Inherit };
-    let fields: BTreeMap<String, String> =
-        block.as_dict().into_iter().map(|(k, v, _)| (k, v)).collect();
+    let Some((name, block)) = auth_block else {
+        return AuthConfig::Inherit;
+    };
+    let fields: BTreeMap<String, String> = block
+        .as_dict()
+        .into_iter()
+        .map(|(k, v, _)| (k, v))
+        .collect();
     let get = |k: &str| fields.get(k).cloned().unwrap_or_default();
 
     match name.as_str() {
-        "auth:basic" => AuthConfig::Basic { username: get("username"), password: get("password") },
-        "auth:bearer" => AuthConfig::Bearer { token: get("token"), prefix: None },
-        "auth:digest" => AuthConfig::Digest { username: get("username"), password: get("password") },
+        "auth:basic" => AuthConfig::Basic {
+            username: get("username"),
+            password: get("password"),
+        },
+        "auth:bearer" => AuthConfig::Bearer {
+            token: get("token"),
+            prefix: None,
+        },
+        "auth:digest" => AuthConfig::Digest {
+            username: get("username"),
+            password: get("password"),
+        },
         "auth:ntlm" => AuthConfig::Ntlm {
             username: get("username"),
             password: get("password"),
@@ -363,7 +455,11 @@ fn auth_from_blocks(
             secret_key: get("secretAccessKey"),
             session_token: {
                 let t = get("sessionToken");
-                if t.is_empty() { None } else { Some(t) }
+                if t.is_empty() {
+                    None
+                } else {
+                    Some(t)
+                }
             },
             region: get("region"),
             service: get("service"),
@@ -397,7 +493,11 @@ fn auth_from_blocks(
                     client_id: get("client_id"),
                     client_secret: {
                         let s = get("client_secret");
-                        if s.is_empty() { None } else { Some(s) }
+                        if s.is_empty() {
+                            None
+                        } else {
+                            Some(s)
+                        }
                     },
                     scopes,
                     redirect_port: None,
@@ -433,15 +533,27 @@ fn assertions_from_blocks(
         let (op, rest) = split_op(&value);
         let check = match expr.as_str() {
             "res.status" => number_op(op).and_then(|op| {
-                rest.parse::<u16>().ok().map(|value| Check::StatusCode { op, value })
+                rest.parse::<u16>()
+                    .ok()
+                    .map(|value| Check::StatusCode { op, value })
             }),
             "res.responseTime" => match op {
-                "lt" | "lte" => rest.parse::<u64>().ok().map(|max_ms| Check::ResponseTimeBelow { max_ms }),
+                "lt" | "lte" => rest
+                    .parse::<u64>()
+                    .ok()
+                    .map(|max_ms| Check::ResponseTimeBelow { max_ms }),
                 _ => None,
             },
             e if e == "res.body" || e.starts_with("res.body.") || e.starts_with("res.body[") => {
-                let json_path = format!("$.{}", e.trim_start_matches("res.body").trim_start_matches('.'));
-                let json_path = if json_path == "$." { "$".to_string() } else { json_path };
+                let json_path = format!(
+                    "$.{}",
+                    e.trim_start_matches("res.body").trim_start_matches('.')
+                );
+                let json_path = if json_path == "$." {
+                    "$".to_string()
+                } else {
+                    json_path
+                };
                 value_op(op).map(|op| Check::JsonPath {
                     path: json_path,
                     op,
@@ -451,8 +563,14 @@ fn assertions_from_blocks(
             _ => None,
         };
         match check {
-            Some(check) => out.push(AssertionDef { check, enabled, note: String::new() }),
-            None => skipped.push(format!("{path}: assert '{expr}: {value}' has no equivalent, skipped")),
+            Some(check) => out.push(AssertionDef {
+                check,
+                enabled,
+                note: String::new(),
+            }),
+            None => skipped.push(format!(
+                "{path}: assert '{expr}: {value}' has no equivalent, skipped"
+            )),
         }
     }
     out
@@ -468,8 +586,15 @@ fn extractors_from_blocks(
     let mut out = Vec::new();
     for (var, expr, enabled) in dict_block(blocks, "vars:post-response") {
         if expr == "res.body" || expr.starts_with("res.body.") {
-            let json_path = format!("$.{}", expr.trim_start_matches("res.body").trim_start_matches('.'));
-            let json_path = if json_path == "$." { "$".to_string() } else { json_path };
+            let json_path = format!(
+                "$.{}",
+                expr.trim_start_matches("res.body").trim_start_matches('.')
+            );
+            let json_path = if json_path == "$." {
+                "$".to_string()
+            } else {
+                json_path
+            };
             out.push(Extractor {
                 source: ExtractorSource::JsonPath { expr: json_path },
                 var,
@@ -490,7 +615,10 @@ fn extractors_from_blocks(
 
 fn note_scripts(blocks: &[(String, Block)], path: &str, skipped: &mut Vec<String>) {
     for name in ["script:pre-request", "script:post-response", "tests"] {
-        if blocks.iter().any(|(n, b)| n == name && !b.as_text().trim().is_empty()) {
+        if blocks
+            .iter()
+            .any(|(n, b)| n == name && !b.as_text().trim().is_empty())
+        {
             skipped.push(format!(
                 "{path}: {name} uses Bruno's bru/req/res JS API and was not imported"
             ));
@@ -504,8 +632,17 @@ fn note_scripts(blocks: &[(String, Block)], path: &str, skipped: &mut Vec<String
 
 /// Bruno's unary assert operators — they take no right-hand value.
 const UNARY_OPS: [&str; 11] = [
-    "isEmpty", "isNull", "isUndefined", "isDefined", "isTruthy", "isFalsy", "isJson", "isNumber",
-    "isString", "isBoolean", "isArray",
+    "isEmpty",
+    "isNull",
+    "isUndefined",
+    "isDefined",
+    "isTruthy",
+    "isFalsy",
+    "isJson",
+    "isNumber",
+    "isString",
+    "isBoolean",
+    "isArray",
 ];
 
 /// Split `"eq 200"` into `("eq", "200")`. A bare unary operator keeps an
@@ -569,7 +706,9 @@ enum Block {
 impl Block {
     /// Dictionary view: `key: value` per line, `~` prefix = disabled.
     fn as_dict(&self) -> Vec<(String, String, bool)> {
-        let Block::Braced(lines) = self else { return Vec::new() };
+        let Block::Braced(lines) = self else {
+            return Vec::new();
+        };
         lines
             .iter()
             .filter_map(|line| {
@@ -592,7 +731,9 @@ impl Block {
     /// Raw text view (for body/script/docs blocks): lines joined verbatim,
     /// common leading indentation removed.
     fn as_text(&self) -> String {
-        let Block::Braced(lines) = self else { return String::new() };
+        let Block::Braced(lines) = self else {
+            return String::new();
+        };
         let indent = lines
             .iter()
             .filter(|l| !l.trim().is_empty())
@@ -601,7 +742,13 @@ impl Block {
             .unwrap_or(0);
         let mut text = lines
             .iter()
-            .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim_start() })
+            .map(|l| {
+                if l.len() >= indent {
+                    &l[indent..]
+                } else {
+                    l.trim_start()
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         while text.ends_with('\n') {
@@ -612,7 +759,9 @@ impl Block {
 
     /// Array view: one name per line/comma, `~` prefix = disabled.
     fn as_array(&self) -> Vec<(String, bool)> {
-        let Block::Bracketed(lines) = self else { return Vec::new() };
+        let Block::Bracketed(lines) = self else {
+            return Vec::new();
+        };
         lines
             .iter()
             .flat_map(|l| l.split(','))
@@ -657,22 +806,37 @@ fn parse_blocks(text: &str) -> Vec<(String, Block)> {
             }
             body.push(inner.to_string());
         }
-        let block = if bracketed { Block::Bracketed(body) } else { Block::Braced(body) };
+        let block = if bracketed {
+            Block::Bracketed(body)
+        } else {
+            Block::Braced(body)
+        };
         blocks.push((name.to_string(), block));
     }
     blocks
 }
 
 fn dict_block(blocks: &[(String, Block)], name: &str) -> Vec<(String, String, bool)> {
-    blocks.iter().find(|(n, _)| n == name).map(|(_, b)| b.as_dict()).unwrap_or_default()
+    blocks
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, b)| b.as_dict())
+        .unwrap_or_default()
 }
 
 fn text_block(blocks: &[(String, Block)], name: &str) -> Option<String> {
-    blocks.iter().find(|(n, _)| n == name).map(|(_, b)| b.as_text())
+    blocks
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, b)| b.as_text())
 }
 
 fn array_block(blocks: &[(String, Block)], name: &str) -> Vec<(String, bool)> {
-    blocks.iter().find(|(n, _)| n == name).map(|(_, b)| b.as_array()).unwrap_or_default()
+    blocks
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, b)| b.as_array())
+        .unwrap_or_default()
 }
 
 fn join_path(parent: &str, name: &str) -> String {
@@ -684,9 +848,14 @@ fn join_path(parent: &str, name: &str) -> String {
 }
 
 fn dir_name(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Bruno".to_string())
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Bruno".to_string())
 }
 
 fn io_err(path: &Path, e: std::io::Error) -> BrunoError {
-    BrunoError::Io { path: path.display().to_string(), message: e.to_string() }
+    BrunoError::Io {
+        path: path.display().to_string(),
+        message: e.to_string(),
+    }
 }

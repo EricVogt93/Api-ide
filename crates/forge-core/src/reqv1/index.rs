@@ -115,7 +115,9 @@ impl ProjectIndex {
         index.collect_assets(root, &project);
         index.collect_environments(root);
         index.collect_requests(root, &resolver);
-        index.assets.sort_by(|a, b| (a.kind, &a.rel_path).cmp(&(b.kind, &b.rel_path)));
+        index
+            .assets
+            .sort_by(|a, b| (a.kind, &a.rel_path).cmp(&(b.kind, &b.rel_path)));
         Ok(index)
     }
 
@@ -334,7 +336,9 @@ fn classify(path: &Path, ext: &str) -> AssetKind {
 }
 
 fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() {
@@ -407,7 +411,10 @@ mod tests {
             .find(|a| a.rel_path == "assets/hooks/service-token.js")
             .expect("hook indexed");
         assert_eq!(hook.kind, AssetKind::Hook);
-        assert_eq!(hook.prefix_ref.as_deref(), Some("project:hooks/service-token"));
+        assert_eq!(
+            hook.prefix_ref.as_deref(),
+            Some("project:hooks/service-token")
+        );
     }
 
     #[test]
@@ -423,7 +430,8 @@ mod tests {
         assert!(users
             .used_by
             .iter()
-            .any(|u| u.request.ends_with("create.request.json") && u.instance_path == "/bindings/user"));
+            .any(|u| u.request.ends_with("create.request.json")
+                && u.instance_path == "/bindings/user"));
     }
 
     #[test]
@@ -456,20 +464,32 @@ mod tests {
     #[test]
     fn suggest_ref_prefers_alias_then_relative() {
         let index = ProjectIndex::scan(&fixture_root()).expect("scan");
-        let users =
-            index.assets.iter().find(|a| a.rel_path == "assets/data/users.json").unwrap();
+        let users = index
+            .assets
+            .iter()
+            .find(|a| a.rel_path == "assets/data/users.json")
+            .unwrap();
         let base = fixture_root().join("requests/users");
         assert_eq!(index.suggest_ref(users, &base), "data:users");
 
-        let hook =
-            index.assets.iter().find(|a| a.rel_path == "assets/hooks/service-token.js").unwrap();
-        assert_eq!(index.suggest_ref(hook, &base), "project:hooks/service-token");
+        let hook = index
+            .assets
+            .iter()
+            .find(|a| a.rel_path == "assets/hooks/service-token.js")
+            .unwrap();
+        assert_eq!(
+            index.suggest_ref(hook, &base),
+            "project:hooks/service-token"
+        );
     }
 
     #[test]
     fn relative_path_walks_up() {
         let root = fixture_root();
-        let rel = relative_path(&root.join("requests/users"), &root.join("assets/data/users.json"));
+        let rel = relative_path(
+            &root.join("requests/users"),
+            &root.join("assets/data/users.json"),
+        );
         assert_eq!(rel, "../../assets/data/users.json");
     }
 }

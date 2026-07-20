@@ -23,7 +23,11 @@ pub struct DataStore<'a> {
 
 impl<'a> DataStore<'a> {
     pub fn new(resolver: &'a RefResolver) -> Self {
-        Self { resolver, cache: RefCell::new(HashMap::new()), stack: RefCell::new(Vec::new()) }
+        Self {
+            resolver,
+            cache: RefCell::new(HashMap::new()),
+            stack: RefCell::new(Vec::new()),
+        }
     }
 
     /// Resolve a `ref` descriptor to a JSON value: load, pointer, patch.
@@ -36,7 +40,10 @@ impl<'a> DataStore<'a> {
         if desc.scheme != RefScheme::File {
             return Err(Diagnostic::new(
                 Code::IncompatibleAssetType,
-                format!("{:?} is not a data asset (use it in a pipeline/generator instead)", desc.raw),
+                format!(
+                    "{:?} is not a data asset (use it in a pipeline/generator instead)",
+                    desc.raw
+                ),
             )
             .with_ref(&desc.raw));
         }
@@ -91,16 +98,13 @@ impl<'a> DataStore<'a> {
             let doc = &cache[&desc.address];
             match &desc.pointer {
                 None => doc.clone(),
-                Some(ptr) => doc
-                    .pointer(ptr)
-                    .cloned()
-                    .ok_or_else(|| {
-                        Diagnostic::new(
-                            Code::InvalidPointer,
-                            format!("JSON Pointer {ptr:?} selects nothing in {}", desc.address),
-                        )
-                        .with_ref(&desc.raw)
-                    })?,
+                Some(ptr) => doc.pointer(ptr).cloned().ok_or_else(|| {
+                    Diagnostic::new(
+                        Code::InvalidPointer,
+                        format!("JSON Pointer {ptr:?} selects nothing in {}", desc.address),
+                    )
+                    .with_ref(&desc.raw)
+                })?,
             }
         };
 
@@ -132,7 +136,9 @@ impl<'a> DataStore<'a> {
         value: &Value,
         raw: &str,
     ) -> Result<(), Diagnostic> {
-        let Some(schema_path) = asset_path.strip_suffix(".json").map(|p| format!("{p}.schema.json"))
+        let Some(schema_path) = asset_path
+            .strip_suffix(".json")
+            .map(|p| format!("{p}.schema.json"))
         else {
             return Ok(());
         };
@@ -140,8 +146,11 @@ impl<'a> DataStore<'a> {
             return Ok(());
         }
         let text = std::fs::read_to_string(&schema_path).map_err(|e| {
-            Diagnostic::new(Code::InvalidAssetInput, format!("cannot read schema {schema_path}: {e}"))
-                .with_ref(raw)
+            Diagnostic::new(
+                Code::InvalidAssetInput,
+                format!("cannot read schema {schema_path}: {e}"),
+            )
+            .with_ref(raw)
         })?;
         let schema: Value = serde_json::from_str(&text).map_err(|e| {
             Diagnostic::new(
@@ -171,8 +180,8 @@ impl<'a> DataStore<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::model::ProjectConfig;
+    use super::*;
     use std::path::Path;
 
     fn setup(files: &[(&str, &str)]) -> (tempfile::TempDir, RefResolver) {
@@ -204,7 +213,10 @@ mod tests {
         let (dir, r) = setup(&[("users.json", r#"{"valid":{}}"#)]);
         let store = DataStore::new(&r);
         let d = r.resolve("data:users#/valid/nobody", dir.path()).unwrap();
-        assert_eq!(store.resolve(&d, &[]).unwrap_err().code, Code::InvalidPointer.as_str());
+        assert_eq!(
+            store.resolve(&d, &[]).unwrap_err().code,
+            Code::InvalidPointer.as_str()
+        );
     }
 
     #[test]
@@ -213,7 +225,10 @@ mod tests {
         // Alias data:a points at ./a.json which does not exist.
         let store = DataStore::new(&r);
         let d = r.resolve("data:a#/x", dir.path()).unwrap();
-        assert_eq!(store.resolve(&d, &[]).unwrap_err().code, Code::AssetNotFound.as_str());
+        assert_eq!(
+            store.resolve(&d, &[]).unwrap_err().code,
+            Code::AssetNotFound.as_str()
+        );
     }
 
     #[test]
@@ -254,7 +269,10 @@ mod tests {
         ]);
         let store = DataStore::new(&r);
         let d = r.resolve("data:users#/x", dir.path()).unwrap();
-        assert_eq!(store.resolve(&d, &[]).unwrap_err().code, Code::InvalidAssetInput.as_str());
+        assert_eq!(
+            store.resolve(&d, &[]).unwrap_err().code,
+            Code::InvalidAssetInput.as_str()
+        );
     }
 
     #[test]
@@ -288,6 +306,9 @@ mod tests {
         let _ = dir;
         let store = DataStore::new(&r);
         let d = r.resolve("builtin:uuid@1", Path::new("/")).unwrap();
-        assert_eq!(store.resolve(&d, &[]).unwrap_err().code, Code::IncompatibleAssetType.as_str());
+        assert_eq!(
+            store.resolve(&d, &[]).unwrap_err().code,
+            Code::IncompatibleAssetType.as_str()
+        );
     }
 }

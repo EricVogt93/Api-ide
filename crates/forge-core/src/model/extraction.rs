@@ -10,7 +10,10 @@ pub struct Extractor {
     pub var: String,
     #[serde(default)]
     pub scope: ExtractScope,
-    #[serde(default = "super::default_true", skip_serializing_if = "super::is_true")]
+    #[serde(
+        default = "super::default_true",
+        skip_serializing_if = "super::is_true"
+    )]
     pub enabled: bool,
 }
 

@@ -44,7 +44,14 @@ pub struct EventLog {
 
 impl Default for EventLog {
     fn default() -> Self {
-        Self { entries: Vec::new(), show_info: true, show_warn: true, show_error: true, filter: String::new(), autoscroll: true }
+        Self {
+            entries: Vec::new(),
+            show_info: true,
+            show_warn: true,
+            show_error: true,
+            filter: String::new(),
+            autoscroll: true,
+        }
     }
 }
 
@@ -52,7 +59,12 @@ const MAX_ENTRIES: usize = 2_000;
 
 impl EventLog {
     pub fn push(&mut self, level: LogLevel, source: &'static str, message: impl Into<String>) {
-        self.entries.push(LogEntry { at: Local::now(), level, source, message: message.into() });
+        self.entries.push(LogEntry {
+            at: Local::now(),
+            level,
+            source,
+            message: message.into(),
+        });
         if self.entries.len() > MAX_ENTRIES {
             let drop = self.entries.len() - MAX_ENTRIES;
             self.entries.drain(0..drop);
@@ -103,8 +115,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.horizontal(|ui| {
         ui.toggle_value(&mut state.log.show_info, "Info");
-        ui.toggle_value(&mut state.log.show_warn, egui::RichText::new(format!("Warn {warns}")).color(theme.warn_color()));
-        ui.toggle_value(&mut state.log.show_error, egui::RichText::new(format!("Error {errors}")).color(theme.error_color()));
+        ui.toggle_value(
+            &mut state.log.show_warn,
+            egui::RichText::new(format!("Warn {warns}")).color(theme.warn_color()),
+        );
+        ui.toggle_value(
+            &mut state.log.show_error,
+            egui::RichText::new(format!("Error {errors}")).color(theme.error_color()),
+        );
         ui.add_space(8.0);
         ui.add(
             egui::TextEdit::singleline(&mut state.log.filter)
@@ -120,11 +138,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     });
     ui.separator();
 
-    let visible: Vec<usize> =
-        (0..state.log.entries.len()).filter(|i| state.log.visible(&state.log.entries[*i])).collect();
+    let visible: Vec<usize> = (0..state.log.entries.len())
+        .filter(|i| state.log.visible(&state.log.entries[*i]))
+        .collect();
 
     let row_h = ui.text_style_height(&egui::TextStyle::Monospace) + 4.0;
-    let mut scroll = egui::ScrollArea::vertical().auto_shrink([false, false]);
+    let mut scroll = egui::ScrollArea::vertical()
+        .id_salt("log-sa-1")
+        .auto_shrink([false, false]);
     if state.log.autoscroll {
         scroll = scroll.stick_to_bottom(true);
     }
@@ -142,8 +163,17 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                         .monospace()
                         .color(theme.dim_color()),
                 );
-                ui.label(egui::RichText::new(format!("{:5}", entry.level.label())).monospace().color(color).strong());
-                ui.label(egui::RichText::new(format!("[{}]", entry.source)).monospace().color(theme.dim_color()));
+                ui.label(
+                    egui::RichText::new(format!("{:5}", entry.level.label()))
+                        .monospace()
+                        .color(color)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format!("[{}]", entry.source))
+                        .monospace()
+                        .color(theme.dim_color()),
+                );
                 ui.label(egui::RichText::new(&entry.message).monospace());
             });
         }

@@ -17,18 +17,42 @@ use forge_core::store::Workspace;
 
 /// A command sent from the UI thread to the bridge thread.
 pub enum Cmd {
-    Run { run_id: u64, workspace: Box<Workspace>, scope: RunScope, options: RunOptions },
-    Cancel { run_id: u64 },
+    Run {
+        run_id: u64,
+        workspace: Box<Workspace>,
+        scope: RunScope,
+        options: RunOptions,
+    },
+    Cancel {
+        run_id: u64,
+    },
     /// Open a WebSocket connection, forwarding events back as `Evt::Ws`.
-    WsConnect { conn_id: u64, url: String, headers: Vec<(String, String)>, tls: TlsMaterial },
+    WsConnect {
+        conn_id: u64,
+        url: String,
+        headers: Vec<(String, String)>,
+        tls: TlsMaterial,
+    },
     /// Send a text message over an open WebSocket connection.
-    WsSend { conn_id: u64, msg: String },
+    WsSend {
+        conn_id: u64,
+        msg: String,
+    },
     /// Request a clean close of a WebSocket connection.
-    WsClose { conn_id: u64 },
+    WsClose {
+        conn_id: u64,
+    },
     /// Subscribe to an SSE stream, forwarding events back as `Evt::Sse`.
-    SseSubscribe { conn_id: u64, url: String, headers: Vec<(String, String)>, tls: TlsMaterial },
+    SseSubscribe {
+        conn_id: u64,
+        url: String,
+        headers: Vec<(String, String)>,
+        tls: TlsMaterial,
+    },
     /// Stop consuming an SSE stream.
-    SseClose { conn_id: u64 },
+    SseClose {
+        conn_id: u64,
+    },
     /// Compile .proto files and call a unary gRPC method; the outcome comes
     /// back as `Evt::Grpc`.
     GrpcCall {
@@ -53,32 +77,68 @@ pub enum Cmd {
     /// Ask for a snapshot of the shared `HttpEngine`'s cookie jar.
     ListCookies,
     /// Remove one cookie from the shared jar.
-    RemoveCookie { domain: String, name: String },
+    RemoveCookie {
+        domain: String,
+        name: String,
+    },
     /// Clear the whole shared cookie jar.
     ClearCookies,
     /// Load persisted cookies from `path` into the shared jar (best-effort;
     /// a missing or unreadable file is a no-op) and remember `path` so the
     /// jar is saved back there after every run and on shutdown.
-    LoadCookies { path: PathBuf },
+    LoadCookies {
+        path: PathBuf,
+    },
+    /// Fetch an OpenAPI spec for editor assistance: an `http(s)` URL is
+    /// downloaded, anything else is read as a file under `root`. Replies
+    /// with `Evt::OpenApi` carrying the raw spec text.
+    FetchOpenApi {
+        root: PathBuf,
+        source: String,
+    },
     Shutdown,
 }
 
 /// An event sent from the bridge thread back to the UI thread.
 pub enum Evt {
-    Run { run_id: u64, event: RunEvent },
+    Run {
+        run_id: u64,
+        event: RunEvent,
+    },
     /// The run could not even start (bad scope, missing environment, ...).
-    RunFailed { run_id: u64, error: String },
+    RunFailed {
+        run_id: u64,
+        error: String,
+    },
     /// Something happened on a WebSocket connection.
-    Ws { conn_id: u64, event: WsEvent },
+    Ws {
+        conn_id: u64,
+        event: WsEvent,
+    },
     /// Something happened on an SSE subscription.
-    Sse { conn_id: u64, event: SseEvent },
+    Sse {
+        conn_id: u64,
+        event: SseEvent,
+    },
     /// A fresh snapshot of the shared cookie jar (in reply to
     /// `Cmd::ListCookies`, or after any mutating cookie command).
     Cookies(Vec<StoredCookie>),
     /// Outcome of a `Cmd::GrpcCall`: response JSON + metadata, or an error.
-    Grpc { call_id: u64, result: Result<forge_core::protocols::GrpcResponse, String> },
+    Grpc {
+        call_id: u64,
+        result: Result<forge_core::protocols::GrpcResponse, String>,
+    },
     /// Outcome of a `Cmd::RunV1`: the run result, or a parse/setup error.
-    V1Run { run_id: u64, result: Result<forge_core::reqv1::RunResult, String> },
+    V1Run {
+        run_id: u64,
+        result: Result<forge_core::reqv1::RunResult, String>,
+    },
+    /// Raw OpenAPI spec text fetched by `Cmd::FetchOpenApi` (or the fetch
+    /// error), together with the source it was loaded from.
+    OpenApi {
+        source: String,
+        result: Result<String, String>,
+    },
 }
 
 /// Handle to the background bridge thread.
@@ -101,13 +161,18 @@ impl Bridge {
             .spawn(move || bridge_main(cmd_rx, evt_tx, ctx))
             .expect("failed to spawn forge-bridge thread");
 
-        Self { cmd_tx, evt_rx, handle: Some(handle) }
+        Self {
+            cmd_tx,
+            evt_rx,
+            handle: Some(handle),
+        }
     }
 
-    /// Send a command to the bridge thread. Silently dropped if the bridge
-    /// thread has already shut down.
-    pub fn send(&self, cmd: Cmd) {
-        let _ = self.cmd_tx.send(cmd);
+    /// Send a command to the bridge thread.
+    pub fn send(&self, cmd: Cmd) -> Result<(), String> {
+        self.cmd_tx
+            .send(cmd)
+            .map_err(|_| "background worker is unavailable".to_string())
     }
 
     /// Drain one pending event, if any. Call this in a loop each frame.
@@ -136,35 +201,48 @@ fn bridge_main(
             // Nothing sensible to do without a runtime; report and bail so
             // the UI thread at least sees every run fail loudly instead of
             // hanging forever waiting for events that will never come.
-            let _ = evt_tx.send(Evt::RunFailed { run_id: 0, error: format!("failed to start async runtime: {e}") });
+            let _ = evt_tx.send(Evt::RunFailed {
+                run_id: 0,
+                error: format!("failed to start async runtime: {e}"),
+            });
             return;
         }
     };
 
     rt.block_on(async move {
         let engine = Arc::new(HttpEngine::new());
-        let cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> = Arc::new(Mutex::new(HashMap::new()));
+        let cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         // Outgoing-message senders for live WebSocket connections, keyed by
         // `conn_id` — the connection's own background task owns the
         // `WsSession`; this is just how `Cmd::WsSend`/`WsClose` reach it.
         let ws_conns: Arc<Mutex<HashMap<u64, tokio::sync::mpsc::UnboundedSender<WsOutgoing>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         // Cancellation tokens for live SSE subscriptions, keyed by `conn_id`.
-        let sse_cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> = Arc::new(Mutex::new(HashMap::new()));
+        let sse_cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         // Where to persist the cookie jar (set by `Cmd::LoadCookies`), saved
         // back after every run and on shutdown.
         let cookie_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
 
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
-                Cmd::Run { run_id, workspace, scope, options } => {
+                Cmd::Run {
+                    run_id,
+                    workspace,
+                    scope,
+                    options,
+                } => {
                     let engine = engine.clone();
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     let cancels = cancels.clone();
                     let cookie_path = cookie_path.clone();
                     let cancel = CancellationToken::new();
-                    cancels.lock().unwrap_or_else(|p| p.into_inner()).insert(run_id, cancel.clone());
+                    cancels
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(run_id, cancel.clone());
 
                     tokio::spawn(async move {
                         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RunEvent>();
@@ -178,23 +256,41 @@ fn bridge_main(
                             }
                         });
 
-                        let result = runner::run(&workspace, scope, options, &engine, tx, cancel).await;
+                        let result =
+                            runner::run(&workspace, scope, options, &engine, tx, cancel).await;
                         if let Err(e) = result {
-                            let _ = evt_tx.send(Evt::RunFailed { run_id, error: e.to_string() });
+                            let _ = evt_tx.send(Evt::RunFailed {
+                                run_id,
+                                error: e.to_string(),
+                            });
                             ctx.request_repaint();
                         }
                         let _ = forward.await;
 
-                        cancels.lock().unwrap_or_else(|p| p.into_inner()).remove(&run_id);
+                        cancels
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&run_id);
                         save_cookies(&engine, &cookie_path);
                     });
                 }
                 Cmd::Cancel { run_id } => {
-                    if let Some(token) = cancels.lock().unwrap_or_else(|p| p.into_inner()).get(&run_id) {
+                    if let Some(token) = cancels
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(&run_id)
+                    {
                         token.cancel();
                     }
                 }
-                Cmd::GrpcCall { call_id, protos, endpoint, method, request_json, metadata } => {
+                Cmd::GrpcCall {
+                    call_id,
+                    protos,
+                    endpoint,
+                    method,
+                    request_json,
+                    metadata,
+                } => {
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     tokio::spawn(async move {
@@ -216,24 +312,73 @@ fn bridge_main(
                         ctx.request_repaint();
                     });
                 }
-                Cmd::RunV1 { run_id, root, file, text, env_name, mock } => {
+                Cmd::RunV1 {
+                    run_id,
+                    root,
+                    file,
+                    text,
+                    env_name,
+                    mock,
+                } => {
                     let engine = engine.clone();
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     tokio::spawn(async move {
-                        let result = run_v1_document(&engine, &root, &file, &text, env_name.as_deref(), mock).await;
+                        let result = run_v1_document(
+                            &engine,
+                            &root,
+                            &file,
+                            &text,
+                            env_name.as_deref(),
+                            mock,
+                        )
+                        .await;
                         let _ = evt_tx.send(Evt::V1Run { run_id, result });
                         ctx.request_repaint();
                     });
                 }
-                Cmd::WsConnect { conn_id, url, headers, tls } => {
+                Cmd::FetchOpenApi { root, source } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            if source.starts_with("http://") || source.starts_with("https://") {
+                                async {
+                                    let resp =
+                                        reqwest::get(&source).await.map_err(|e| e.to_string())?;
+                                    let status = resp.status();
+                                    if !status.is_success() {
+                                        return Err(format!("HTTP {status}"));
+                                    }
+                                    resp.text().await.map_err(|e| e.to_string())
+                                }
+                                .await
+                            } else {
+                                let path = root.join(&source);
+                                tokio::fs::read_to_string(&path)
+                                    .await
+                                    .map_err(|e| format!("{}: {e}", path.display()))
+                            };
+                        let _ = evt_tx.send(Evt::OpenApi { source, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::WsConnect {
+                    conn_id,
+                    url,
+                    headers,
+                    tls,
+                } => {
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     let ws_conns = ws_conns.clone();
                     tokio::spawn(async move {
                         match websocket::connect(&url, &headers, &tls).await {
                             Ok(mut session) => {
-                                ws_conns.lock().unwrap_or_else(|p| p.into_inner()).insert(conn_id, session.outgoing.clone());
+                                ws_conns
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .insert(conn_id, session.outgoing.clone());
                                 while let Some(event) = session.events.recv().await {
                                     let is_closed = matches!(event, WsEvent::Closed { .. });
                                     let _ = evt_tx.send(Evt::Ws { conn_id, event });
@@ -242,31 +387,53 @@ fn bridge_main(
                                         break;
                                     }
                                 }
-                                ws_conns.lock().unwrap_or_else(|p| p.into_inner()).remove(&conn_id);
+                                ws_conns
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .remove(&conn_id);
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(Evt::Ws { conn_id, event: WsEvent::Error(e.to_string()) });
+                                let _ = evt_tx.send(Evt::Ws {
+                                    conn_id,
+                                    event: WsEvent::Error(e.to_string()),
+                                });
                                 ctx.request_repaint();
                             }
                         }
                     });
                 }
                 Cmd::WsSend { conn_id, msg } => {
-                    if let Some(tx) = ws_conns.lock().unwrap_or_else(|p| p.into_inner()).get(&conn_id) {
+                    if let Some(tx) = ws_conns
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(&conn_id)
+                    {
                         let _ = tx.send(WsOutgoing::Text(msg));
                     }
                 }
                 Cmd::WsClose { conn_id } => {
-                    if let Some(tx) = ws_conns.lock().unwrap_or_else(|p| p.into_inner()).get(&conn_id) {
+                    if let Some(tx) = ws_conns
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .get(&conn_id)
+                    {
                         let _ = tx.send(WsOutgoing::Close);
                     }
                 }
-                Cmd::SseSubscribe { conn_id, url, headers, tls } => {
+                Cmd::SseSubscribe {
+                    conn_id,
+                    url,
+                    headers,
+                    tls,
+                } => {
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     let sse_cancels = sse_cancels.clone();
                     let cancel = CancellationToken::new();
-                    sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).insert(conn_id, cancel.clone());
+                    sse_cancels
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(conn_id, cancel.clone());
                     tokio::spawn(async move {
                         match sse::subscribe(&url, &headers, &tls).await {
                             Ok(mut session) => loop {
@@ -288,15 +455,25 @@ fn bridge_main(
                                 }
                             },
                             Err(e) => {
-                                let _ = evt_tx.send(Evt::Sse { conn_id, event: SseEvent::Error(e.to_string()) });
+                                let _ = evt_tx.send(Evt::Sse {
+                                    conn_id,
+                                    event: SseEvent::Error(e.to_string()),
+                                });
                                 ctx.request_repaint();
                             }
                         }
-                        sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).remove(&conn_id);
+                        sse_cancels
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&conn_id);
                     });
                 }
                 Cmd::SseClose { conn_id } => {
-                    if let Some(token) = sse_cancels.lock().unwrap_or_else(|p| p.into_inner()).remove(&conn_id) {
+                    if let Some(token) = sse_cancels
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .remove(&conn_id)
+                    {
                         token.cancel();
                     }
                 }
@@ -367,7 +544,12 @@ async fn run_v1_document(
             }
         }
     }
-    let secret = move |name: &str| file_secrets.get(name).cloned().or_else(|| std::env::var(name).ok());
+    let secret = move |name: &str| {
+        file_secrets
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+    };
 
     let mode = if mock { RunMode::Mock } else { RunMode::Http };
     Ok(reqv1::run(
@@ -388,7 +570,13 @@ async fn run_v1_document(
 /// set, if any. Best-effort — a write failure here shouldn't crash the
 /// bridge thread.
 fn save_cookies(engine: &HttpEngine, cookie_path: &Mutex<Option<PathBuf>>) {
-    let Some(path) = cookie_path.lock().unwrap_or_else(|p| p.into_inner()).clone() else { return };
+    let Some(path) = cookie_path
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+    else {
+        return;
+    };
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
             return;
@@ -406,10 +594,17 @@ fn save_cookies(engine: &HttpEngine, cookie_path: &Mutex<Option<PathBuf>>) {
 /// host-only-vs-domain-cookie distinction (same caveat `CookieJar::from_json`
 /// already documents) but otherwise round-trips faithfully.
 fn restore_cookies(engine: &HttpEngine, json: &str) {
-    let Ok(cookies) = serde_json::from_str::<Vec<StoredCookie>>(json) else { return };
+    let Ok(cookies) = serde_json::from_str::<Vec<StoredCookie>>(json) else {
+        return;
+    };
     for c in cookies {
-        let Ok(url) = url::Url::parse(&format!("https://{}/", c.domain)) else { continue };
-        let mut set_cookie = format!("{}={}; Domain={}; Path={}", c.name, c.value, c.domain, c.path);
+        let Ok(url) = url::Url::parse(&format!("https://{}/", c.domain)) else {
+            continue;
+        };
+        let mut set_cookie = format!(
+            "{}={}; Domain={}; Path={}",
+            c.name, c.value, c.domain, c.path
+        );
         if c.secure {
             set_cookie.push_str("; Secure");
         }
@@ -417,7 +612,10 @@ fn restore_cookies(engine: &HttpEngine, json: &str) {
             set_cookie.push_str("; HttpOnly");
         }
         if let Some(expires) = c.expires {
-            set_cookie.push_str(&format!("; Expires={}", expires.to_rfc2822().replace("+0000", "GMT")));
+            set_cookie.push_str(&format!(
+                "; Expires={}",
+                expires.to_rfc2822().replace("+0000", "GMT")
+            ));
         }
         engine.cookies().store(&url, &set_cookie);
     }
@@ -452,7 +650,11 @@ mod tests {
     /// across workspaces and get persisted into the wrong file.
     #[test]
     fn load_cookies_clears_previous_workspace_jar_first() {
-        let dir = std::env::temp_dir().join(format!("forge-gui-bridge-test-{}-{}", std::process::id(), line!()));
+        let dir = std::env::temp_dir().join(format!(
+            "forge-gui-bridge-test-{}-{}",
+            std::process::id(),
+            line!()
+        ));
         let _ = std::fs::create_dir_all(&dir);
 
         let old_cookie = StoredCookie {
@@ -465,7 +667,11 @@ mod tests {
             http_only: false,
         };
         let old_path = dir.join("old_cookies.json");
-        std::fs::write(&old_path, serde_json::to_string(&vec![old_cookie]).expect("serialize")).expect("write");
+        std::fs::write(
+            &old_path,
+            serde_json::to_string(&vec![old_cookie]).expect("serialize"),
+        )
+        .expect("write");
 
         // The "new" workspace has no cookies.json of its own yet.
         let new_path = dir.join("new_cookies.json");
@@ -476,11 +682,19 @@ mod tests {
         // once it's done, so there's no need for a separate `ListCookies`
         // round-trip (which would race against — and double up with — that
         // reply, since the bridge processes commands strictly in order).
-        bridge.send(Cmd::LoadCookies { path: old_path });
+        bridge
+            .send(Cmd::LoadCookies { path: old_path })
+            .expect("bridge available");
         let rows = recv_cookies(&bridge, Duration::from_secs(5));
-        assert_eq!(rows.len(), 1, "expected the old workspace's cookie to have loaded");
+        assert_eq!(
+            rows.len(),
+            1,
+            "expected the old workspace's cookie to have loaded"
+        );
 
-        bridge.send(Cmd::LoadCookies { path: new_path });
+        bridge
+            .send(Cmd::LoadCookies { path: new_path })
+            .expect("bridge available");
         let rows = recv_cookies(&bridge, Duration::from_secs(5));
         assert!(
             rows.is_empty(),

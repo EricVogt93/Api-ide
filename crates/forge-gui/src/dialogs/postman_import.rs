@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use egui::Window;
 
 use forge_core::convert::{
-    parse_postman, parse_postman_environment, PostmanError, ImportedCollection, ImportedItem,
+    parse_postman, parse_postman_environment, ImportedCollection, ImportedItem, PostmanError,
 };
 use forge_core::model::{Environment, FolderMeta, SecretValues};
 use forge_core::store::{
@@ -140,7 +140,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                 }
                 let can_import = matches!(&state.dialogs.postman_import.parsed, Some(Ok(_)))
                     && !state.dialogs.postman_import.name.trim().is_empty();
-                if ui.add_enabled(can_import, egui::Button::new("Import")).clicked() {
+                if ui
+                    .add_enabled(can_import, egui::Button::new("Import"))
+                    .clicked()
+                {
                     import_clicked = true;
                 }
             });
@@ -170,11 +173,14 @@ fn show_skipped(ui: &mut egui::Ui, skipped: &[String]) {
         ui.visuals().warn_fg_color,
         format!("{} item(s) can't be imported:", skipped.len()),
     );
-    egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
-        for note in skipped {
-            ui.weak(note);
-        }
-    });
+    egui::ScrollArea::vertical()
+        .id_salt("postman_import-sa-1")
+        .max_height(160.0)
+        .show(ui, |ui| {
+            for note in skipped {
+                ui.weak(note);
+            }
+        });
 }
 
 fn do_import(workspace: &Workspace, dialog: &mut PostmanImportState) -> Result<String, String> {
@@ -228,7 +234,13 @@ fn write_items(dir: &Path, items: &[ImportedItem]) -> Result<Vec<String>, String
                 let file = create_request(dir, def).map_err(|e| e.to_string())?;
                 order.push(file_name(&file));
             }
-            ImportedItem::Folder { name, description, auth, hooks, items } => {
+            ImportedItem::Folder {
+                name,
+                description,
+                auth,
+                hooks,
+                items,
+            } => {
                 let sub = create_folder(dir, name).map_err(|e| e.to_string())?;
                 let sub_order = write_items(&sub, items)?;
                 let meta = FolderMeta {
@@ -248,11 +260,15 @@ fn write_items(dir: &Path, items: &[ImportedItem]) -> Result<Vec<String>, String
 }
 
 fn file_name(path: &Path) -> String {
-    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 pub(crate) fn reload_workspace(state: &mut AppState) {
-    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else { return };
+    let Some(root) = state.workspace.as_ref().map(|w| w.root.clone()) else {
+        return;
+    };
     match Workspace::load(&root) {
         Ok(ws) => state.workspace = Some(ws),
         Err(e) => state.status = Some(StatusMessage::error(e.to_string())),
@@ -282,14 +298,18 @@ mod tests {
         let meta: forge_core::model::CollectionMeta =
             load_json(&col_dir.join("collection.json")).expect("collection meta");
         assert_eq!(meta.name, "Payments");
-        assert_eq!(meta.variables.get("baseUrl").map(String::as_str), Some("https://api.example.com"));
+        assert_eq!(
+            meta.variables.get("baseUrl").map(String::as_str),
+            Some("https://api.example.com")
+        );
         assert!(matches!(meta.auth, AuthConfig::Bearer { .. }));
         // Postman order preserved: Charges folder first, then the three requests.
         assert_eq!(meta.order.len(), 4);
         assert_eq!(meta.order[0], "charges");
         assert!(meta.order[1].starts_with("login"));
 
-        let folder: FolderMeta = load_json(&col_dir.join("charges").join(FOLDER_FILE)).expect("folder meta");
+        let folder: FolderMeta =
+            load_json(&col_dir.join("charges").join(FOLDER_FILE)).expect("folder meta");
         assert_eq!(folder.name, "Charges");
         assert!(matches!(folder.auth, AuthConfig::ApiKey { .. }));
         assert_eq!(folder.order.len(), 2);

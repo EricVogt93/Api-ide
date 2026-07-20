@@ -41,7 +41,10 @@ impl CurlImportState {
 fn target_dirs(workspace: &Workspace) -> Vec<TargetDir> {
     let mut out = Vec::new();
     for col in &workspace.collections {
-        out.push(TargetDir { label: col.meta.name.clone(), path: col.dir.clone() });
+        out.push(TargetDir {
+            label: col.meta.name.clone(),
+            path: col.dir.clone(),
+        });
         collect_folders(&col.children, &col.meta.name, &mut out);
     }
     out
@@ -51,7 +54,10 @@ fn collect_folders(children: &[TreeNode], prefix: &str, out: &mut Vec<TargetDir>
     for child in children {
         if let TreeNode::Folder(f) = child {
             let label = format!("{prefix} / {}", child.display_name());
-            out.push(TargetDir { label: label.clone(), path: f.dir.clone() });
+            out.push(TargetDir {
+                label: label.clone(),
+                path: f.dir.clone(),
+            });
             collect_folders(&f.children, &label, out);
         }
     }
@@ -93,7 +99,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
             ui.add(
                 TextEdit::multiline(&mut state.dialogs.curl_import.command)
                     .desired_rows(6)
-                    .font(egui::FontSelection::from(egui::FontId::monospace(12.0)))
+                    .font(egui::FontSelection::from(egui::FontId::monospace(14.0)))
                     .desired_width(f32::INFINITY),
             );
             ui.add_space(8.0);
@@ -115,10 +121,19 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                     ui.label("Target:");
                     let idx = state.dialogs.curl_import.target_idx.min(targets.len() - 1);
                     egui::ComboBox::from_id_salt("curl-import-target")
-                        .selected_text(targets.get(idx).map(|t| t.label.as_str()).unwrap_or_default())
+                        .selected_text(
+                            targets
+                                .get(idx)
+                                .map(|t| t.label.as_str())
+                                .unwrap_or_default(),
+                        )
                         .show_ui(ui, |ui| {
                             for (i, t) in targets.iter().enumerate() {
-                                ui.selectable_value(&mut state.dialogs.curl_import.target_idx, i, &t.label);
+                                ui.selectable_value(
+                                    &mut state.dialogs.curl_import.target_idx,
+                                    i,
+                                    &t.label,
+                                );
                             }
                         });
                 });
@@ -133,8 +148,13 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                 if ui.button("Cancel").clicked() {
                     cancel_clicked = true;
                 }
-                let can_import = parsed.is_ok() && !targets.is_empty() && !state.dialogs.curl_import.name.trim().is_empty();
-                if ui.add_enabled(can_import, egui::Button::new("Import")).clicked() {
+                let can_import = parsed.is_ok()
+                    && !targets.is_empty()
+                    && !state.dialogs.curl_import.name.trim().is_empty();
+                if ui
+                    .add_enabled(can_import, egui::Button::new("Import"))
+                    .clicked()
+                {
                     import_clicked = true;
                 }
             });
@@ -143,7 +163,11 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
     if import_clicked {
         if let Ok(mut def) = parsed {
             def.name = state.dialogs.curl_import.name.trim().to_string();
-            let idx = state.dialogs.curl_import.target_idx.min(targets.len().saturating_sub(1));
+            let idx = state
+                .dialogs
+                .curl_import
+                .target_idx
+                .min(targets.len().saturating_sub(1));
             if let Some(target) = targets.get(idx) {
                 match create_request(&target.path, &def) {
                     Ok(file) => {
@@ -163,10 +187,18 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
 
 fn preview(ui: &mut Ui, def: &RequestDef) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(def.method.as_str()).color(method_color(def.method)).monospace().strong());
+        ui.label(
+            RichText::new(def.method.as_str())
+                .color(method_color(def.method))
+                .monospace()
+                .strong(),
+        );
         ui.monospace(&def.url);
     });
-    ui.label(format!("{} header(s)", def.headers.iter().filter(|h| h.is_active()).count()));
+    ui.label(format!(
+        "{} header(s)",
+        def.headers.iter().filter(|h| h.is_active()).count()
+    ));
     ui.label(format!("Body: {}", body_kind_label(&def.body)));
 }
 

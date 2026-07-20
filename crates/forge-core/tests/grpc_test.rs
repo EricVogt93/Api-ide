@@ -36,7 +36,10 @@ fn req_fields(msg: &DynamicMessage) -> (String, i32) {
         .get_field_by_name("message")
         .map(|v| v.as_str().unwrap_or_default().to_string())
         .unwrap_or_default();
-    let count = msg.get_field_by_name("count").and_then(|v| v.as_i32()).unwrap_or(0);
+    let count = msg
+        .get_field_by_name("count")
+        .and_then(|v| v.as_i32())
+        .unwrap_or(0);
     (message, count)
 }
 
@@ -64,13 +67,19 @@ impl Service<tonic::codegen::http::Request<tonic::body::Body>> for EchoServer {
     fn call(&mut self, req: tonic::codegen::http::Request<tonic::body::Body>) -> Self::Future {
         let pool = self.pool.clone();
         Box::pin(async move {
-            let reply_desc = pool.get_message_by_name("test.EchoReply").expect("reply descriptor");
-            let method = pool
-                .get_service_by_name("test.Echo")
-                .and_then(|svc| {
-                    let name = req.uri().path().rsplit('/').next().unwrap_or_default().to_string();
-                    svc.methods().find(|m| m.name() == name)
-                });
+            let reply_desc = pool
+                .get_message_by_name("test.EchoReply")
+                .expect("reply descriptor");
+            let method = pool.get_service_by_name("test.Echo").and_then(|svc| {
+                let name = req
+                    .uri()
+                    .path()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                svc.methods().find(|m| m.name() == name)
+            });
             let Some(method) = method else {
                 return Ok(tonic::codegen::http::Response::builder()
                     .status(200)
@@ -97,7 +106,8 @@ impl Service<tonic::codegen::http::Request<tonic::body::Body>> for EchoServer {
                                 .unwrap_or_default()
                                 .to_string();
                             let (message, count) = req_fields(request.get_ref());
-                            let out = reply(&self.0, format!("echo: {message}"), count + 1, &caller);
+                            let out =
+                                reply(&self.0, format!("echo: {message}"), count + 1, &caller);
                             let mut response = Response::new(out);
                             response
                                 .metadata_mut()
@@ -130,7 +140,10 @@ impl Service<tonic::codegen::http::Request<tonic::body::Body>> for EchoServer {
                     impl tonic::server::ClientStreamingService<DynamicMessage> for Sum {
                         type Response = DynamicMessage;
                         type Future = BoxFuture<Response<DynamicMessage>, Status>;
-                        fn call(&mut self, request: Request<Streaming<DynamicMessage>>) -> Self::Future {
+                        fn call(
+                            &mut self,
+                            request: Request<Streaming<DynamicMessage>>,
+                        ) -> Self::Future {
                             let desc = self.0.clone();
                             Box::pin(async move {
                                 let mut stream = request.into_inner();
@@ -141,7 +154,12 @@ impl Service<tonic::codegen::http::Request<tonic::body::Body>> for EchoServer {
                                     total += count;
                                     n += 1;
                                 }
-                                Ok(Response::new(reply(&desc, format!("{n} messages"), total, "")))
+                                Ok(Response::new(reply(
+                                    &desc,
+                                    format!("{n} messages"),
+                                    total,
+                                    "",
+                                )))
                             })
                         }
                     }
@@ -153,17 +171,19 @@ impl Service<tonic::codegen::http::Request<tonic::body::Body>> for EchoServer {
                         type Response = DynamicMessage;
                         type ResponseStream = ReplyStream;
                         type Future = BoxFuture<Response<Self::ResponseStream>, Status>;
-                        fn call(&mut self, request: Request<Streaming<DynamicMessage>>) -> Self::Future {
+                        fn call(
+                            &mut self,
+                            request: Request<Streaming<DynamicMessage>>,
+                        ) -> Self::Future {
                             let desc = self.0.clone();
                             Box::pin(async move {
-                                let stream: ReplyStream = Box::pin(
-                                    request.into_inner().map(move |item| {
+                                let stream: ReplyStream =
+                                    Box::pin(request.into_inner().map(move |item| {
                                         item.map(|msg| {
                                             let (message, count) = req_fields(&msg);
                                             reply(&desc, format!("re: {message}"), count, "")
                                         })
-                                    }),
-                                );
+                                    }));
                                 Ok(Response::new(stream))
                             })
                         }
@@ -179,7 +199,9 @@ impl Service<tonic::codegen::http::Request<tonic::body::Body>> for EchoServer {
 
 /// Serve the echo service on an ephemeral port, returning its endpoint.
 async fn spawn_echo_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr = listener.local_addr().expect("addr");
     let incoming = tonic::codegen::tokio_stream::wrappers::TcpListenerStream::new(listener);
 
@@ -231,9 +253,15 @@ async fn unary_call_roundtrips_json_and_metadata() {
     let json: serde_json::Value = serde_json::from_str(&response.messages[0]).expect("valid JSON");
     assert_eq!(json["message"], "echo: hallo");
     assert_eq!(json["count"], 42);
-    assert_eq!(json["caller"], "forge-test", "request metadata must reach the server");
+    assert_eq!(
+        json["caller"], "forge-test",
+        "request metadata must reach the server"
+    );
     assert!(
-        response.metadata.iter().any(|(k, v)| k == "x-served-by" && v == "dynamic-echo"),
+        response
+            .metadata
+            .iter()
+            .any(|(k, v)| k == "x-served-by" && v == "dynamic-echo"),
         "response metadata missing: {:?}",
         response.metadata
     );
@@ -295,15 +323,22 @@ async fn bidi_streaming_echoes_each_message() {
     assert_eq!(response.messages.len(), 2, "{:?}", response.messages);
     let first: serde_json::Value = serde_json::from_str(&response.messages[0]).expect("valid JSON");
     assert_eq!(first["message"], "re: a");
-    let second: serde_json::Value = serde_json::from_str(&response.messages[1]).expect("valid JSON");
+    let second: serde_json::Value =
+        serde_json::from_str(&response.messages[1]).expect("valid JSON");
     assert_eq!(second["message"], "re: b");
 }
 
 #[tokio::test]
 async fn unary_rejects_a_message_array() {
-    let err = call("http://127.0.0.1:1", &pool(), "test.Echo/Say", r#"[{}, {}]"#, &[])
-        .await
-        .expect_err("unary with two messages must be refused before connecting");
+    let err = call(
+        "http://127.0.0.1:1",
+        &pool(),
+        "test.Echo/Say",
+        r#"[{}, {}]"#,
+        &[],
+    )
+    .await
+    .expect_err("unary with two messages must be refused before connecting");
     assert!(matches!(err, GrpcError::InputShape(_)), "{err:?}");
 }
 
@@ -314,9 +349,15 @@ async fn unknown_method_and_bad_json_give_clear_errors() {
         .expect_err("unknown method");
     assert!(matches!(err, GrpcError::MethodNotFound(_)), "{err:?}");
 
-    let err = call("http://127.0.0.1:1", &pool(), "test.Echo/Say", "{not json", &[])
-        .await
-        .expect_err("bad JSON");
+    let err = call(
+        "http://127.0.0.1:1",
+        &pool(),
+        "test.Echo/Say",
+        "{not json",
+        &[],
+    )
+    .await
+    .expect_err("bad JSON");
     match err {
         GrpcError::RequestJson { type_name, .. } => assert_eq!(type_name, "test.EchoRequest"),
         other => panic!("expected RequestJson, got {other:?}"),

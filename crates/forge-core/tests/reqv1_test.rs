@@ -40,15 +40,52 @@ fn validate_resolves_canonical_document_to_ir() {
     assert_eq!(ir.id, "users.create");
     assert_eq!(ir.url, "http://127.0.0.1:18099/users");
     // Body variables resolved from the referenced data asset.
-    let forge_core::reqv1::ResolvedBody::Json(body) = &ir.body else { panic!("json body") };
+    let forge_core::reqv1::ResolvedBody::Json(body) = &ir.body else {
+        panic!("json body")
+    };
     assert_eq!(body["name"], "Alice");
     assert_eq!(body["email"], "alice@example.com");
     assert_eq!(body["tenantId"], "t-1");
     // X-Request-ID resolved from the uuid generator (a real uuid).
-    let rid = ir.headers.iter().find(|h| h.name == "X-Request-ID").expect("request id header");
+    let rid = ir
+        .headers
+        .iter()
+        .find(|h| h.name == "X-Request-ID")
+        .expect("request id header");
     assert_eq!(rid.value.len(), 36);
     // The secret used by the bearer hook is tracked for masking.
     assert!(ir.secret_values.contains(&"s3cr3t-token".to_string()));
+}
+
+#[test]
+fn dynamic_mock_interpolation_errors_are_reported() {
+    let text = r#"{
+      "formatVersion": 1,
+      "kind": "request",
+      "meta": { "id": "mock.invalid", "name": "Invalid mock" },
+      "request": { "method": "GET", "url": "${env.baseUrl}/users" },
+      "mock": {
+        "use": "project:mocks/create-user-response",
+        "with": { "user": "${env.missing}" }
+      }
+    }"#;
+    let doc = reqv1::RequestDocument::parse(text).expect("parse");
+
+    let diagnostics = reqv1::validate(
+        &doc,
+        &project_root(),
+        &request_file(),
+        json!({ "baseUrl": "http://mock.local" }),
+        &secret,
+    )
+    .expect_err("missing mock input must fail validation");
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.instance_path.as_deref() == Some("/mock/with")),
+        "{diagnostics:?}"
+    );
 }
 
 #[tokio::test]
@@ -71,19 +108,42 @@ async fn runs_over_http_with_hooks_assertions_and_extractor() {
     let engine = HttpEngine::new();
 
     let result = reqv1::run(
-        &doc, &root, &request_file(), env, &secret, &engine, RunMode::Http, CancellationToken::new(), Value::Null,
+        &doc,
+        &root,
+        &request_file(),
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
+        CancellationToken::new(),
+        Value::Null,
     )
     .await;
 
-    assert_eq!(result.status, RunStatus::Passed, "diagnostics: {:?}", result.diagnostics);
+    assert_eq!(
+        result.status,
+        RunStatus::Passed,
+        "diagnostics: {:?}",
+        result.diagnostics
+    );
     assert_eq!(result.http.as_ref().unwrap().status, 201);
     // assert-status + assert-json-path both passed.
     assert_eq!(result.assertions.len(), 2);
-    assert!(result.assertions.iter().all(|a| a.passed), "{:?}", result.assertions);
+    assert!(
+        result.assertions.iter().all(|a| a.passed),
+        "{:?}",
+        result.assertions
+    );
     // extractor wrote userEmail into runtime.
-    assert_eq!(result.runtime.get("userEmail"), Some(&Value::from("alice@example.com")));
+    assert_eq!(
+        result.runtime.get("userEmail"),
+        Some(&Value::from("alice@example.com"))
+    );
     // The secret never leaks into any diagnostic message.
-    assert!(result.diagnostics.iter().all(|d| !d.message.contains("s3cr3t-token")));
+    assert!(result
+        .diagnostics
+        .iter()
+        .all(|d| !d.message.contains("s3cr3t-token")));
 }
 
 #[tokio::test]
@@ -102,7 +162,13 @@ async fn failed_assertion_marks_run_failed() {
     let env = json!({ "baseUrl": server.uri() });
     let engine = HttpEngine::new();
     let result = reqv1::run(
-        &doc, &project_root(), &request_file(), env, &secret, &engine, RunMode::Http,
+        &doc,
+        &project_root(),
+        &request_file(),
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
         CancellationToken::new(),
         Value::Null,
     )
@@ -122,7 +188,13 @@ async fn mock_mode_serves_the_document_mock_and_runs_after_response() {
     let env = json!({ "baseUrl": "http://unused" });
     let engine = HttpEngine::new();
     let result = reqv1::run(
-        &doc, &project_root(), &request_file(), env, &secret, &engine, RunMode::Mock,
+        &doc,
+        &project_root(),
+        &request_file(),
+        env,
+        &secret,
+        &engine,
+        RunMode::Mock,
         CancellationToken::new(),
         Value::Null,
     )
@@ -130,7 +202,10 @@ async fn mock_mode_serves_the_document_mock_and_runs_after_response() {
 
     assert_eq!(result.http.as_ref().unwrap().status, 201);
     // assert-status passed against the mock; the json-path assertion did not.
-    assert!(result.assertions.iter().any(|a| a.passed && a.message.contains("status")));
+    assert!(result
+        .assertions
+        .iter()
+        .any(|a| a.passed && a.message.contains("status")));
     assert!(result.assertions.iter().any(|a| !a.passed));
 }
 
@@ -146,7 +221,11 @@ fn missing_asset_is_reported_with_pointer() {
     let env = json!({ "baseUrl": "http://x" });
     let errs = reqv1::validate(&doc, &root, &request_file(), env, &secret).unwrap_err();
     assert!(errs.iter().any(|d| d.code == "INVALID_POINTER"), "{errs:?}");
-    assert!(errs.iter().any(|d| d.instance_path.as_deref() == Some("/bindings/u")), "{errs:?}");
+    assert!(
+        errs.iter()
+            .any(|d| d.instance_path.as_deref() == Some("/bindings/u")),
+        "{errs:?}"
+    );
 }
 
 #[test]
@@ -157,7 +236,8 @@ fn unknown_alias_is_reported() {
             "bindings":{"u":{"ref":"data:does-not-exist#/x"}}}"#,
     )
     .unwrap();
-    let errs = reqv1::validate(&doc, &project_root(), &request_file(), json!({}), &secret).unwrap_err();
+    let errs =
+        reqv1::validate(&doc, &project_root(), &request_file(), json!({}), &secret).unwrap_err();
     assert!(errs.iter().any(|d| d.code == "INVALID_ALIAS"), "{errs:?}");
 }
 
@@ -169,10 +249,14 @@ fn schema_json_matches_the_shipped_schema() {
     )
     .expect("shipped schema");
     let fixture = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/reqv1/schemas/request-v1.schema.json"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/reqv1/schemas/request-v1.schema.json"),
     )
     .expect("fixture schema");
-    assert_eq!(shipped, fixture, "fixture schema drifted from schemas/request-v1.schema.json");
+    assert_eq!(
+        shipped, fixture,
+        "fixture schema drifted from schemas/request-v1.schema.json"
+    );
 }
 
 #[tokio::test]
@@ -191,7 +275,13 @@ async fn matrix_runs_once_per_case_with_case_scoped_values() {
     let engine = HttpEngine::new();
 
     let results = reqv1::run_matrix(
-        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Http,
+        &doc,
+        &project_root(),
+        &file,
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
         CancellationToken::new(),
     )
     .await
@@ -199,15 +289,20 @@ async fn matrix_runs_once_per_case_with_case_scoped_values() {
 
     // Two cases in data:create-user-cases#/cases, both expect 201.
     assert_eq!(results.len(), 2);
-    assert!(results.iter().all(|(_, r)| r.status == RunStatus::Passed), "{results:?}");
+    assert!(
+        results.iter().all(|(_, r)| r.status == RunStatus::Passed),
+        "{results:?}"
+    );
     assert_eq!(results[0].0["case"]["name"], "valid");
     assert_eq!(results[1].0["case"]["name"], "missingEmail");
 
     // The server saw two distinct payloads — one per case.
     let seen = server.received_requests().await.expect("recorded");
     assert_eq!(seen.len(), 2);
-    let bodies: Vec<Value> =
-        seen.iter().map(|r| serde_json::from_slice(&r.body).unwrap()).collect();
+    let bodies: Vec<Value> = seen
+        .iter()
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
     assert!(bodies.contains(&json!({ "name": "Alice" })));
     assert!(bodies.contains(&json!({ "name": "Bob" })));
 }
@@ -224,11 +319,15 @@ fn matrix_binding_must_be_an_array() {
     let project = reqv1::load_project(&root).unwrap();
     let resolver = reqv1::RefResolver::new(&root, &project).unwrap();
     let store = reqv1::DataStore::new(&resolver);
-    let err = reqv1::matrix::resolve_cases(
-        &doc.matrix, &resolver, &store, &root, &json!({}), &secret,
-    )
-    .unwrap_err();
-    assert!(err.0.iter().any(|d| d.message.contains("must resolve to an array")), "{err:?}");
+    let err =
+        reqv1::matrix::resolve_cases(&doc.matrix, &resolver, &store, &root, &json!({}), &secret)
+            .unwrap_err();
+    assert!(
+        err.0
+            .iter()
+            .any(|d| d.message.contains("must resolve to an array")),
+        "{err:?}"
+    );
 }
 
 #[tokio::test]
@@ -236,8 +335,8 @@ async fn js_assets_run_hook_assertions_extractor_and_generator() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/users"))
-        .and(header("authorization", "Bearer s3cr3t-token"))   // JS hook
-        .and(header("x-tag", "req-alice"))                     // JS generator binding
+        .and(header("authorization", "Bearer s3cr3t-token")) // JS hook
+        .and(header("x-tag", "req-alice")) // JS generator binding
         .respond_with(ResponseTemplate::new(201).set_body_json(json!({
             "id": "u-77", "name": "Alice"
         })))
@@ -250,12 +349,24 @@ async fn js_assets_run_hook_assertions_extractor_and_generator() {
     let engine = HttpEngine::new();
 
     let result = reqv1::run(
-        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Http,
-        CancellationToken::new(), Value::Null,
+        &doc,
+        &project_root(),
+        &file,
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
+        CancellationToken::new(),
+        Value::Null,
     )
     .await;
 
-    assert_eq!(result.status, RunStatus::Passed, "diagnostics: {:?}", result.diagnostics);
+    assert_eq!(
+        result.status,
+        RunStatus::Passed,
+        "diagnostics: {:?}",
+        result.diagnostics
+    );
     // The JS assertion asset returned two results, both passing.
     assert_eq!(result.assertions.len(), 2, "{:?}", result.assertions);
     assert!(result.assertions.iter().all(|a| a.passed));
@@ -273,12 +384,24 @@ async fn js_dynamic_mock_serves_and_assertions_run_against_it() {
     let engine = HttpEngine::new();
 
     let result = reqv1::run(
-        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Mock,
-        CancellationToken::new(), Value::Null,
+        &doc,
+        &project_root(),
+        &file,
+        env,
+        &secret,
+        &engine,
+        RunMode::Mock,
+        CancellationToken::new(),
+        Value::Null,
     )
     .await;
 
-    assert_eq!(result.status, RunStatus::Passed, "diagnostics: {:?}", result.diagnostics);
+    assert_eq!(
+        result.status,
+        RunStatus::Passed,
+        "diagnostics: {:?}",
+        result.diagnostics
+    );
     assert_eq!(result.http.as_ref().unwrap().status, 201);
     assert_eq!(result.runtime.get("userId"), Some(&json!("u-mock")));
 }
@@ -293,7 +416,7 @@ async fn runtime_threads_from_one_request_to_the_next_in_a_sequence() {
         .await;
     Mock::given(method("GET"))
         .and(path("/me"))
-        .and(header("authorization", "Bearer tok-xyz"))   // came from request A's extract
+        .and(header("authorization", "Bearer tok-xyz")) // came from request A's extract
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "user": "alice" })))
         .mount(&server)
         .await;
@@ -305,17 +428,37 @@ async fn runtime_threads_from_one_request_to_the_next_in_a_sequence() {
     let engine = HttpEngine::new();
 
     let results = reqv1::run_sequence(
-        &[a, b], &root, env, &secret, &engine, RunMode::Http, CancellationToken::new(),
+        &[a, b],
+        &root,
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
+        CancellationToken::new(),
     )
     .await;
 
     assert_eq!(results.len(), 2);
-    assert_eq!(results[0].status, RunStatus::Passed, "{:?}", results[0].diagnostics);
+    assert_eq!(
+        results[0].status,
+        RunStatus::Passed,
+        "{:?}",
+        results[0].diagnostics
+    );
     assert_eq!(results[0].runtime.get("authToken"), Some(&json!("tok-xyz")));
     // Request B only passes if ${runtime.authToken} reached it AND the
     // assert-schema builtin validated {user:"alice"}.
-    assert_eq!(results[1].status, RunStatus::Passed, "{:?}", results[1].diagnostics);
-    assert!(results[1].assertions.iter().all(|a| a.passed), "{:?}", results[1].assertions);
+    assert_eq!(
+        results[1].status,
+        RunStatus::Passed,
+        "{:?}",
+        results[1].diagnostics
+    );
+    assert!(
+        results[1].assertions.iter().all(|a| a.passed),
+        "{:?}",
+        results[1].assertions
+    );
 }
 
 #[tokio::test]
@@ -344,8 +487,15 @@ async fn on_error_and_finally_phases_run() {
     std::fs::write(&file, serde_json::to_string(&doc_json()).unwrap()).ok();
 
     let result = reqv1::run(
-        &doc, &project_root(), &file, env, &secret, &engine, RunMode::Http,
-        CancellationToken::new(), Value::Null,
+        &doc,
+        &project_root(),
+        &file,
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
+        CancellationToken::new(),
+        Value::Null,
     )
     .await;
     let _ = std::fs::remove_file(&file);
@@ -354,7 +504,11 @@ async fn on_error_and_finally_phases_run() {
     // onError asset recorded the error; finally asset always ran.
     assert_eq!(result.runtime.get("errored"), Some(&json!(true)));
     assert_eq!(result.runtime.get("finallyRan"), Some(&json!(true)));
-    let msg = result.runtime.get("errorMsg").and_then(|v| v.as_str()).unwrap_or_default();
+    let msg = result
+        .runtime
+        .get("errorMsg")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
     assert!(!msg.is_empty(), "onError asset should receive ctx.error");
 }
 
@@ -403,20 +557,34 @@ async fn assert_schema_builtin_validates_response_body() {
     let env = json!({ "baseUrl": server.uri() });
     let engine = HttpEngine::new();
     let result = reqv1::run(
-        &doc, &project_root(), &request_file(), env, &secret, &engine, RunMode::Http,
-        CancellationToken::new(), Value::Null,
+        &doc,
+        &project_root(),
+        &request_file(),
+        env,
+        &secret,
+        &engine,
+        RunMode::Http,
+        CancellationToken::new(),
+        Value::Null,
     )
     .await;
 
     assert_eq!(result.assertions.len(), 2, "{:?}", result.assertions);
-    assert!(result.assertions[0].passed, "matching schema should pass: {:?}", result.assertions[0]);
-    assert!(!result.assertions[1].passed, "missing-required schema should fail");
+    assert!(
+        result.assertions[0].passed,
+        "matching schema should pass: {:?}",
+        result.assertions[0]
+    );
+    assert!(
+        !result.assertions[1].passed,
+        "missing-required schema should fail"
+    );
     assert_eq!(result.status, RunStatus::Failed);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mock_server_serves_over_real_http() {
-    use forge_core::reqv1::{serve_mock, MockServerConfig};
+    use forge_core::reqv1::MockServerConfig;
 
     let env = json!({ "baseUrl": "http://mock.local" });
     let config = MockServerConfig::scan(&project_root(), env, &secret).expect("scan");
@@ -424,10 +592,31 @@ async fn mock_server_serves_over_real_http() {
     let server = tiny_http::Server::http("127.0.0.1:0").expect("bind");
     let port = server.server_addr().to_ip().unwrap().port();
 
-    // Serve on a blocking thread; one request then we're done checking.
+    // Serve exactly the two requests below on a blocking thread.
     std::thread::spawn(move || {
         let sec = |name: &str| (name == "apiToken").then(|| "tok".to_string());
-        serve_mock(&config, &server, &sec);
+        for _ in 0..2 {
+            let request = server.recv().expect("receive");
+            let method = request.method().as_str().to_string();
+            let url = request.url().to_string();
+            let path = url.split('?').next().unwrap_or(&url);
+            match config.handle(&method, path, &sec).expect("valid mock") {
+                Some(mock) => {
+                    request
+                        .respond(
+                            tiny_http::Response::from_data(mock.body).with_status_code(mock.status),
+                        )
+                        .expect("respond");
+                }
+                None => {
+                    request
+                        .respond(
+                            tiny_http::Response::from_string("no mock route").with_status_code(404),
+                        )
+                        .expect("respond");
+                }
+            }
+        }
     });
 
     // Hit POST /users — a mocked route — and an unmocked one.

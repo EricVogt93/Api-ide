@@ -11,7 +11,11 @@ use forge_core::store::{TreeNode, Workspace, COLLECTIONS_DIR};
 use print::{print_summary, run_printer, supports_color};
 
 #[derive(Parser)]
-#[command(name = "forge", version, about = "Headless runner for Forge API test workspaces")]
+#[command(
+    name = "forge",
+    version,
+    about = "Headless runner for Forge API test workspaces"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -234,12 +238,12 @@ fn cmd_lock(args: &LockArgs) -> i32 {
 }
 
 fn cmd_mock(args: &MockArgs) -> i32 {
-    use forge_core::reqv1::{self, serve_mock, MockServerConfig};
+    use forge_core::reqv1::{self, MockServerConfig};
 
     let env = match reqv1::load_environment(&args.root, args.env.as_deref()) {
         Ok(e) => e,
-        Err(d) => {
-            eprintln!("error: {}", d.message);
+        Err(diagnostic) => {
+            eprintln!("error: {}", diagnostic.message);
             return 2;
         }
     };
@@ -251,8 +255,8 @@ fn cmd_mock(args: &MockArgs) -> i32 {
     let secret = move |name: &str| real(name).or_else(|| Some("<secret>".to_string()));
     let config = match MockServerConfig::scan(&args.root, env, &secret) {
         Ok(c) => c,
-        Err(d) => {
-            eprintln!("error: {}", d.message);
+        Err(errors) => {
+            eprint!("{errors}");
             return 2;
         }
     };
@@ -263,12 +267,54 @@ fn cmd_mock(args: &MockArgs) -> i32 {
             return 2;
         }
     };
-    println!("mock server on http://0.0.0.0:{} — {} route(s):", args.port, config.route_count());
+    println!(
+        "mock server on http://0.0.0.0:{} — {} route(s):",
+        args.port,
+        config.route_count()
+    );
     for (method, path, id) in config.routes() {
         println!("  {method} {path}  → {id}");
     }
     serve_mock(&config, &server, &secret);
     0
+}
+
+fn serve_mock(
+    config: &forge_core::reqv1::MockServerConfig,
+    server: &tiny_http::Server,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
+) {
+    for request in server.incoming_requests() {
+        let method = request.method().as_str().to_string();
+        let url = request.url().to_string();
+        let path = url.split('?').next().unwrap_or(&url);
+
+        let response = match config.handle(&method, path, secret) {
+            Ok(Some(mock)) => {
+                let mut response =
+                    tiny_http::Response::from_data(mock.body).with_status_code(mock.status);
+                for (name, value) in mock.headers {
+                    if let Ok(header) =
+                        tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes())
+                    {
+                        response = response.with_header(header);
+                    }
+                }
+                request.respond(response)
+            }
+            Ok(None) => request
+                .respond(tiny_http::Response::from_string("no mock route").with_status_code(404)),
+            Err(errors) => {
+                eprint!("{errors}");
+                request.respond(
+                    tiny_http::Response::from_string(errors.to_string()).with_status_code(500),
+                )
+            }
+        };
+        if let Err(error) = response {
+            eprintln!("error: failed to send mock response: {error}");
+        }
+    }
 }
 
 fn cmd_assets(args: &AssetsArgs) -> i32 {
@@ -283,7 +329,14 @@ fn cmd_assets(args: &AssetsArgs) -> i32 {
     };
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&index).unwrap_or_default());
+        let json = match serde_json::to_string_pretty(&index) {
+            Ok(json) => json,
+            Err(error) => {
+                eprintln!("error: cannot serialize asset index: {error}");
+                return 2;
+            }
+        };
+        println!("{json}");
         return if index.broken.is_empty() { 0 } else { 1 };
     }
 
@@ -298,7 +351,11 @@ fn cmd_assets(args: &AssetsArgs) -> i32 {
             .clone()
             .or_else(|| asset.prefix_ref.clone())
             .unwrap_or_else(|| asset.rel_path.clone());
-        println!("  {ref_form}  ({}, used by {})", asset.rel_path, asset.used_by.len());
+        println!(
+            "  {ref_form}  ({}, used by {})",
+            asset.rel_path,
+            asset.used_by.len()
+        );
     }
     if !index.requests.is_empty() {
         println!("requests:");
@@ -312,7 +369,10 @@ fn cmd_assets(args: &AssetsArgs) -> i32 {
     if !index.broken.is_empty() {
         eprintln!("broken refs:");
         for b in &index.broken {
-            eprintln!("  {} {} {:?}: {}", b.request, b.instance_path, b.reference, b.message);
+            eprintln!(
+                "  {} {} {:?}: {}",
+                b.request, b.instance_path, b.reference, b.message
+            );
         }
         return 1;
     }
@@ -336,7 +396,12 @@ fn make_secret_provider(root: &Path) -> impl Fn(&str) -> Option<String> {
             }
         }
     }
-    move |name: &str| file_vars.get(name).cloned().or_else(|| std::env::var(name).ok())
+    move |name: &str| {
+        file_vars
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+    }
 }
 
 fn v1_root(args: &V1Args) -> PathBuf {
@@ -391,7 +456,11 @@ fn cmd_validate(args: &V1Args) -> i32 {
         Ok(ir) => {
             println!("ok: {} ({})", ir.id, ir.name);
             println!("  {} {}", ir.method, ir.url);
-            println!("  {} pipeline step(s), {} header(s)", ir.pipeline.len(), ir.headers.len());
+            println!(
+                "  {} pipeline step(s), {} header(s)",
+                ir.pipeline.len(),
+                ir.headers.len()
+            );
             0
         }
         Err(diags) => {
@@ -438,13 +507,26 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
         }
     };
     let engine = HttpEngine::new();
-    let mode = if args.mock { RunMode::Mock } else { RunMode::Http };
+    let mode = if args.mock {
+        RunMode::Mock
+    } else {
+        RunMode::Http
+    };
     let secret = make_secret_provider(&root);
 
     // Multiple files run as a sequence (runtime threaded forward); a single
     // file goes through run_matrix so matrix documents expand.
     let results: Vec<RunResult> = if args.requests.len() > 1 {
-        reqv1::run_sequence(&args.requests, &root, env, &secret, &engine, mode, CancellationToken::new()).await
+        reqv1::run_sequence(
+            &args.requests,
+            &root,
+            env,
+            &secret,
+            &engine,
+            mode,
+            CancellationToken::new(),
+        )
+        .await
     } else {
         let text = match std::fs::read_to_string(first) {
             Ok(t) => t,
@@ -460,7 +542,18 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
                 return 2;
             }
         };
-        match reqv1::run_matrix(&doc, &root, first, env, &secret, &engine, mode, CancellationToken::new()).await {
+        match reqv1::run_matrix(
+            &doc,
+            &root,
+            first,
+            env,
+            &secret,
+            &engine,
+            mode,
+            CancellationToken::new(),
+        )
+        .await
+        {
             Ok(cases) => cases.into_iter().map(|(_, r)| r).collect(),
             Err(errs) => {
                 for d in &errs.0 {
@@ -517,7 +610,10 @@ fn cmd_grpc_list(args: &GrpcListArgs) -> i32 {
     };
     for m in forge_core::protocols::list_methods(&pool) {
         let shape = if m.is_unary { "unary" } else { "streaming" };
-        println!("{}  {} -> {}  [{}]", m.path, m.input_type, m.output_type, shape);
+        println!(
+            "{}  {} -> {}  [{}]",
+            m.path, m.input_type, m.output_type, shape
+        );
     }
     0
 }
@@ -562,9 +658,7 @@ async fn cmd_grpc_call(args: GrpcCallArgs) -> i32 {
         }
     }
 
-    match forge_core::protocols::call(&args.endpoint, &pool, &args.method, &data, &metadata)
-        .await
-    {
+    match forge_core::protocols::call(&args.endpoint, &pool, &args.method, &data, &metadata).await {
         Ok(response) => {
             for message in &response.messages {
                 println!("{message}");
@@ -600,7 +694,12 @@ async fn cmd_run(args: RunArgs) -> i32 {
         None => None,
     };
 
-    let options = RunOptions { environment: args.env.clone(), data, bail: args.bail, delay_ms: args.delay_ms };
+    let options = RunOptions {
+        environment: args.env.clone(),
+        data,
+        bail: args.bail,
+        delay_ms: args.delay_ms,
+    };
     let engine = HttpEngine::new();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let cancel = CancellationToken::new();
@@ -608,7 +707,13 @@ async fn cmd_run(args: RunArgs) -> i32 {
 
     let printer = tokio::spawn(run_printer(rx, color));
     let run_result = run(&workspace, scope, options, &engine, tx, cancel).await;
-    let (outcomes, _printed_summary) = printer.await.unwrap_or_default();
+    let (outcomes, _printed_summary) = match printer.await {
+        Ok(output) => output,
+        Err(error) => {
+            eprintln!("error: run output task failed: {error}");
+            return 2;
+        }
+    };
 
     match run_result {
         Ok(summary) => {
@@ -616,7 +721,10 @@ async fn cmd_run(args: RunArgs) -> i32 {
             if let Some(report_path) = &args.report {
                 let junit = junit_xml(&workspace.meta.name, &outcomes, &summary);
                 if let Err(e) = std::fs::write(report_path, junit) {
-                    eprintln!("error: failed to write report to {}: {e}", report_path.display());
+                    eprintln!(
+                        "error: failed to write report to {}: {e}",
+                        report_path.display()
+                    );
                     return 2;
                 }
             }
@@ -658,7 +766,11 @@ fn print_children(children: &[TreeNode], depth: usize) {
                 print_children(&f.children, depth + 1);
             }
             TreeNode::Request(r) => {
-                println!("{indent}[{:<7}] {}", r.def.method.as_str(), child.display_name());
+                println!(
+                    "{indent}[{:<7}] {}",
+                    r.def.method.as_str(),
+                    child.display_name()
+                );
             }
         }
     }
@@ -676,7 +788,10 @@ fn cmd_envs(workspace_path: &Path) -> i32 {
     for env in &workspace.environments {
         let total = env.env.variables.len();
         let secret_count = env.env.variables.values().filter(|v| v.secret).count();
-        println!("{} ({total} variable(s), {secret_count} secret)", env.env.name);
+        println!(
+            "{} ({total} variable(s), {secret_count} secret)",
+            env.env.name
+        );
     }
     0
 }
@@ -705,7 +820,9 @@ fn parse_scope(rel: Option<&str>) -> RunScope {
 fn parse_data_source(path: &Path) -> anyhow::Result<DataSource> {
     match path.extension().and_then(|e| e.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("csv") => Ok(DataSource::CsvFile(path.to_path_buf())),
-        Some(ext) if ext.eq_ignore_ascii_case("json") => Ok(DataSource::JsonFile(path.to_path_buf())),
+        Some(ext) if ext.eq_ignore_ascii_case("json") => {
+            Ok(DataSource::JsonFile(path.to_path_buf()))
+        }
         _ => Err(anyhow::anyhow!(
             "unsupported data file extension (expected .csv or .json): {}",
             path.display()

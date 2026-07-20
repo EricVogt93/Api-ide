@@ -31,7 +31,10 @@ pub fn collect(state: &AppState) -> Vec<Problem> {
     // Diagnostics for every open tab, resolved against the active
     // environment (mirrors what would happen on Send).
     if let Some(ws) = &state.workspace {
-        let env = state.active_env.as_deref().and_then(|name| ws.environment(name));
+        let env = state
+            .active_env
+            .as_deref()
+            .and_then(|name| ws.environment(name));
         for tab in &state.tabs {
             let mut scopes = VarScopes::new();
             if let Some(env) = env {
@@ -100,7 +103,12 @@ pub fn collect(state: &AppState) -> Vec<Problem> {
                 severity: Severity::Error,
                 rel_id: Some(req.id.clone()),
                 location: "Run",
-                message: format!("{}: {} — {}", req.name, a.summary, a.message.clone().unwrap_or_default()),
+                message: format!(
+                    "{}: {} — {}",
+                    req.name,
+                    a.summary,
+                    a.message.clone().unwrap_or_default()
+                ),
             });
         }
     }
@@ -117,42 +125,61 @@ pub fn collect(state: &AppState) -> Vec<Problem> {
 pub fn show(ui: &mut egui::Ui, state: &mut AppState) -> Option<String> {
     let theme = state.theme;
     let problems = collect(state);
-    let errors = problems.iter().filter(|p| p.severity == Severity::Error).count();
+    let errors = problems
+        .iter()
+        .filter(|p| p.severity == Severity::Error)
+        .count();
     let warnings = problems.len() - errors;
     let mut open: Option<String> = None;
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{} {errors} errors", icons::ERROR)).color(theme.error_color()));
-        ui.label(egui::RichText::new(format!("{} {warnings} warnings", icons::WARNING)).color(theme.warn_color()));
+        ui.label(
+            egui::RichText::new(format!("{} {errors} errors", icons::ERROR))
+                .color(theme.error_color()),
+        );
+        ui.label(
+            egui::RichText::new(format!("{} {warnings} warnings", icons::WARNING))
+                .color(theme.warn_color()),
+        );
     });
     ui.separator();
 
     if problems.is_empty() {
         ui.centered_and_justified(|ui| {
-            ui.label(egui::RichText::new("No problems — everything looks good.").color(theme.dim_color()));
+            ui.label(
+                egui::RichText::new("No problems — everything looks good.")
+                    .color(theme.dim_color()),
+            );
         });
         return None;
     }
 
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for (i, problem) in problems.iter().enumerate() {
-            let (icon, color) = match problem.severity {
-                Severity::Error => (icons::ERROR, theme.error_color()),
-                Severity::Warning => (icons::WARNING, theme.warn_color()),
-            };
-            let row = ui
-                .horizontal(|ui| {
-                    ui.label(egui::RichText::new(icon).color(color));
-                    ui.label(egui::RichText::new(format!("[{}]", problem.location)).color(theme.dim_color()).small());
-                    ui.label(&problem.message);
-                })
-                .response;
-            let row = ui.interact(row.rect, ui.id().with(("problem", i)), egui::Sense::click());
-            if row.double_clicked() || row.clicked() {
-                open = problem.rel_id.clone();
+    egui::ScrollArea::vertical()
+        .id_salt("problems-sa-1")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for (i, problem) in problems.iter().enumerate() {
+                let (icon, color) = match problem.severity {
+                    Severity::Error => (icons::ERROR, theme.error_color()),
+                    Severity::Warning => (icons::WARNING, theme.warn_color()),
+                };
+                let row = ui
+                    .horizontal(|ui| {
+                        ui.label(egui::RichText::new(icon).color(color));
+                        ui.label(
+                            egui::RichText::new(format!("[{}]", problem.location))
+                                .color(theme.dim_color())
+                                .small(),
+                        );
+                        ui.label(&problem.message);
+                    })
+                    .response;
+                let row = ui.interact(row.rect, ui.id().with(("problem", i)), egui::Sense::click());
+                if row.double_clicked() || row.clicked() {
+                    open = problem.rel_id.clone();
+                }
             }
-        }
-    });
+        });
 
     open
 }
@@ -167,7 +194,9 @@ mod tests {
         let mut state = AppState::default();
         let mut def = RequestDef::new("Test Req", Method::Get, url);
         if let Some(b) = body {
-            def.body = BodyDef::Json { text: b.to_string() };
+            def.body = BodyDef::Json {
+                text: b.to_string(),
+            };
         }
         state.open_tab("collections/c/test.request.json".to_string(), def);
         // No workspace => tab diagnostics are skipped; give it a fake one is

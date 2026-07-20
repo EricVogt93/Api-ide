@@ -37,12 +37,16 @@ fn digest_param(header: &str, key: &str) -> Option<String> {
 async fn digest_server() -> u16 {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let port = listener.local_addr().expect("addr").port();
 
     tokio::spawn(async move {
         for _ in 0..2 {
-            let Ok((mut stream, _)) = listener.accept().await else { return };
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
             let mut buf = vec![0u8; 8192];
             let n = stream.read(&mut buf).await.unwrap_or(0);
             let request = String::from_utf8_lossy(&buf[..n]).into_owned();
@@ -50,7 +54,10 @@ async fn digest_server() -> u16 {
             let auth_line = request
                 .lines()
                 .find(|l| l.to_ascii_lowercase().starts_with("authorization:"))
-                .map(|l| l.splitn(2, ':').nth(1).unwrap_or("").trim().to_string());
+                .and_then(|line| {
+                    line.split_once(':')
+                        .map(|(_, value)| value.trim().to_string())
+                });
 
             let response = match auth_line {
                 None => format!(
@@ -91,11 +98,20 @@ async fn digest_server() -> u16 {
 async fn digest_auth_answers_the_challenge_and_passes_server_verification() {
     let port = digest_server().await;
 
-    let mut req = ResolvedRequest::new(Method::Get, format!("http://127.0.0.1:{port}/dir/index.html"));
-    req.digest = Some(DigestCredentials { username: USER.to_string(), password: PASS.to_string() });
+    let mut req = ResolvedRequest::new(
+        Method::Get,
+        format!("http://127.0.0.1:{port}/dir/index.html"),
+    );
+    req.digest = Some(DigestCredentials {
+        username: USER.to_string(),
+        password: PASS.to_string(),
+    });
 
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("request should succeed");
 
     assert_eq!(res.status, 200, "server rejected the computed digest");
     assert_eq!(res.body, b"ok");
@@ -105,11 +121,20 @@ async fn digest_auth_answers_the_challenge_and_passes_server_verification() {
 async fn digest_without_credentials_stays_a_plain_401() {
     let port = digest_server().await;
 
-    let req = ResolvedRequest::new(Method::Get, format!("http://127.0.0.1:{port}/dir/index.html"));
+    let req = ResolvedRequest::new(
+        Method::Get,
+        format!("http://127.0.0.1:{port}/dir/index.html"),
+    );
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("request should succeed");
 
-    assert_eq!(res.status, 401, "no credentials → the challenge is the final answer");
+    assert_eq!(
+        res.status, 401,
+        "no credentials → the challenge is the final answer"
+    );
 }
 
 #[tokio::test]
@@ -138,7 +163,10 @@ async fn sigv4_signs_the_request_with_date_token_and_authorization() {
     });
 
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("request should succeed");
     assert_eq!(res.status, 200);
 
     let received = &server.received_requests().await.expect("recorded")[0];
@@ -155,14 +183,24 @@ async fn sigv4_signs_the_request_with_date_token_and_authorization() {
         auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/"),
         "unexpected Authorization: {auth}"
     );
-    assert!(auth.contains("/us-east-1/execute-api/aws4_request"), "{auth}");
+    assert!(
+        auth.contains("/us-east-1/execute-api/aws4_request"),
+        "{auth}"
+    );
     assert!(auth.contains("SignedHeaders="), "{auth}");
-    assert!(auth.to_lowercase().contains("host"), "host must be signed: {auth}");
+    assert!(
+        auth.to_lowercase().contains("host"),
+        "host must be signed: {auth}"
+    );
     let signature = auth.rsplit("Signature=").next().unwrap_or_default();
     assert_eq!(signature.len(), 64, "hex sha256 signature expected: {auth}");
     assert!(signature.chars().all(|c| c.is_ascii_hexdigit()), "{auth}");
 
-    assert_eq!(header("x-amz-date").len(), 16, "x-amz-date like 20260717T101500Z");
+    assert_eq!(
+        header("x-amz-date").len(),
+        16,
+        "x-amz-date like 20260717T101500Z"
+    );
     assert_eq!(header("x-amz-security-token"), "the-session-token");
 }
 
@@ -213,7 +251,10 @@ fn ntlmv2_proof_is_valid(auth_message: &[u8]) -> bool {
         h.update(utf16le(NTLM_PASS));
         h.finalize().to_vec()
     };
-    let v2_key = hmac_md5(&nt_hash, &utf16le(&format!("{}{}", NTLM_USER.to_uppercase(), NTLM_DOMAIN)));
+    let v2_key = hmac_md5(
+        &nt_hash,
+        &utf16le(&format!("{}{}", NTLM_USER.to_uppercase(), NTLM_DOMAIN)),
+    );
 
     let mut challenge_and_temp = NTLM_CHALLENGE.to_vec();
     challenge_and_temp.extend_from_slice(temp);
@@ -241,10 +282,12 @@ fn ntlm_type2_message() -> Vec<u8> {
     msg.extend_from_slice(&(name.len() as u16).to_le_bytes());
     msg.extend_from_slice(&payload_base.to_le_bytes());
     // flags: unicode | NTLM | target info | NTLM2 key
-    msg.extend_from_slice(&(0x0000_0001u32 | 0x0000_0200 | 0x0080_0000 | 0x0008_0000).to_le_bytes());
+    msg.extend_from_slice(
+        &(0x0000_0001u32 | 0x0000_0200 | 0x0080_0000 | 0x0008_0000).to_le_bytes(),
+    );
     msg.extend_from_slice(&NTLM_CHALLENGE);
     msg.extend_from_slice(&[0u8; 8]); // context
-    // target info security buffer
+                                      // target info security buffer
     msg.extend_from_slice(&(target_info.len() as u16).to_le_bytes());
     msg.extend_from_slice(&(target_info.len() as u16).to_le_bytes());
     msg.extend_from_slice(&(payload_base + name.len() as u32).to_le_bytes());
@@ -261,12 +304,16 @@ async fn ntlm_server() -> u16 {
     use base64::prelude::{Engine as _, BASE64_STANDARD};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let port = listener.local_addr().expect("addr").port();
 
     tokio::spawn(async move {
         // Exactly one connection: the whole handshake must ride it.
-        let Ok((mut stream, _)) = listener.accept().await else { return };
+        let Ok((mut stream, _)) = listener.accept().await else {
+            return;
+        };
         loop {
             let mut buf = Vec::new();
             let mut byte = [0u8; 1];
@@ -331,7 +378,10 @@ async fn ntlm_handshake_completes_on_one_connection_and_passes_verification() {
     });
 
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("request should succeed");
 
     assert_eq!(res.status, 200, "server rejected the NTLMv2 proof");
     assert_eq!(res.body, b"ok");
@@ -343,6 +393,9 @@ async fn ntlm_without_credentials_stays_a_plain_401() {
 
     let req = ResolvedRequest::new(Method::Get, format!("http://127.0.0.1:{port}/protected"));
     let engine = HttpEngine::new();
-    let res = engine.execute(req, CancellationToken::new()).await.expect("request should succeed");
+    let res = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("request should succeed");
     assert_eq!(res.status, 401);
 }

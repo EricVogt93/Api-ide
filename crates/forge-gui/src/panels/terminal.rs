@@ -63,7 +63,11 @@ impl TerminalState {
 
     fn push_plain(&mut self, text: impl Into<String>, color: Option<u8>) {
         self.push_line(TermLine {
-            spans: vec![TermSpan { text: text.into(), color, bold: false }],
+            spans: vec![TermSpan {
+                text: text.into(),
+                color,
+                bold: false,
+            }],
             stderr: false,
         });
     }
@@ -112,7 +116,12 @@ impl TerminalState {
         self.history_pos = None;
 
         let mut command = Command::new("sh");
-        command.arg("-c").arg(&cmd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        command
+            .arg("-c")
+            .arg(&cmd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         if let Some(dir) = cwd {
             command.current_dir(dir);
         }
@@ -136,7 +145,9 @@ impl TerminalState {
                     let code = loop {
                         match waiter_child.lock().map(|mut c| c.try_wait()) {
                             Ok(Ok(Some(status))) => break status.code(),
-                            Ok(Ok(None)) => std::thread::sleep(std::time::Duration::from_millis(60)),
+                            Ok(Ok(None)) => {
+                                std::thread::sleep(std::time::Duration::from_millis(60))
+                            }
                             _ => break None,
                         }
                     };
@@ -153,7 +164,12 @@ impl TerminalState {
     }
 }
 
-fn spawn_reader(pipe: impl std::io::Read + Send + 'static, stderr: bool, tx: Sender<TermEvent>, ctx: egui::Context) {
+fn spawn_reader(
+    pipe: impl std::io::Read + Send + 'static,
+    stderr: bool,
+    tx: Sender<TermEvent>,
+    ctx: egui::Context,
+) {
     std::thread::spawn(move || {
         let reader = BufReader::new(pipe);
         for line in reader.lines() {
@@ -173,7 +189,11 @@ fn spawn_reader(pipe: impl std::io::Read + Send + 'static, stderr: bool, tx: Sen
 /// stripping every other escape sequence.
 pub fn parse_ansi_line(line: &str) -> TermLine {
     let mut spans: Vec<TermSpan> = Vec::new();
-    let mut current = TermSpan { text: String::new(), color: None, bold: false };
+    let mut current = TermSpan {
+        text: String::new(),
+        color: None,
+        bold: false,
+    };
     let mut chars = line.chars().peekable();
 
     while let Some(c) = chars.next() {
@@ -219,14 +239,23 @@ pub fn parse_ansi_line(line: &str) -> TermLine {
     if !current.text.is_empty() {
         spans.push(current);
     }
-    TermLine { spans, stderr: false }
+    TermLine {
+        spans,
+        stderr: false,
+    }
 }
 
 /// Map an ANSI color index to a theme-appropriate RGB.
 fn ansi_color(idx: u8, theme: ThemeKind) -> Color32 {
     let dark = theme == ThemeKind::Darcula;
     match idx {
-        0 => if dark { Color32::from_rgb(0x86, 0x8A, 0x91) } else { Color32::from_rgb(0x00, 0x00, 0x00) },
+        0 => {
+            if dark {
+                Color32::from_rgb(0x86, 0x8A, 0x91)
+            } else {
+                Color32::from_rgb(0x00, 0x00, 0x00)
+            }
+        }
         1 | 9 => theme.error_color(),
         2 | 10 => theme.ok_color(),
         3 | 11 => theme.warn_color(),
@@ -234,7 +263,13 @@ fn ansi_color(idx: u8, theme: ThemeKind) -> Color32 {
         5 | 13 => Color32::from_rgb(0xC5, 0x7B, 0xD8),
         6 | 14 => Color32::from_rgb(0x33, 0xC0, 0xC0),
         8 => theme.dim_color(),
-        _ => if dark { Color32::from_rgb(0xDF, 0xE1, 0xE5) } else { Color32::from_rgb(0x27, 0x28, 0x2E) },
+        _ => {
+            if dark {
+                Color32::from_rgb(0xDF, 0xE1, 0xE5)
+            } else {
+                Color32::from_rgb(0x27, 0x28, 0x2E)
+            }
+        }
     }
 }
 
@@ -250,12 +285,20 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
             .as_ref()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "~".to_string());
-        ui.label(egui::RichText::new(cwd_label).color(theme.dim_color()).small());
+        ui.label(
+            egui::RichText::new(cwd_label)
+                .color(theme.dim_color())
+                .small(),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Clear").clicked() {
                 state.terminal.lines.clear();
             }
-            if state.terminal.running && ui.button(egui::RichText::new("Stop").color(theme.error_color())).clicked() {
+            if state.terminal.running
+                && ui
+                    .button(egui::RichText::new("Stop").color(theme.error_color()))
+                    .clicked()
+            {
                 state.terminal.kill();
             }
             ui.checkbox(&mut state.terminal.autoscroll, "Auto-scroll");
@@ -265,43 +308,65 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
     let input_height = 30.0;
     let avail = ui.available_height() - input_height;
-    let font = FontId::monospace(13.0);
+    let font = FontId::monospace(15.0);
     let row_h = ui.fonts_mut(|f| f.row_height(&font)) + 2.0;
 
     let bg = theme.editor_bg();
-    egui::Frame::new().fill(bg).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-        ui.set_min_height(avail - 12.0);
-        let mut scroll = egui::ScrollArea::vertical().max_height(avail - 12.0).auto_shrink([false, false]);
-        if state.terminal.autoscroll {
-            scroll = scroll.stick_to_bottom(true);
-        }
-        let lines = &state.terminal.lines;
-        scroll.show_rows(ui, row_h, lines.len(), |ui, range| {
-            for line in &lines[range] {
-                let mut job = LayoutJob::default();
-                for span in &line.spans {
-                    let color = match span.color {
-                        Some(idx) => ansi_color(idx, theme),
-                        None if line.stderr => theme.error_color(),
-                        None => ansi_color(255, theme),
-                    };
-                    let mut fmt = TextFormat { font_id: font.clone(), color, ..Default::default() };
-                    if span.bold {
-                        fmt.underline = egui::Stroke::NONE;
-                        fmt.color = color.gamma_multiply(1.15);
-                    }
-                    job.append(&span.text, 0.0, fmt);
-                }
-                if job.sections.is_empty() {
-                    job.append(" ", 0.0, TextFormat { font_id: font.clone(), ..Default::default() });
-                }
-                ui.label(job);
+    egui::Frame::new()
+        .fill(bg)
+        .inner_margin(egui::Margin::same(6))
+        .show(ui, |ui| {
+            ui.set_min_height(avail - 12.0);
+            let mut scroll = egui::ScrollArea::vertical()
+                .id_salt("terminal-sa-1")
+                .max_height(avail - 12.0)
+                .auto_shrink([false, false]);
+            if state.terminal.autoscroll {
+                scroll = scroll.stick_to_bottom(true);
             }
+            let lines = &state.terminal.lines;
+            scroll.show_rows(ui, row_h, lines.len(), |ui, range| {
+                for line in &lines[range] {
+                    let mut job = LayoutJob::default();
+                    for span in &line.spans {
+                        let color = match span.color {
+                            Some(idx) => ansi_color(idx, theme),
+                            None if line.stderr => theme.error_color(),
+                            None => ansi_color(255, theme),
+                        };
+                        let mut fmt = TextFormat {
+                            font_id: font.clone(),
+                            color,
+                            ..Default::default()
+                        };
+                        if span.bold {
+                            fmt.underline = egui::Stroke::NONE;
+                            fmt.color = color.gamma_multiply(1.15);
+                        }
+                        job.append(&span.text, 0.0, fmt);
+                    }
+                    if job.sections.is_empty() {
+                        job.append(
+                            " ",
+                            0.0,
+                            TextFormat {
+                                font_id: font.clone(),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    ui.label(job);
+                }
+            });
         });
-    });
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("$").color(theme.accent_color()).monospace().strong());
+        ui.label(
+            egui::RichText::new("$")
+                .color(theme.accent_color())
+                .monospace()
+                .strong(),
+        );
         let edit = egui::TextEdit::singleline(&mut state.terminal.input)
             .font(egui::TextStyle::Monospace)
             .hint_text("Run a command… (Enter to execute)")
@@ -310,7 +375,12 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
         // Up/Down history navigation while the input has focus.
         if resp.has_focus() {
-            let (up, down) = ui.input(|i| (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown)));
+            let (up, down) = ui.input(|i| {
+                (
+                    i.key_pressed(egui::Key::ArrowUp),
+                    i.key_pressed(egui::Key::ArrowDown),
+                )
+            });
             if up || down {
                 navigate_history(&mut state.terminal, up);
             }
@@ -376,7 +446,10 @@ mod tests {
 
     #[test]
     fn history_navigation_wraps_sensibly() {
-        let mut term = TerminalState { history: vec!["a".into(), "b".into()], ..Default::default() };
+        let mut term = TerminalState {
+            history: vec!["a".into(), "b".into()],
+            ..Default::default()
+        };
         navigate_history(&mut term, true);
         assert_eq!(term.input, "b");
         navigate_history(&mut term, true);

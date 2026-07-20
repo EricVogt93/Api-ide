@@ -59,8 +59,9 @@ pub async fn subscribe(
 ) -> Result<SseSession, ProtocolError> {
     let mut builder = reqwest::Client::builder();
     if let Some(pem) = &tls.client_pem {
-        let identity = reqwest::Identity::from_pem(pem)
-            .map_err(|e| ProtocolError::Connect(format!("invalid client certificate/key PEM: {e}")))?;
+        let identity = reqwest::Identity::from_pem(pem).map_err(|e| {
+            ProtocolError::Connect(format!("invalid client certificate/key PEM: {e}"))
+        })?;
         builder = builder.identity(identity);
     }
     if let Some(pem) = &tls.extra_roots_pem {

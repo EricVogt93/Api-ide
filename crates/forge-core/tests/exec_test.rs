@@ -25,10 +25,10 @@ async fn happy_path_get_json() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/ping"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            r#"{"ok":true}"#.as_bytes().to_vec(),
-            "application/json",
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(r#"{"ok":true}"#.as_bytes().to_vec(), "application/json"),
+        )
         .mount(&server)
         .await;
 
@@ -113,9 +113,11 @@ async fn preserves_header_order_and_duplicates_on_the_wire() {
     let names: Vec<&str> = received[0]
         .headers
         .iter()
-        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("x-first")
-            || k.as_str().eq_ignore_ascii_case("x-multi")
-            || k.as_str().eq_ignore_ascii_case("x-second"))
+        .filter(|(k, _)| {
+            k.as_str().eq_ignore_ascii_case("x-first")
+                || k.as_str().eq_ignore_ascii_case("x-multi")
+                || k.as_str().eq_ignore_ascii_case("x-second")
+        })
         .map(|(k, _)| k.as_str())
         .collect();
     assert_eq!(names, vec!["x-first", "x-multi", "x-multi", "x-second"]);
@@ -151,7 +153,10 @@ async fn form_body_is_url_encoded() {
     ]);
 
     let engine = HttpEngine::new();
-    let result = engine.execute(req, CancellationToken::new()).await.expect("ok");
+    let result = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("ok");
     assert_eq!(result.status, 200);
 }
 
@@ -185,7 +190,10 @@ async fn multipart_text_and_file_parts() {
     ]);
 
     let engine = HttpEngine::new();
-    let result = engine.execute(req, CancellationToken::new()).await.expect("ok");
+    let result = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("ok");
     assert_eq!(result.status, 200);
 
     let received = server.received_requests().await.expect("recording enabled");
@@ -225,9 +233,7 @@ async fn follows_303_and_converts_to_get_dropping_body() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/start"))
-        .respond_with(
-            ResponseTemplate::new(303).insert_header("Location", "/next"),
-        )
+        .respond_with(ResponseTemplate::new(303).insert_header("Location", "/next"))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -243,7 +249,10 @@ async fn follows_303_and_converts_to_get_dropping_body() {
     };
 
     let engine = HttpEngine::new();
-    let result = engine.execute(req, CancellationToken::new()).await.expect("ok");
+    let result = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("ok");
 
     assert_eq!(result.status, 200);
     assert_eq!(result.text(), "final");
@@ -281,11 +290,18 @@ async fn strips_authorization_on_cross_origin_redirect() {
         .await;
 
     let mut req = get(format!("{}/start", origin.uri()));
-    req.headers.push(("Authorization".to_string(), "Bearer secret-token".to_string()));
-    req.headers.push(("Cookie".to_string(), "session=explicit-cookie".to_string()));
+    req.headers.push((
+        "Authorization".to_string(),
+        "Bearer secret-token".to_string(),
+    ));
+    req.headers
+        .push(("Cookie".to_string(), "session=explicit-cookie".to_string()));
 
     let engine = HttpEngine::new();
-    let result = engine.execute(req, CancellationToken::new()).await.expect("ok");
+    let result = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("ok");
     assert_eq!(result.status, 200);
 
     let received = target.received_requests().await.expect("recording enabled");
@@ -312,7 +328,10 @@ async fn respects_max_redirects() {
     req.max_redirects = 2;
 
     let engine = HttpEngine::new();
-    let result = engine.execute(req, CancellationToken::new()).await.expect("ok");
+    let result = engine
+        .execute(req, CancellationToken::new())
+        .await
+        .expect("ok");
     // Gives up following after max_redirects hops and returns the last
     // redirect response as final.
     assert_eq!(result.redirect_chain.len(), 2);
@@ -341,14 +360,20 @@ async fn cookie_round_trip_across_two_requests() {
 
     let engine = HttpEngine::new();
     engine
-        .execute(get(format!("{}/set", server.uri())), CancellationToken::new())
+        .execute(
+            get(format!("{}/set", server.uri())),
+            CancellationToken::new(),
+        )
         .await
         .expect("first request ok");
 
     assert_eq!(engine.cookies().all().len(), 1);
 
     engine
-        .execute(get(format!("{}/check", server.uri())), CancellationToken::new())
+        .execute(
+            get(format!("{}/check", server.uri())),
+            CancellationToken::new(),
+        )
         .await
         .expect("second request ok");
 
@@ -407,7 +432,10 @@ async fn cancellation_fires_before_response() {
     });
 
     let engine = HttpEngine::new();
-    let err = engine.execute(req, cancel).await.expect_err("should be cancelled");
+    let err = engine
+        .execute(req, cancel)
+        .await
+        .expect_err("should be cancelled");
     assert!(matches!(err, ExecError::Cancelled));
 }
 
@@ -438,7 +466,10 @@ async fn decodes_gzip_response_body() {
 
     let engine = HttpEngine::new();
     let result = engine
-        .execute(get(format!("{}/gz", server.uri())), CancellationToken::new())
+        .execute(
+            get(format!("{}/gz", server.uri())),
+            CancellationToken::new(),
+        )
         .await
         .expect("ok");
 
@@ -466,7 +497,10 @@ async fn timing_and_sizes_are_plausible() {
 
     let engine = HttpEngine::new();
     let result = engine
-        .execute(get(format!("{}/sized", server.uri())), CancellationToken::new())
+        .execute(
+            get(format!("{}/sized", server.uri())),
+            CancellationToken::new(),
+        )
         .await
         .expect("ok");
 
@@ -487,9 +521,11 @@ async fn oauth_token_fetch_and_cache_hit() {
     Mock::given(method("POST"))
         .and(path("/token"))
         .and(basic_auth("client-id", "client-secret"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"{"access_token":"tok-1","token_type":"Bearer","expires_in":3600}"#,
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                r#"{"access_token":"tok-1","token_type":"Bearer","expires_in":3600}"#,
+            ),
+        )
         .expect(1)
         .mount(&server)
         .await;
@@ -526,17 +562,19 @@ async fn oauth_credentials_in_header_vs_body() {
     Mock::given(method("POST"))
         .and(path("/token-header"))
         .and(basic_auth("id1", "secret1"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"{"access_token":"header-tok","expires_in":60}"#,
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"access_token":"header-tok","expires_in":60}"#),
+        )
         .mount(&server)
         .await;
     // Body flow: no Authorization header, credentials in the form body.
     Mock::given(method("POST"))
         .and(path("/token-body"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(
-            r#"{"access_token":"body-tok","expires_in":60}"#,
-        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"access_token":"body-tok","expires_in":60}"#),
+        )
         .mount(&server)
         .await;
 

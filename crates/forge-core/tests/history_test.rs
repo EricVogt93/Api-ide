@@ -11,7 +11,10 @@ fn exec_result(status: u16, body: &[u8], headers: Vec<(&str, &str)>) -> Executio
         status,
         status_text: "OK".to_string(),
         http_version: "HTTP/1.1".to_string(),
-        headers: headers.into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        headers: headers
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect(),
         body: body.to_vec(),
         timing: TimingBreakdown {
             dns: None,
@@ -22,7 +25,11 @@ fn exec_result(status: u16, body: &[u8], headers: Vec<(&str, &str)>) -> Executio
             download: Duration::from_millis(5),
             total: Duration::from_millis(15),
         },
-        size: Sizes { request_bytes: 100, header_bytes: 50, body_bytes: body.len() as u64 },
+        size: Sizes {
+            request_bytes: 100,
+            header_bytes: 50,
+            body_bytes: body.len() as u64,
+        },
         effective_url: "https://example.test/thing".to_string(),
         redirect_chain: Vec::new(),
         cookies_set: Vec::new(),
@@ -55,7 +62,14 @@ fn record_list_get_roundtrip() {
         b"{\"ok\":true}",
         vec![("Content-Type", "application/json"), ("X-Trace", "abc")],
     );
-    let id = store.record(ok_entry(&exec, "Get Widget", "https://example.test/widgets/1", "GET")).unwrap();
+    let id = store
+        .record(ok_entry(
+            &exec,
+            "Get Widget",
+            "https://example.test/widgets/1",
+            "GET",
+        ))
+        .unwrap();
     assert!(id > 0);
 
     let summaries = store.list(&HistoryFilter::default()).unwrap();
@@ -78,7 +92,10 @@ fn record_list_get_roundtrip() {
         full.request_headers,
         vec![("Authorization".to_string(), "Bearer xyz".to_string())]
     );
-    assert_eq!(full.request_body.as_deref(), Some(&b"{\"hello\":\"world\"}"[..]));
+    assert_eq!(
+        full.request_body.as_deref(),
+        Some(&b"{\"hello\":\"world\"}"[..])
+    );
     assert_eq!(
         full.response_headers,
         vec![
@@ -101,26 +118,51 @@ fn filter_by_text_method_and_status() {
     let e2 = exec_result(404, b"two", vec![]);
     let e3 = exec_result(500, b"three", vec![]);
 
-    store.record(ok_entry(&e1, "List Users", "https://api.test/users", "GET")).unwrap();
-    store.record(ok_entry(&e2, "Get Missing", "https://api.test/users/999", "GET")).unwrap();
-    store.record(ok_entry(&e3, "Create Order", "https://api.test/orders", "POST")).unwrap();
+    store
+        .record(ok_entry(&e1, "List Users", "https://api.test/users", "GET"))
+        .unwrap();
+    store
+        .record(ok_entry(
+            &e2,
+            "Get Missing",
+            "https://api.test/users/999",
+            "GET",
+        ))
+        .unwrap();
+    store
+        .record(ok_entry(
+            &e3,
+            "Create Order",
+            "https://api.test/orders",
+            "POST",
+        ))
+        .unwrap();
 
     // text match against name
     let by_text = store
-        .list(&HistoryFilter { text: Some("order".to_string()), ..HistoryFilter::default() })
+        .list(&HistoryFilter {
+            text: Some("order".to_string()),
+            ..HistoryFilter::default()
+        })
         .unwrap();
     assert_eq!(by_text.len(), 1);
     assert_eq!(by_text[0].name, "Create Order");
 
     // text match against url
     let by_url = store
-        .list(&HistoryFilter { text: Some("users".to_string()), ..HistoryFilter::default() })
+        .list(&HistoryFilter {
+            text: Some("users".to_string()),
+            ..HistoryFilter::default()
+        })
         .unwrap();
     assert_eq!(by_url.len(), 2);
 
     // method filter
     let by_method = store
-        .list(&HistoryFilter { method: Some("POST".to_string()), ..HistoryFilter::default() })
+        .list(&HistoryFilter {
+            method: Some("POST".to_string()),
+            ..HistoryFilter::default()
+        })
         .unwrap();
     assert_eq!(by_method.len(), 1);
     assert_eq!(by_method[0].name, "Create Order");
@@ -138,7 +180,11 @@ fn filter_by_text_method_and_status() {
 
     // combined: no match
     let none = store
-        .list(&HistoryFilter { text: Some("order".to_string()), method: Some("GET".to_string()), ..HistoryFilter::default() })
+        .list(&HistoryFilter {
+            text: Some("order".to_string()),
+            method: Some("GET".to_string()),
+            ..HistoryFilter::default()
+        })
         .unwrap();
     assert!(none.is_empty());
 }
@@ -158,7 +204,10 @@ fn filter_by_request_id() {
     store.record(entry2).unwrap();
 
     let results = store
-        .list(&HistoryFilter { request_id: Some("fixed-id".to_string()), ..HistoryFilter::default() })
+        .list(&HistoryFilter {
+            request_id: Some("fixed-id".to_string()),
+            ..HistoryFilter::default()
+        })
         .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "First");
@@ -170,7 +219,12 @@ fn prune_keeps_newest_n() {
     for i in 0..10 {
         let exec = exec_result(200, b"body", vec![]);
         store
-            .record(ok_entry(&exec, &format!("Req {i}"), "https://api.test/x", "GET"))
+            .record(ok_entry(
+                &exec,
+                &format!("Req {i}"),
+                "https://api.test/x",
+                "GET",
+            ))
             .unwrap();
     }
     assert_eq!(store.count().unwrap(), 10);
@@ -190,9 +244,13 @@ fn prune_keeps_newest_n() {
 fn delete_and_clear() {
     let store = store();
     let exec = exec_result(200, b"body", vec![]);
-    let id = store.record(ok_entry(&exec, "One", "https://api.test/x", "GET")).unwrap();
+    let id = store
+        .record(ok_entry(&exec, "One", "https://api.test/x", "GET"))
+        .unwrap();
     let exec2 = exec_result(200, b"body2", vec![]);
-    store.record(ok_entry(&exec2, "Two", "https://api.test/y", "GET")).unwrap();
+    store
+        .record(ok_entry(&exec2, "Two", "https://api.test/y", "GET"))
+        .unwrap();
 
     assert_eq!(store.count().unwrap(), 2);
     store.delete(id).unwrap();
@@ -222,7 +280,9 @@ fn large_body_is_capped_and_flagged() {
 fn small_body_is_not_flagged_truncated() {
     let store = store();
     let exec = exec_result(200, b"tiny", vec![]);
-    let id = store.record(ok_entry(&exec, "Small", "https://api.test/small", "GET")).unwrap();
+    let id = store
+        .record(ok_entry(&exec, "Small", "https://api.test/small", "GET"))
+        .unwrap();
     let full = store.get(id).unwrap().unwrap();
     assert!(!full.truncated);
 }
@@ -242,7 +302,12 @@ fn error_outcome_has_null_status_and_error_message() {
     };
     let id = store.record(entry).unwrap();
 
-    let summary = store.list(&HistoryFilter::default()).unwrap().into_iter().next().unwrap();
+    let summary = store
+        .list(&HistoryFilter::default())
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     assert_eq!(summary.status, None);
     assert_eq!(summary.error.as_deref(), Some("timed out after 30s"));
 
@@ -282,8 +347,12 @@ fn diff_entries_normalizes_json_key_order() {
     let exec_a = exec_result(200, br#"{"b":1,"a":2}"#, vec![]);
     let exec_b = exec_result(200, br#"{"a":2,"b":1}"#, vec![]);
 
-    let id_a = store.record(ok_entry(&exec_a, "A", "https://api.test/x", "GET")).unwrap();
-    let id_b = store.record(ok_entry(&exec_b, "B", "https://api.test/x", "GET")).unwrap();
+    let id_a = store
+        .record(ok_entry(&exec_a, "A", "https://api.test/x", "GET"))
+        .unwrap();
+    let id_b = store
+        .record(ok_entry(&exec_b, "B", "https://api.test/x", "GET"))
+        .unwrap();
 
     let a = store.get(id_a).unwrap().unwrap();
     let b = store.get(id_b).unwrap().unwrap();
@@ -300,8 +369,12 @@ fn diff_entries_detects_real_value_change() {
     let exec_a = exec_result(200, br#"{"a":1,"b":2}"#, vec![]);
     let exec_b = exec_result(200, br#"{"a":1,"b":3}"#, vec![]);
 
-    let id_a = store.record(ok_entry(&exec_a, "A", "https://api.test/x", "GET")).unwrap();
-    let id_b = store.record(ok_entry(&exec_b, "B", "https://api.test/x", "GET")).unwrap();
+    let id_a = store
+        .record(ok_entry(&exec_a, "A", "https://api.test/x", "GET"))
+        .unwrap();
+    let id_b = store
+        .record(ok_entry(&exec_b, "B", "https://api.test/x", "GET"))
+        .unwrap();
 
     let a = store.get(id_a).unwrap().unwrap();
     let b = store.get(id_b).unwrap().unwrap();
@@ -319,8 +392,12 @@ fn diff_entries_falls_back_to_lossy_text_for_non_json() {
     let exec_a = exec_result(200, b"plain text body one", vec![]);
     let exec_b = exec_result(200, b"plain text body two", vec![]);
 
-    let id_a = store.record(ok_entry(&exec_a, "A", "https://api.test/x", "GET")).unwrap();
-    let id_b = store.record(ok_entry(&exec_b, "B", "https://api.test/x", "GET")).unwrap();
+    let id_a = store
+        .record(ok_entry(&exec_a, "A", "https://api.test/x", "GET"))
+        .unwrap();
+    let id_b = store
+        .record(ok_entry(&exec_b, "B", "https://api.test/x", "GET"))
+        .unwrap();
 
     let a = store.get(id_a).unwrap().unwrap();
     let b = store.get(id_b).unwrap().unwrap();
@@ -335,11 +412,30 @@ fn pagination_limit_and_offset() {
     let store = store();
     for i in 0..5 {
         let exec = exec_result(200, b"body", vec![]);
-        store.record(ok_entry(&exec, &format!("Req {i}"), "https://api.test/x", "GET")).unwrap();
+        store
+            .record(ok_entry(
+                &exec,
+                &format!("Req {i}"),
+                "https://api.test/x",
+                "GET",
+            ))
+            .unwrap();
     }
 
-    let page1 = store.list(&HistoryFilter { limit: 2, offset: 0, ..HistoryFilter::default() }).unwrap();
-    let page2 = store.list(&HistoryFilter { limit: 2, offset: 2, ..HistoryFilter::default() }).unwrap();
+    let page1 = store
+        .list(&HistoryFilter {
+            limit: 2,
+            offset: 0,
+            ..HistoryFilter::default()
+        })
+        .unwrap();
+    let page2 = store
+        .list(&HistoryFilter {
+            limit: 2,
+            offset: 2,
+            ..HistoryFilter::default()
+        })
+        .unwrap();
     assert_eq!(page1.len(), 2);
     assert_eq!(page2.len(), 2);
     assert_ne!(page1[0].id, page2[0].id);
@@ -353,7 +449,14 @@ fn open_file_backed_store_persists_across_reopen() {
     {
         let store = HistoryStore::open(&path).unwrap();
         let exec = exec_result(201, b"created", vec![]);
-        store.record(ok_entry(&exec, "Persisted", "https://api.test/create", "POST")).unwrap();
+        store
+            .record(ok_entry(
+                &exec,
+                "Persisted",
+                "https://api.test/create",
+                "POST",
+            ))
+            .unwrap();
     }
 
     let reopened = HistoryStore::open(&path).unwrap();
