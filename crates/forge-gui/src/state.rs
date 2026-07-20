@@ -18,6 +18,7 @@ use crate::panels::history::HistoryUiState;
 use crate::panels::log::EventLog;
 use crate::panels::terminal::TerminalState;
 use crate::panels::test_results::RunLog;
+use crate::panels::variables::VariablesUiState;
 use crate::theme::ThemeKind;
 use crate::widgets::response_view::ResponseViewState;
 
@@ -140,10 +141,11 @@ pub enum BottomTool {
     History,
     Console,
     Cookies,
+    Variables,
 }
 
 impl BottomTool {
-    pub const ALL: [BottomTool; 7] = [
+    pub const ALL: [BottomTool; 8] = [
         BottomTool::Run,
         BottomTool::Problems,
         BottomTool::Terminal,
@@ -151,6 +153,7 @@ impl BottomTool {
         BottomTool::History,
         BottomTool::Console,
         BottomTool::Cookies,
+        BottomTool::Variables,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -162,6 +165,7 @@ impl BottomTool {
             BottomTool::History => "History",
             BottomTool::Console => "Console",
             BottomTool::Cookies => "Cookies",
+            BottomTool::Variables => "Variables",
         }
     }
 }
@@ -194,6 +198,7 @@ pub struct AppState {
     pub history_ui: HistoryUiState,
     pub console: ConsoleState,
     pub cookies_ui: CookiesUiState,
+    pub variables_ui: VariablesUiState,
     /// reqv1 asset-store browser (left tool window).
     pub assets: crate::panels::assets::AssetsState,
     /// Parsed OpenAPI spec powering editor assistance, fetched from the
@@ -247,6 +252,7 @@ impl Default for AppState {
             history_ui: HistoryUiState::default(),
             console: ConsoleState::default(),
             cookies_ui: CookiesUiState::default(),
+            variables_ui: VariablesUiState::default(),
             assets: crate::panels::assets::AssetsState::default(),
             openapi: None,
             openapi_source: None,

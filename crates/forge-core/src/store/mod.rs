@@ -6,9 +6,11 @@
 //! from the list appended alphabetically so that git merges stay trivial.
 
 mod ops;
+mod variables;
 mod workspace;
 
 pub use ops::*;
+pub use variables::*;
 pub use workspace::*;
 
 use std::path::{Path, PathBuf};

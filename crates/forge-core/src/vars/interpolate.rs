@@ -128,6 +128,37 @@ pub fn spans(template: &str, scopes: &VarScopes) -> Vec<VarSpan> {
         .collect()
 }
 
+/// Rename exact `{{name}}` references while preserving whitespace inside the
+/// braces. Returns the rewritten template and the number of replacements.
+pub fn rename(template: &str, old: &str, new: &str) -> (String, usize) {
+    if old.is_empty() || old == new {
+        return (template.to_string(), 0);
+    }
+    let refs: Vec<_> = scan(template)
+        .into_iter()
+        .filter(|reference| reference.name == old)
+        .collect();
+    if refs.is_empty() {
+        return (template.to_string(), 0);
+    }
+
+    let mut out = String::with_capacity(template.len());
+    let mut cursor = 0;
+    for reference in &refs {
+        out.push_str(&template[cursor..reference.start + 2]);
+        let inner = &template[reference.start + 2..reference.end - 2];
+        let leading = inner.len() - inner.trim_start().len();
+        let trailing = inner.len() - inner.trim_end().len();
+        out.push_str(&inner[..leading]);
+        out.push_str(new);
+        out.push_str(&inner[inner.len() - trailing..]);
+        out.push_str("}}");
+        cursor = reference.end;
+    }
+    out.push_str(&template[cursor..]);
+    (out, refs.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +302,17 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].resolved, None);
         assert!(!found[0].secret);
+    }
+
+    #[test]
+    fn rename_only_changes_exact_references_and_keeps_spacing() {
+        let (renamed, count) = rename(
+            "{{baseUrl}} {{ baseUrl }} {{baseUrlExtra}}",
+            "baseUrl",
+            "apiBase",
+        );
+        assert_eq!(renamed, "{{apiBase}} {{ apiBase }} {{baseUrlExtra}}");
+        assert_eq!(count, 2);
     }
 
     #[test]

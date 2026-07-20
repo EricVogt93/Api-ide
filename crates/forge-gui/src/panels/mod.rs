@@ -10,3 +10,4 @@ pub mod problems;
 pub mod request_editor;
 pub mod terminal;
 pub mod test_results;
+pub mod variables;

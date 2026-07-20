@@ -12,7 +12,7 @@ use crate::keymap::{self, ActionId};
 use crate::local;
 use crate::panels::{
     assets, collections, console, cookies, history, log, problems, request_editor, terminal,
-    test_results,
+    test_results, variables,
 };
 use crate::state::{AppState, BottomTool, RunState, StatusMessage};
 use crate::theme::{icons, ThemeKind};
@@ -676,6 +676,7 @@ impl ForgeApp {
                 (BottomTool::History, icons::HISTORY),
                 (BottomTool::Console, icons::CONSOLE),
                 (BottomTool::Cookies, icons::COOKIES),
+                (BottomTool::Variables, icons::ENVIRONMENT),
             ] {
                 let active = self.state.bottom_tool == Some(tool);
                 if ui
@@ -948,6 +949,11 @@ impl eframe::App for ForgeApp {
                         BottomTool::History => history::show(ui, &mut self.state),
                         BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
                         BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
+                        BottomTool::Variables => {
+                            if let Some(rel_id) = variables::show(ui, &mut self.state) {
+                                self.open_request_tab(&rel_id);
+                            }
+                        }
                     }
                 });
         }

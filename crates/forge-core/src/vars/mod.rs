@@ -11,7 +11,7 @@ mod dynamic;
 mod interpolate;
 mod scope;
 
-pub use interpolate::{interpolate, spans, InterpolateError, VarSpan};
+pub use interpolate::{interpolate, rename, spans, InterpolateError, VarSpan};
 pub use scope::{ResolvedVar, VarOrigin, VarScopes};
 
 /// Resolve a single built-in dynamic variable by name (leading `$`

@@ -689,7 +689,11 @@ pub fn send_active(state: &mut AppState, bridge: &Bridge) {
 /// environment plus the collection/folder chain that owns `rel_id`. This is
 /// a preview aid only — the authoritative resolution happens in
 /// `forge_core::runner` when the request actually executes.
-fn build_scopes(workspace: &Workspace, rel_id: &str, active_env: Option<&str>) -> VarScopes {
+pub(super) fn build_scopes(
+    workspace: &Workspace,
+    rel_id: &str,
+    active_env: Option<&str>,
+) -> VarScopes {
     let mut scopes = VarScopes::new();
     if let Some(env_name) = active_env {
         if let Some(loaded) = workspace.environment(env_name) {
