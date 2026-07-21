@@ -245,23 +245,47 @@ fn target_rect(screen: egui::Rect, target: Target) -> egui::Rect {
         Target::Whole => inset,
         Target::Project => egui::Rect::from_min_max(
             egui::pos2(inset.left(), inset.top() + 55.0),
-            egui::pos2((inset.left() + 375.0).min(inset.right()), inset.bottom() - 26.0),
+            egui::pos2(
+                (inset.left() + 375.0).min(inset.right()),
+                inset.bottom() - 26.0,
+            ),
         ),
         Target::Catalog => egui::Rect::from_min_max(
-            egui::pos2((inset.left() + 375.0).min(inset.right()), inset.top() + 95.0),
-            egui::pos2((inset.left() + 710.0).min(inset.right()), inset.bottom() - 185.0),
+            egui::pos2(
+                (inset.left() + 375.0).min(inset.right()),
+                inset.top() + 95.0,
+            ),
+            egui::pos2(
+                (inset.left() + 710.0).min(inset.right()),
+                inset.bottom() - 185.0,
+            ),
         ),
         Target::Editor => egui::Rect::from_min_max(
-            egui::pos2((inset.left() + 710.0).min(inset.right()), inset.top() + 55.0),
-            egui::pos2((inset.right() - 300.0).max(inset.left()), inset.bottom() - 185.0),
+            egui::pos2(
+                (inset.left() + 710.0).min(inset.right()),
+                inset.top() + 55.0,
+            ),
+            egui::pos2(
+                (inset.right() - 300.0).max(inset.left()),
+                inset.bottom() - 185.0,
+            ),
         ),
         Target::RightTools => egui::Rect::from_min_max(
-            egui::pos2((inset.right() - 305.0).max(inset.left()), inset.top() + 55.0),
+            egui::pos2(
+                (inset.right() - 305.0).max(inset.left()),
+                inset.top() + 55.0,
+            ),
             egui::pos2(inset.right(), inset.bottom() - 26.0),
         ),
         Target::Results => egui::Rect::from_min_max(
-            egui::pos2((inset.left() + 375.0).min(inset.right()), (inset.bottom() - 360.0).max(inset.top())),
-            egui::pos2((inset.right() - 300.0).max(inset.left()), inset.bottom() - 60.0),
+            egui::pos2(
+                (inset.left() + 375.0).min(inset.right()),
+                (inset.bottom() - 360.0).max(inset.top()),
+            ),
+            egui::pos2(
+                (inset.right() - 300.0).max(inset.left()),
+                inset.bottom() - 60.0,
+            ),
         ),
         Target::BottomTools => egui::Rect::from_min_max(
             egui::pos2(inset.left(), inset.bottom() - 62.0),
@@ -286,20 +310,32 @@ fn card_position(
 ) -> egui::Pos2 {
     let margin = 18.0;
     let desired = match kind {
-        Target::Project | Target::Catalog => egui::pos2(target.right() + margin, target.top() + 24.0),
-        Target::RightTools => egui::pos2(target.left() - card_size.x - margin, target.top() + 24.0),
-        Target::Results | Target::BottomTools | Target::Status => {
-            egui::pos2(screen.center().x - card_size.x / 2.0, target.top() - card_size.y - margin)
+        Target::Project | Target::Catalog => {
+            egui::pos2(target.right() + margin, target.top() + 24.0)
         }
-        Target::Menu => egui::pos2(screen.center().x - card_size.x / 2.0, target.bottom() + margin),
+        Target::RightTools => egui::pos2(target.left() - card_size.x - margin, target.top() + 24.0),
+        Target::Results | Target::BottomTools | Target::Status => egui::pos2(
+            screen.center().x - card_size.x / 2.0,
+            target.top() - card_size.y - margin,
+        ),
+        Target::Menu => egui::pos2(
+            screen.center().x - card_size.x / 2.0,
+            target.bottom() + margin,
+        ),
         Target::Whole | Target::Editor => egui::pos2(
             screen.center().x - card_size.x / 2.0,
             screen.center().y - card_size.y / 2.0,
         ),
     };
     egui::pos2(
-        desired.x.clamp(screen.left() + margin, (screen.right() - card_size.x - margin).max(screen.left() + margin)),
-        desired.y.clamp(screen.top() + margin, (screen.bottom() - card_size.y - margin).max(screen.top() + margin)),
+        desired.x.clamp(
+            screen.left() + margin,
+            (screen.right() - card_size.x - margin).max(screen.left() + margin),
+        ),
+        desired.y.clamp(
+            screen.top() + margin,
+            (screen.bottom() - card_size.y - margin).max(screen.top() + margin),
+        ),
     )
 }
 

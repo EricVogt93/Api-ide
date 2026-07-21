@@ -1,5 +1,5 @@
-use forge_core::store::Workspace;
 use forge_core::reqv1::{load_project, load_request_document, ProjectIndex, SequenceDocument};
+use forge_core::store::Workspace;
 
 #[test]
 fn demo_workspace_loads() {
@@ -36,7 +36,11 @@ fn demo_api_project_is_a_valid_feature_gallery() {
     assert!(project.auth.is_some(), "demo should exercise project auth");
 
     let index = ProjectIndex::scan(&root).expect("demo project should index");
-    assert!(index.broken.is_empty(), "broken demo refs: {:?}", index.broken);
+    assert!(
+        index.broken.is_empty(),
+        "broken demo refs: {:?}",
+        index.broken
+    );
     assert!(index.requests.len() >= 5);
     assert!(index.assets.iter().any(|asset| asset.metadata.is_some()));
     assert!(index.environments.iter().any(|name| name == "demo"));

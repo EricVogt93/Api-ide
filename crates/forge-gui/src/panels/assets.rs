@@ -179,15 +179,19 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                     new_request = true;
                     ui.close();
                 }
-                if ui.button(format!("{}  New asset…", icons::ADD))
+                if ui
+                    .button(format!("{}  New asset…", icons::ADD))
                     .on_hover_text("Create reusable data or executable catalog behavior")
-                    .clicked() {
+                    .clicked()
+                {
                     new_asset = true;
                     ui.close();
                 }
-                if ui.button(format!("{}  Add files…", icons::ADD))
+                if ui
+                    .button(format!("{}  Add files…", icons::ADD))
                     .on_hover_text("Copy existing files into the selected project folder")
-                    .clicked() {
+                    .clicked()
+                {
                     if let Some(directory) = root
                         .as_deref()
                         .map(|root| request_directory(&state.assets, root))
@@ -213,29 +217,37 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                 .on_hover_text("Refresh project index")
                 .clicked();
             ui.menu_button(icons::ELLIPSIS, |ui| {
-                if ui.button("New sequence…")
+                if ui
+                    .button("New sequence…")
                     .on_hover_text("Create an ordered request sequence")
-                    .clicked() {
+                    .clicked()
+                {
                     new_sequence = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Migrate request…")
+                if ui
+                    .button("Migrate request…")
                     .on_hover_text("Convert one legacy request to format v1")
-                    .clicked() {
+                    .clicked()
+                {
                     migrate_request = true;
                     ui.close();
                 }
-                if ui.button("Migrate tree…")
+                if ui
+                    .button("Migrate tree…")
                     .on_hover_text("Convert a legacy request tree to format v1")
-                    .clicked() {
+                    .clicked()
+                {
                     migrate_tree = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Switch project…")
+                if ui
+                    .button("Switch project…")
                     .on_hover_text("Open another project.json folder")
-                    .clicked() {
+                    .clicked()
+                {
                     switch_project = true;
                     ui.close();
                 }
@@ -306,18 +318,19 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         ui.spacing_mut().item_spacing.x = 16.0;
         for (view, label) in [(ProjectView::Files, "Files"), (ProjectView::Git, "Git")] {
             let active = state.assets.view == view;
-            let response = ui.add(
-                egui::Label::new(RichText::new(label).color(if active {
-                    ui.visuals().hyperlink_color
-                } else {
-                    ui.visuals().weak_text_color()
-                }))
-                .sense(egui::Sense::click()),
-            )
-            .on_hover_text(match view {
-                ProjectView::Files => "Browse project files and folders",
-                ProjectView::Git => "Browse added, modified and untracked files",
-            });
+            let response = ui
+                .add(
+                    egui::Label::new(RichText::new(label).color(if active {
+                        ui.visuals().hyperlink_color
+                    } else {
+                        ui.visuals().weak_text_color()
+                    }))
+                    .sense(egui::Sense::click()),
+                )
+                .on_hover_text(match view {
+                    ProjectView::Files => "Browse project files and folders",
+                    ProjectView::Git => "Browse added, modified and untracked files",
+                });
             if active {
                 ui.painter().line_segment(
                     [

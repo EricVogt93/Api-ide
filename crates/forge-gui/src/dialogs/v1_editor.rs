@@ -1931,7 +1931,10 @@ fn advisor_context(d: &V1EditorState) -> Result<String, String> {
     ] {
         if let Some(mut value) = value {
             redact_sensitive_json(&mut value);
-            sections.push(format!("Active file {label} sidecar:\n{}", serde_json::to_string_pretty(&value).unwrap_or_default()));
+            sections.push(format!(
+                "Active file {label} sidecar:\n{}",
+                serde_json::to_string_pretty(&value).unwrap_or_default()
+            ));
         }
     }
 
@@ -1939,26 +1942,57 @@ fn advisor_context(d: &V1EditorState) -> Result<String, String> {
         for relative in ["project.json", "forge.json"] {
             let path = root.join(relative);
             if let Ok(text) = std::fs::read_to_string(&path) {
-                sections.push(format!("Project metadata ({relative}):\n{}", truncate_text(&text, 8_000)));
+                sections.push(format!(
+                    "Project metadata ({relative}):\n{}",
+                    truncate_text(&text, 8_000)
+                ));
             }
         }
         if let Some(source) = &d.openapi_source {
             if let Ok(text) = std::fs::read_to_string(source) {
-                sections.push(format!("OpenAPI source ({}):\n{}", source.strip_prefix(root).unwrap_or(source).display(), truncate_text(&text, 16_000)));
+                sections.push(format!(
+                    "OpenAPI source ({}):\n{}",
+                    source.strip_prefix(root).unwrap_or(source).display(),
+                    truncate_text(&text, 16_000)
+                ));
             }
         }
         let mut related = Vec::new();
         let current = d.file.as_deref();
-        if let Some(entries) = d.file.as_deref().and_then(Path::parent).and_then(|dir| std::fs::read_dir(dir).ok()) {
-            for path in entries.flatten().map(|entry| entry.path()).take(20)
+        if let Some(entries) = d
+            .file
+            .as_deref()
+            .and_then(Path::parent)
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+        {
+            for path in entries
+                .flatten()
+                .map(|entry| entry.path())
+                .take(20)
                 .filter(|path| Some(path.as_path()) != current && path.is_file())
-                .filter(|path| matches!(path.extension().and_then(|e| e.to_str()), Some("json" | "yaml" | "yml" | "js")))
+                .filter(|path| {
+                    matches!(
+                        path.extension().and_then(|e| e.to_str()),
+                        Some("json" | "yaml" | "yml" | "js")
+                    )
+                })
             {
-                let Ok(text) = std::fs::read_to_string(&path) else { continue; };
-                related.push(format!("{}:\n{}", path.strip_prefix(root).unwrap_or(&path).display(), truncate_text(&text, 6_000)));
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                related.push(format!(
+                    "{}:\n{}",
+                    path.strip_prefix(root).unwrap_or(&path).display(),
+                    truncate_text(&text, 6_000)
+                ));
             }
         }
-        if !related.is_empty() { sections.push(format!("Related files in the active folder:\n{}", related.join("\n\n"))); }
+        if !related.is_empty() {
+            sections.push(format!(
+                "Related files in the active folder:\n{}",
+                related.join("\n\n")
+            ));
+        }
     }
 
     if let (Some(spec), Ok(document)) = (
@@ -3988,9 +4022,11 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState, editor_font_size: f32)
                 .unwrap_or_else(|| format!("{}  More", icons::ELLIPSIS));
             ui.menu_button(selected, |ui| {
                 for (tab, label) in overflow {
-                    if ui.selectable_label(d.result_tab == *tab, label)
+                    if ui
+                        .selectable_label(d.result_tab == *tab, label)
                         .on_hover_text(result_tab_help(*tab))
-                        .clicked() {
+                        .clicked()
+                    {
                         d.result_tab = *tab;
                         ui.close();
                     }
@@ -4014,7 +4050,7 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState, editor_font_size: f32)
             ResultTab::Runtime => runtime_pane(ui, d),
             ResultTab::Trace => trace_pane(ui),
             ResultTab::Diagnostics => diagnostics_pane(ui, d),
-    });
+        });
 }
 
 fn result_tab_help(tab: ResultTab) -> &'static str {

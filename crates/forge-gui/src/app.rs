@@ -547,9 +547,11 @@ impl ForgeApp {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
             ui.menu_button("File", |ui| {
-                if ui.button("New Project...")
+                if ui
+                    .button("New Project...")
                     .on_hover_text("Create a ready-to-use Forge workspace")
-                    .clicked() {
+                    .clicked()
+                {
                     self.new_workspace_dialog();
                     ui.close();
                 }
@@ -561,9 +563,11 @@ impl ForgeApp {
                     self.open_workspace_dialog();
                     ui.close();
                 }
-                if ui.button("Open Standalone API Project...")
+                if ui
+                    .button("Open Standalone API Project...")
                     .on_hover_text("Open a folder that contains project.json")
-                    .clicked() {
+                    .clicked()
+                {
                     self.open_api_project_dialog();
                     ui.close();
                 }
@@ -596,21 +600,27 @@ impl ForgeApp {
                     self.state.dialogs.curl_import.open();
                     ui.close();
                 }
-                if ui.button("Import OpenAPI...")
+                if ui
+                    .button("Import OpenAPI...")
                     .on_hover_text("Generate requests from an OpenAPI document")
-                    .clicked() {
+                    .clicked()
+                {
                     self.state.dialogs.openapi_import.open();
                     ui.close();
                 }
-                if ui.button("Import Postman...")
+                if ui
+                    .button("Import Postman...")
                     .on_hover_text("Import a Postman collection")
-                    .clicked() {
+                    .clicked()
+                {
                     self.state.dialogs.postman_import.open();
                     ui.close();
                 }
-                if ui.button("Import Bruno...")
+                if ui
+                    .button("Import Bruno...")
                     .on_hover_text("Import a Bruno collection")
-                    .clicked() {
+                    .clicked()
+                {
                     self.state.dialogs.bruno_import.open();
                     ui.close();
                 }
@@ -650,9 +660,11 @@ impl ForgeApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("gRPC Call...")
+                if ui
+                    .button("gRPC Call...")
                     .on_hover_text("Open the gRPC request runner")
-                    .clicked() {
+                    .clicked()
+                {
                     self.state.dialogs.grpc_call.open();
                     ui.close();
                 }
@@ -699,15 +711,18 @@ impl ForgeApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Manage Environments...")
+                if ui
+                    .button("Manage Environments...")
                     .on_hover_text("Create, edit or remove environments")
-                    .clicked() {
+                    .clicked()
+                {
                     let preferred = self.state.active_env.clone();
                     self.state.dialogs.env_editor.open(preferred);
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("User tour…")
+                if ui
+                    .button("User tour…")
                     .on_hover_text("Walk through the main Forge workflow")
                     .clicked()
                 {
@@ -729,9 +744,11 @@ impl ForgeApp {
                     self.state.dialogs.update.check(&self.bridge, true);
                     ui.close();
                 }
-                if ui.button("About Forge")
+                if ui
+                    .button("About Forge")
                     .on_hover_text("Show version and application information")
-                    .clicked() {
+                    .clicked()
+                {
                     self.state.dialogs.about_open = true;
                     ui.close();
                 }
@@ -792,17 +809,21 @@ impl ForgeApp {
             }
             for name in env_names {
                 let is_sel = self.state.active_env.as_deref() == Some(name.as_str());
-                if ui.selectable_label(is_sel, &name)
+                if ui
+                    .selectable_label(is_sel, &name)
                     .on_hover_text(format!("Use the {name} environment"))
-                    .clicked() {
+                    .clicked()
+                {
                     self.state.active_env = Some(name);
                     ui.close();
                 }
             }
             ui.separator();
-            if ui.button("Manage environments\u{2026}")
+            if ui
+                .button("Manage environments\u{2026}")
                 .on_hover_text("Create, edit or remove environments")
-                .clicked() {
+                .clicked()
+            {
                 let preferred = self.state.active_env.clone();
                 self.state.dialogs.env_editor.open(preferred);
                 ui.close();
@@ -927,9 +948,11 @@ impl ForgeApp {
                     (BottomTool::Cookies, icons::COOKIES),
                     (BottomTool::Variables, icons::ENVIRONMENT),
                 ] {
-                    if ui.button(format!("{icon}  {}", tool.label()))
+                    if ui
+                        .button(format!("{icon}  {}", tool.label()))
                         .on_hover_text(format!("Open the {} tool window", tool.label()))
-                        .clicked() {
+                        .clicked()
+                    {
                         self.state.bottom_tool = Some(tool);
                         ui.close();
                     }
