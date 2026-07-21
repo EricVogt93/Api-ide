@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "aliases": {
+    "data:pets": "./assets/data/pets.json",
+    "data:pet-cases": "./assets/data/pet-cases.json",
+    "project:assertions": "./assets/assertions",
+    "project:extractors": "./assets/extractors",
+    "project:generators": "./assets/generators",
+    "project:mocks": "./assets/mocks"
+  },
+  "secrets": [
+    "env"
+  ],
+  "auth": {
+    "request": "requests/auth/fetch-token.request.json",
+    "tokenPath": "$.access_token",
+    "lifetimeSeconds": 900,
+    "refreshBeforeSeconds": 30,
+    "applyTo": "requests/auth/protected.request.json"
+  }
+}

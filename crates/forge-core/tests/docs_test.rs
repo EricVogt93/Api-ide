@@ -1,4 +1,5 @@
 use forge_core::store::Workspace;
+use forge_core::reqv1::{load_project, load_request_document, ProjectIndex, SequenceDocument};
 
 #[test]
 fn demo_workspace_loads() {
@@ -25,4 +26,30 @@ fn demo_workspace_loads() {
     assert!(names.contains(&"Auth Bearer"));
     assert!(names.contains(&"Get 404"));
     assert_eq!(requests.len(), 4);
+}
+
+#[test]
+fn demo_api_project_is_a_valid_feature_gallery() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo-workspace");
+    let project = load_project(&root).expect("demo project.json should load");
+    assert!(project.auth.is_some(), "demo should exercise project auth");
+
+    let index = ProjectIndex::scan(&root).expect("demo project should index");
+    assert!(index.broken.is_empty(), "broken demo refs: {:?}", index.broken);
+    assert!(index.requests.len() >= 5);
+    assert!(index.assets.iter().any(|asset| asset.metadata.is_some()));
+    assert!(index.environments.iter().any(|name| name == "demo"));
+
+    for request in &index.requests {
+        load_request_document(std::path::Path::new(&request.path))
+            .unwrap_or_else(|error| panic!("invalid {}: {error}", request.rel_path));
+    }
+
+    let sequence_path = root.join("demo.sequence.json");
+    let sequence = SequenceDocument::parse(
+        &std::fs::read_to_string(&sequence_path).expect("demo sequence should exist"),
+    )
+    .expect("demo sequence should parse");
+    assert_eq!(sequence.resolve_files(&root).unwrap().len(), 3);
 }

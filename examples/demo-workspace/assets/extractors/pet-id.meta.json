@@ -1,0 +1,16 @@
+{
+  "title": "Capture pet id",
+  "description": "Stores the response id in a named runtime variable.",
+  "intent": "capture",
+  "phase": "afterResponse",
+  "parameters": [
+    {
+      "name": "target",
+      "label": "Runtime variable",
+      "kind": "string",
+      "required": true,
+      "example": "createdPetId"
+    }
+  ],
+  "example": { "target": "createdPetId" }
+}

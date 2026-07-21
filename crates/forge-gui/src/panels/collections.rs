@@ -94,21 +94,37 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.menu_button(icons::ELLIPSIS, |ui| {
-                if ui.button("New Collection").clicked() {
+                if ui
+                    .button("New Collection")
+                    .on_hover_text("Create a collection to group legacy requests")
+                    .clicked()
+                {
                     new_collection = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Expand all").clicked() {
+                if ui
+                    .button("Expand all")
+                    .on_hover_text("Expand every collection and folder")
+                    .clicked()
+                {
                     expand_all = true;
                     ui.close();
                 }
-                if ui.button("Collapse all").clicked() {
+                if ui
+                    .button("Collapse all")
+                    .on_hover_text("Collapse every collection and folder")
+                    .clicked()
+                {
                     collapse_all = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Run all").clicked() {
+                if ui
+                    .button("Run all")
+                    .on_hover_text("Execute all requests in the collections panel")
+                    .clicked()
+                {
                     run_all = true;
                     ui.close();
                 }

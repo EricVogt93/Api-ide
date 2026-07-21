@@ -20,6 +20,7 @@ pub mod postman_import;
 pub mod search;
 pub mod settings;
 pub mod snippet_export;
+pub mod tour;
 pub mod v1_editor;
 pub mod welcome;
 
@@ -41,6 +42,7 @@ pub struct DialogManager {
     pub postman_import: postman_import::PostmanImportState,
     pub bruno_import: bruno_import::BrunoImportState,
     pub snippet_export: snippet_export::SnippetExportState,
+    pub tour: tour::TourState,
     pub env_editor: env_editor::EnvEditorState,
     pub hooks_editor: hooks_editor::HooksEditorState,
     pub grpc_call: grpc_call::GrpcCallState,
@@ -65,6 +67,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     hooks_editor::show(ctx, state);
     grpc_call::show(ctx, state, bridge);
     crate::updater::show(ctx, &mut state.dialogs.update, bridge);
+    tour::show(ctx, state);
 }
 
 /// Detect the global dialog-opening gestures that don't fit a single

@@ -45,6 +45,7 @@ API test tools tend to turn a request into a document full of scripts, copied as
 | Assertions | Status, headers, timing, body text/regex, JSONPath value/type/length, cookies, JSON Schema and OpenAPI response validation |
 | Hooks | Request preparation, response processing, extractors, logs, request diffs and runtime-variable changes |
 | Authentication | Basic/Bearer helpers, reusable auth requests, Keycloak/Auth0/Azure presets, expiry-aware refresh before a dependent request |
+| AI Advisor | OpenAI-compatible advisor with automatic active-file, sidecar, OpenAPI, project-metadata and nearby-file context; secrets are redacted before sending |
 | Protocols | HTTP, GraphQL, WebSocket, SSE and unary gRPC |
 | Portability | Lossless Forge bundles, cURL export/import, Postman import, JUnit XML and a headless runner |
 
@@ -134,6 +135,10 @@ Assertions and hooks deliberately live beside a request instead of inside it. Th
 
 The schemas in [`schemas/`](schemas) define requests and sidecars. The complete design is documented in [Request Format v1](docs/architecture/request-format-v1.md).
 
+## Documentation
+
+The [Forge Wiki](docs/wiki/README.md) is the full product guide. It covers the zero-config workflow, project layout, request and sidecar formats, the catalog, OpenAPI tooling, authentication, the AI Advisor, generated suites, CLI/CI usage, and the hexagonal architecture. Use [Repository Guidelines](AGENTS.md) for contribution rules.
+
 ## One catalog, no assertion copy-paste
 
 A catalog entry contains a title, description, intent, execution phase, typed parameters, defaults, and an example. Selecting **Status is**, entering `201`, and inserting it produces a stable reference:
@@ -210,6 +215,8 @@ forge-cli ─┘
 - [`forge-cli`](crates/forge-cli) is the headless automation adapter.
 
 The GUI should not reimplement execution rules, and the CLI should not need GUI state. See [Repository Guidelines](AGENTS.md) before contributing.
+
+The AI Advisor follows the same boundary: the GUI assembles a bounded, redacted context while `forge-core` remains the source of truth for request parsing, OpenAPI matching, assets and execution. Provider transport is isolated in `forge-gui/src/advisor.rs` and uses an OpenAI-compatible chat-completions endpoint.
 
 ## Development
 

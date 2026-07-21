@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "kind": "sequence",
+  "meta": {
+    "id": "demo.smoke",
+    "name": "Demo smoke journey",
+    "description": "Lists pets, creates one and calls an automatically authenticated endpoint.",
+    "tags": ["smoke", "regression"]
+  },
+  "requests": [
+    "requests/pets/list.request.json",
+    "requests/pets/create.request.json",
+    "requests/auth/protected.request.json"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "kind": "hooks",
+  "hooks": [
+    { "phase": "beforeRequest", "use": "builtin:header@1", "with": { "name": "X-Demo-Client", "value": "Forge" } },
+    { "phase": "afterResponse", "use": "builtin:extract-header@1", "with": { "name": "X-Request-Id", "target": "listRequestId" } }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "demo.auth.protected",
+    "name": "Protected request",
+    "description": "Receives a cached Bearer token from the project auth provider automatically.",
+    "tags": ["auth", "regression"]
+  },
+  "request": {
+    "method": "GET",
+    "url": "${env.httpbinUrl}/bearer"
+  },
+  "mock": {
+    "status": 200,
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true }
+    ],
+    "body": {
+      "type": "json",
+      "value": { "authenticated": true, "token": "demo-short-lived-token" }
+    }
+  }
+}

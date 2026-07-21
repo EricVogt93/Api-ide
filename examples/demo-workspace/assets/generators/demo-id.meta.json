@@ -1,0 +1,15 @@
+{
+  "title": "Readable demo id",
+  "description": "Creates a stable id from a prefix and the selected pet.",
+  "intent": "generate",
+  "parameters": [
+    {
+      "name": "prefix",
+      "label": "Prefix",
+      "kind": "string",
+      "required": true,
+      "example": "pet"
+    }
+  ],
+  "example": { "prefix": "pet" }
+}

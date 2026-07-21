@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "demo.pets.delete",
+    "name": "Delete pet",
+    "description": "OpenAPI-aligned DELETE showing path bindings and a no-content response.",
+    "tags": ["cleanup", "regression"]
+  },
+  "bindings": {
+    "petId": { "value": 42 }
+  },
+  "request": {
+    "method": "DELETE",
+    "url": "${env.baseUrl}/pets/${bindings.petId}"
+  },
+  "mock": {
+    "status": 204,
+    "headers": [],
+    "body": { "type": "text", "value": "" }
+  }
+}

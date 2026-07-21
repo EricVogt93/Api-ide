@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "kind": "assertions",
+  "assertions": [
+    { "use": "builtin:assert-status@1", "with": { "expected": 201 } },
+    { "use": "builtin:assert-json-path@1", "with": { "path": "$.name", "operator": "equals", "value": "${bindings.pet.name}" } },
+    { "use": "builtin:assert-schema@1", "with": { "schema": { "type": "object", "required": ["id", "name"], "properties": { "id": { "type": "integer" }, "name": { "type": "string" } } } } },
+    { "use": "project:assertions/pet-name", "with": { "expected": "${bindings.pet.name}" } }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "formatVersion": 1,
+  "kind": "hooks",
+  "hooks": [
+    { "phase": "afterResponse", "use": "project:extractors/pet-id", "with": { "target": "createdPetId" } }
+  ]
+}

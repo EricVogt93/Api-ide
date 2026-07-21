@@ -1,0 +1,5 @@
+{
+  "baseUrl": "https://petstore3.swagger.io/api/v3",
+  "httpbinUrl": "https://httpbin.org",
+  "timeoutMs": 5000
+}

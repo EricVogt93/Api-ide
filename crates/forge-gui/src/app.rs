@@ -547,18 +547,23 @@ impl ForgeApp {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
             ui.menu_button("File", |ui| {
-                if ui.button("New Project...").clicked() {
+                if ui.button("New Project...")
+                    .on_hover_text("Create a ready-to-use Forge workspace")
+                    .clicked() {
                     self.new_workspace_dialog();
                     ui.close();
                 }
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace))
+                    .on_hover_text("Open an existing Forge workspace")
                     .clicked()
                 {
                     self.open_workspace_dialog();
                     ui.close();
                 }
-                if ui.button("Open Standalone API Project...").clicked() {
+                if ui.button("Open Standalone API Project...")
+                    .on_hover_text("Open a folder that contains project.json")
+                    .clicked() {
                     self.open_api_project_dialog();
                     ui.close();
                 }
@@ -566,6 +571,7 @@ impl ForgeApp {
                 let has_active = self.state.active_tab.is_some();
                 if ui
                     .add_enabled(has_active, Self::action_button(ui.ctx(), ActionId::Save))
+                    .on_hover_text("Save the active request")
                     .clicked()
                 {
                     if let Some(idx) = self.state.active_tab {
@@ -575,6 +581,7 @@ impl ForgeApp {
                 }
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::SaveAll))
+                    .on_hover_text("Save every modified request")
                     .clicked()
                 {
                     save_all(&mut self.state);
@@ -583,40 +590,51 @@ impl ForgeApp {
                 ui.separator();
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::ImportCurl))
+                    .on_hover_text("Create a request from a curl command")
                     .clicked()
                 {
                     self.state.dialogs.curl_import.open();
                     ui.close();
                 }
-                if ui.button("Import OpenAPI...").clicked() {
+                if ui.button("Import OpenAPI...")
+                    .on_hover_text("Generate requests from an OpenAPI document")
+                    .clicked() {
                     self.state.dialogs.openapi_import.open();
                     ui.close();
                 }
-                if ui.button("Import Postman...").clicked() {
+                if ui.button("Import Postman...")
+                    .on_hover_text("Import a Postman collection")
+                    .clicked() {
                     self.state.dialogs.postman_import.open();
                     ui.close();
                 }
-                if ui.button("Import Bruno...").clicked() {
+                if ui.button("Import Bruno...")
+                    .on_hover_text("Import a Bruno collection")
+                    .clicked() {
                     self.state.dialogs.bruno_import.open();
                     ui.close();
                 }
                 ui.separator();
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::OpenSettings))
+                    .on_hover_text("Configure editor, view and project defaults")
                     .clicked()
                 {
                     self.state.dialogs.settings.open = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Quit").clicked() {
+                if ui.button("Quit").on_hover_text("Close Forge").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-            });
+            })
+            .response
+            .on_hover_text("Project, file, import and application actions");
             ui.menu_button("Run", |ui| {
                 let can_send = self.state.active_tab.is_some();
                 if ui
                     .add_enabled(can_send, Self::action_button(ui.ctx(), ActionId::Send))
+                    .on_hover_text("Execute the active request")
                     .clicked()
                 {
                     request_editor::send_active(&mut self.state, &self.bridge);
@@ -625,29 +643,41 @@ impl ForgeApp {
                 let can_run = self.state.workspace.is_some();
                 if ui
                     .add_enabled(can_run, egui::Button::new("Run Collection"))
+                    .on_hover_text("Execute every request in the open legacy workspace")
                     .clicked()
                 {
                     self.run_workspace();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("gRPC Call...").clicked() {
+                if ui.button("gRPC Call...")
+                    .on_hover_text("Open the gRPC request runner")
+                    .clicked() {
                     self.state.dialogs.grpc_call.open();
                     ui.close();
                 }
-            });
+            })
+            .response
+            .on_hover_text("Execute requests, collections and gRPC calls");
             ui.menu_button("View", |ui| {
-                ui.checkbox(&mut self.state.show_collections, "Collections");
-                ui.checkbox(&mut self.state.show_assets, "Project");
-                ui.checkbox(&mut self.state.show_environment, "Environment");
-                ui.checkbox(&mut self.state.show_activity_bar, "Activity bar");
-                ui.checkbox(&mut self.state.show_bottom_bar, "Bottom tool bar");
-                ui.checkbox(&mut self.state.show_status_bar, "Status bar");
+                ui.checkbox(&mut self.state.show_collections, "Collections")
+                    .on_hover_text("Show or hide the legacy collection explorer");
+                ui.checkbox(&mut self.state.show_assets, "Project")
+                    .on_hover_text("Show or hide the file-based project explorer");
+                ui.checkbox(&mut self.state.show_environment, "Environment")
+                    .on_hover_text("Show or hide legacy environment variables");
+                ui.checkbox(&mut self.state.show_activity_bar, "Activity bar")
+                    .on_hover_text("Show or hide the left tool-window icons");
+                ui.checkbox(&mut self.state.show_bottom_bar, "Bottom tool bar")
+                    .on_hover_text("Show or hide the bottom tool switcher");
+                ui.checkbox(&mut self.state.show_status_bar, "Status bar")
+                    .on_hover_text("Show or hide Git, timing and version status");
                 ui.separator();
                 ui.menu_button("Theme", |ui| {
                     for kind in ThemeKind::ALL {
                         if ui
                             .selectable_label(self.state.theme == kind, kind.label())
+                            .on_hover_text(format!("Switch to the {} theme", kind.label()))
                             .clicked()
                         {
                             self.state.theme = kind;
@@ -656,38 +686,58 @@ impl ForgeApp {
                             ui.close();
                         }
                     }
-                });
+                })
+                .response
+                .on_hover_text("Choose the application color theme");
                 ui.separator();
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::ToggleZen))
+                    .on_hover_text("Hide all chrome for a distraction-free editor")
                     .clicked()
                 {
                     self.dispatch_action(ActionId::ToggleZen);
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Manage Environments...").clicked() {
+                if ui.button("Manage Environments...")
+                    .on_hover_text("Create, edit or remove environments")
+                    .clicked() {
                     let preferred = self.state.active_env.clone();
                     self.state.dialogs.env_editor.open(preferred);
                     ui.close();
                 }
-            });
+                ui.separator();
+                if ui.button("User tour…")
+                    .on_hover_text("Walk through the main Forge workflow")
+                    .clicked()
+                {
+                    self.state.dialogs.tour.start();
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text("Control panels, appearance, focus mode and onboarding");
             ui.menu_button("Help", |ui| {
                 if ui
                     .add_enabled(
                         !self.state.dialogs.update.checking,
                         egui::Button::new("Check for updates…"),
                     )
+                    .on_hover_text("Check the configured release source for a newer Forge build")
                     .clicked()
                 {
                     self.state.dialogs.update.check(&self.bridge, true);
                     ui.close();
                 }
-                if ui.button("About Forge").clicked() {
+                if ui.button("About Forge")
+                    .on_hover_text("Show version and application information")
+                    .clicked() {
                     self.state.dialogs.about_open = true;
                     ui.close();
                 }
-            });
+            })
+            .response
+            .on_hover_text("Updates and application information");
 
             // Right cluster (laid out right-to-left, so first added = rightmost).
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -734,6 +784,7 @@ impl ForgeApp {
             ui.label(egui::RichText::new("ENVIRONMENTS").weak().small());
             if ui
                 .selectable_label(self.state.active_env.is_none(), "Automatic (properties)")
+                .on_hover_text("Use the environment inherited from request and folder properties")
                 .clicked()
             {
                 self.state.active_env = None;
@@ -741,18 +792,24 @@ impl ForgeApp {
             }
             for name in env_names {
                 let is_sel = self.state.active_env.as_deref() == Some(name.as_str());
-                if ui.selectable_label(is_sel, &name).clicked() {
+                if ui.selectable_label(is_sel, &name)
+                    .on_hover_text(format!("Use the {name} environment"))
+                    .clicked() {
                     self.state.active_env = Some(name);
                     ui.close();
                 }
             }
             ui.separator();
-            if ui.button("Manage environments\u{2026}").clicked() {
+            if ui.button("Manage environments\u{2026}")
+                .on_hover_text("Create, edit or remove environments")
+                .clicked() {
                 let preferred = self.state.active_env.clone();
                 self.state.dialogs.env_editor.open(preferred);
                 ui.close();
             }
-        });
+        })
+        .response
+        .on_hover_text("Select the request environment");
     }
 
     fn tab_bar(&mut self, ui: &mut egui::Ui) {
@@ -857,6 +914,7 @@ impl ForgeApp {
                 let active = self.state.bottom_tool == Some(tool);
                 if ui
                     .selectable_label(active, format!("{icon}  {}", tool.label()))
+                    .on_hover_text(format!("Open or hide the {} tool window", tool.label()))
                     .clicked()
                 {
                     self.state.bottom_tool = if active { None } else { Some(tool) };
@@ -869,17 +927,21 @@ impl ForgeApp {
                     (BottomTool::Cookies, icons::COOKIES),
                     (BottomTool::Variables, icons::ENVIRONMENT),
                 ] {
-                    if ui.button(format!("{icon}  {}", tool.label())).clicked() {
+                    if ui.button(format!("{icon}  {}", tool.label()))
+                        .on_hover_text(format!("Open the {} tool window", tool.label()))
+                        .clicked() {
                         self.state.bottom_tool = Some(tool);
                         ui.close();
                     }
                 }
-            });
+            })
+            .response
+            .on_hover_text("Show additional tool windows");
             if self.state.bottom_tool.is_some() {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .small_button(icons::COLLAPSE)
-                        .on_hover_text("Hide")
+                        .on_hover_text("Collapse the active bottom tool window")
                         .clicked()
                     {
                         self.state.bottom_tool = None;

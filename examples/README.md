@@ -2,16 +2,28 @@
 
 ## `demo-workspace/`
 
-A small, complete Forge workspace that exercises the on-disk format against
-the public [httpbin.org](https://httpbin.org) test service. Open the
-`demo-workspace` folder directly in the Forge IDE, or run it headlessly:
+A complete Forge workspace that acts as an executable product tour. Open the
+`demo-workspace` folder directly in the Forge IDE to explore modern request
+documents, sidecars, reusable catalog assets, mocks, matrices, sequences,
+project auth, OpenAPI and inherited project properties. The original HTTPBin
+collection remains available as a legacy-format example.
 
 ```sh
 forge run examples/demo-workspace --env httpbin
+forge ci examples/demo-workspace/requests --root examples/demo-workspace \
+  --env demo --mock --allow-project-code
 ```
 
 What it contains:
 
+- **`project.json`** — aliases, secret providers and automatic short-lived auth.
+- **`requests/`** — OpenAPI-aligned requests with assertion/hook sidecars,
+  regression tags, folder-level environment/OpenAPI/Jira inheritance, static
+  and dynamic mocks, and a data-driven matrix.
+- **`assets/`** — data plus typed custom assertions, extractors, generators and
+  mocks shown in the catalog.
+- **`demo.sequence.json`** — an ordered smoke journey.
+- **`specs/petstore.json`** — completion, coverage and test-generator input.
 - **`forge.json`** — the workspace marker (name `Demo`).
 - **`environments/httpbin.env.json`** — one environment (`httpbin`) with a
   plain `baseUrl` variable and a *declared* secret, `apiToken` (no value is

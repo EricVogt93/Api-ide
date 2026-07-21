@@ -1,0 +1,22 @@
+{
+  "title": "Created pet response",
+  "description": "Builds a deterministic response for offline runs.",
+  "intent": "simulate",
+  "parameters": [
+    {
+      "name": "id",
+      "label": "Pet id",
+      "kind": "integer",
+      "required": true,
+      "example": "42"
+    },
+    {
+      "name": "pet",
+      "label": "Pet",
+      "kind": "json",
+      "required": true,
+      "example": "{\"name\":\"Ada\",\"tag\":\"demo\"}"
+    }
+  ],
+  "example": { "id": 42, "pet": { "name": "Ada", "tag": "demo" } }
+}

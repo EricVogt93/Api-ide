@@ -1,0 +1,30 @@
+{
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "demo.pets.by-id-matrix",
+    "name": "Get pets from a data matrix",
+    "description": "Runs the same request once for every case in a reusable data asset.",
+    "tags": ["data-driven"]
+  },
+  "matrix": {
+    "case": { "ref": "data:pet-cases#/cases" }
+  },
+  "request": {
+    "method": "GET",
+    "url": "${env.baseUrl}/pets/${matrix.case.id}",
+    "headers": [
+      { "name": "X-Trace-Id", "value": "matrix-${matrix.case.id}", "enabled": true }
+    ]
+  },
+  "mock": {
+    "status": 200,
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true }
+    ],
+    "body": {
+      "type": "json",
+      "value": { "id": "${matrix.case.id}", "name": "${matrix.case.expectedName}", "tag": "matrix" }
+    }
+  }
+}

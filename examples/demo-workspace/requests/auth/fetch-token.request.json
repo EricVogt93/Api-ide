@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "demo.auth.fetch-token",
+    "name": "Fetch short-lived token",
+    "description": "The project auth provider refreshes this request before protected calls expire.",
+    "tags": ["auth"]
+  },
+  "request": {
+    "method": "POST",
+    "url": "${env.httpbinUrl}/anything/token",
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true }
+    ],
+    "body": {
+      "type": "json",
+      "value": { "grant_type": "client_credentials" }
+    }
+  },
+  "mock": {
+    "status": 200,
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true }
+    ],
+    "body": {
+      "type": "json",
+      "value": { "access_token": "demo-short-lived-token", "expires_in": 900 }
+    }
+  }
+}

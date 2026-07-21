@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "kind": "assertions",
+  "assertions": [
+    { "use": "builtin:assert-status@1", "with": { "expected": 204 } },
+    { "use": "builtin:assert-response-time@1", "with": { "maxMs": 5000 } }
+  ]
+}

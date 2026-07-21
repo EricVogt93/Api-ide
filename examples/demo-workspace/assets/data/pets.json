@@ -1,0 +1,12 @@
+{
+  "primary": {
+    "id": 42,
+    "name": "Ada",
+    "tag": "demo"
+  },
+  "secondary": {
+    "id": 43,
+    "name": "Grace",
+    "tag": "regression"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "demo.pets.create",
+    "name": "Create pet",
+    "description": "Data refs, built-in bindings, JSON body, custom catalog assets and a dynamic mock.",
+    "tags": ["pets", "regression"]
+  },
+  "bindings": {
+    "pet": { "ref": "data:pets#/primary" },
+    "requestId": { "use": "builtin:uuid@1" },
+    "demoId": { "use": "project:generators/demo-id", "with": { "prefix": "pet" } }
+  },
+  "request": {
+    "method": "POST",
+    "url": "${env.baseUrl}/pets",
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true },
+      { "name": "X-Request-Id", "value": "${bindings.requestId}", "enabled": true },
+      { "name": "X-Demo-Id", "value": "${bindings.demoId}", "enabled": true }
+    ],
+    "body": {
+      "type": "json",
+      "value": {
+        "name": "${bindings.pet.name}",
+        "tag": "${bindings.pet.tag}"
+      }
+    }
+  },
+  "mock": {
+    "use": "project:mocks/pet-created",
+    "with": { "id": 42, "pet": "${bindings.pet}" }
+  }
+}

@@ -405,6 +405,11 @@ struct AuthDraft {
 }
 
 impl V1EditorState {
+    pub(crate) fn reveal_right_tools(&mut self) {
+        self.right_panel_open = true;
+        self.right_tool = RightTool::OpenApi;
+    }
+
     pub fn active_file(&self) -> Option<&Path> {
         self.file.as_deref()
     }
@@ -968,21 +973,31 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                                                 run_label, accent,
                                                             ),
                                                         )
+                                                        .on_hover_text(if document_has_matrix(&d.text) {
+                                                            "Execute every case in the request matrix"
+                                                        } else {
+                                                            "Execute the active request"
+                                                        })
                                                         .clicked()
                                                     {
                                                         run_now(d, bridge);
                                                     }
                                                     if ui
                                                         .button(format!("{}  Save", icons::SAVE))
+                                                        .on_hover_text("Save the request and its assertion and hook sidecars")
                                                         .clicked()
                                                     {
                                                         refresh_project = save_now(d);
                                                     }
                                                     if !compact_toolbar {
-                                                        if ui.button("Format").clicked() {
+                                                        if ui.button("Format")
+                                                            .on_hover_text("Beautify the request JSON")
+                                                            .clicked() {
                                                             format_request(d);
                                                         }
-                                                        if ui.button("Validate").clicked() {
+                                                        if ui.button("Validate")
+                                                            .on_hover_text("Validate JSON, references and OpenAPI compatibility")
+                                                            .clicked() {
                                                             validate_now(d);
                                                         }
                                                     }
@@ -1033,6 +1048,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                                                 );
                                                             }
                                                         });
+                                                    ui.response().on_hover_text("Override the environment inherited from project properties");
                                                     if d.env_name != previous_env {
                                                         d.clear_preview();
                                                     }
@@ -1045,11 +1061,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                                 ui.centered_and_justified(|ui| {
                                                     ui.menu_button(icons::ELLIPSIS, |ui| {
                                                         if compact_toolbar {
-                                                            if ui.button("Format").clicked() {
+                                                            if ui.button("Format")
+                                                                .on_hover_text("Beautify the request JSON")
+                                                                .clicked() {
                                                                 format_request(d);
                                                                 ui.close();
                                                             }
-                                                            if ui.button("Validate").clicked() {
+                                                            if ui.button("Validate")
+                                                                .on_hover_text("Validate JSON, references and OpenAPI compatibility")
+                                                                .clicked() {
                                                                 validate_now(d);
                                                                 ui.close();
                                                             }
@@ -1058,7 +1078,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                                         ui.checkbox(
                                                             &mut d.mock,
                                                             "Use mock response",
-                                                        );
+                                                        )
+                                                        .on_hover_text("Run the request against its deterministic mock instead of the network");
                                                         ui.checkbox(
                                                     &mut d.allow_project_code,
                                                     "Allow project code",
@@ -1072,12 +1093,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                                                 can_run,
                                                                 egui::Button::new("Run sequence…"),
                                                             )
+                                                            .on_hover_text("Choose and execute an ordered request sequence")
                                                             .clicked()
                                                         {
                                                             run_sequence_now(d, bridge);
                                                             ui.close();
                                                         }
-                                                    });
+                                                    })
+                                                    .response
+                                                    .on_hover_text("Run mode and additional editor actions");
                                                 });
                                             });
                                             strip.empty();
@@ -1890,9 +1914,52 @@ fn advisor_context(d: &V1EditorState) -> Result<String, String> {
         .map(|file| file.display().to_string())
         .unwrap_or_else(|| "unsaved request".to_string());
     let mut sections = vec![format!(
+        "Workspace context:\nroot={}\nactive_file={}\nThe active file is authoritative; use the surrounding project files below only as supporting context.",
+        d.root.as_deref().map(|p| p.display().to_string()).unwrap_or_else(|| "unknown".into()),
+        file,
+    ), format!(
         "Current file: {file}\nRequest document:\n{}",
         serde_json::to_string_pretty(&request).map_err(|error| error.to_string())?
     )];
+
+    // Keep the advisor useful without asking the user to curate a file list.
+    // These are the files that define how this request behaves at runtime.
+    for (label, value) in [
+        ("Assertions", serde_json::to_value(&d.assertions).ok()),
+        ("Hooks", serde_json::to_value(&d.hooks).ok()),
+        ("Auth", serde_json::to_value(&d.project_auth).ok()),
+    ] {
+        if let Some(mut value) = value {
+            redact_sensitive_json(&mut value);
+            sections.push(format!("Active file {label} sidecar:\n{}", serde_json::to_string_pretty(&value).unwrap_or_default()));
+        }
+    }
+
+    if let Some(root) = &d.root {
+        for relative in ["project.json", "forge.json"] {
+            let path = root.join(relative);
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                sections.push(format!("Project metadata ({relative}):\n{}", truncate_text(&text, 8_000)));
+            }
+        }
+        if let Some(source) = &d.openapi_source {
+            if let Ok(text) = std::fs::read_to_string(source) {
+                sections.push(format!("OpenAPI source ({}):\n{}", source.strip_prefix(root).unwrap_or(source).display(), truncate_text(&text, 16_000)));
+            }
+        }
+        let mut related = Vec::new();
+        let current = d.file.as_deref();
+        if let Some(entries) = d.file.as_deref().and_then(Path::parent).and_then(|dir| std::fs::read_dir(dir).ok()) {
+            for path in entries.flatten().map(|entry| entry.path()).take(20)
+                .filter(|path| Some(path.as_path()) != current && path.is_file())
+                .filter(|path| matches!(path.extension().and_then(|e| e.to_str()), Some("json" | "yaml" | "yml" | "js")))
+            {
+                let Ok(text) = std::fs::read_to_string(&path) else { continue; };
+                related.push(format!("{}:\n{}", path.strip_prefix(root).unwrap_or(&path).display(), truncate_text(&text, 6_000)));
+            }
+        }
+        if !related.is_empty() { sections.push(format!("Related files in the active folder:\n{}", related.join("\n\n"))); }
+    }
 
     if let (Some(spec), Ok(document)) = (
         d.openapi.as_ref(),
@@ -2091,7 +2158,8 @@ fn catalog_filters(ui: &mut egui::Ui, d: &mut V1EditorState) {
         [ui.available_width(), 32.0],
         TextEdit::singleline(&mut d.catalog_query)
             .hint_text(format!("{}  Search catalog", icons::SEARCH)),
-    );
+    )
+    .on_hover_text("Search reusable behavior by title, intent or description");
     ui.add_space(6.0);
     let width = ((ui.available_width() - 8.0) / 2.0).max(100.0);
     ui.horizontal(|ui| {
@@ -3895,7 +3963,9 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState, editor_font_size: f32)
             } else {
                 ui.visuals().weak_text_color()
             });
-            let response = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
+            let response = ui
+                .add(egui::Label::new(text).sense(egui::Sense::click()))
+                .on_hover_text(result_tab_help(*which));
             if active {
                 ui.painter().line_segment(
                     [
@@ -3918,12 +3988,16 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState, editor_font_size: f32)
                 .unwrap_or_else(|| format!("{}  More", icons::ELLIPSIS));
             ui.menu_button(selected, |ui| {
                 for (tab, label) in overflow {
-                    if ui.selectable_label(d.result_tab == *tab, label).clicked() {
+                    if ui.selectable_label(d.result_tab == *tab, label)
+                        .on_hover_text(result_tab_help(*tab))
+                        .clicked() {
                         d.result_tab = *tab;
                         ui.close();
                     }
                 }
-            });
+            })
+            .response
+            .on_hover_text("Show additional response detail tabs");
         }
     });
     ui.add_space(4.0);
@@ -3940,7 +4014,19 @@ fn results_pane(ui: &mut egui::Ui, d: &mut V1EditorState, editor_font_size: f32)
             ResultTab::Runtime => runtime_pane(ui, d),
             ResultTab::Trace => trace_pane(ui),
             ResultTab::Diagnostics => diagnostics_pane(ui, d),
-        });
+    });
+}
+
+fn result_tab_help(tab: ResultTab) -> &'static str {
+    match tab {
+        ResultTab::Result => "Formatted response body, headers and status",
+        ResultTab::Assertions => "Assertions configured for this request and their results",
+        ResultTab::Hooks => "Before- and after-request scripts",
+        ResultTab::Auth => "Authentication source, refresh policy and token status",
+        ResultTab::Runtime => "Execution duration, environment and transport details",
+        ResultTab::Trace => "Request lifecycle trace (coming soon)",
+        ResultTab::Diagnostics => "Validation, OpenAPI and execution diagnostics",
+    }
 }
 
 fn result_summary(ui: &mut egui::Ui, d: &mut V1EditorState) {

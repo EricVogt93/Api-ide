@@ -173,16 +173,21 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
             ui.menu_button(format!("{}  Request", icons::ADD), |ui| {
                 if ui
                     .selectable_label(true, format!("{}  Request", icons::ADD))
+                    .on_hover_text("Create a request in the selected folder")
                     .clicked()
                 {
                     new_request = true;
                     ui.close();
                 }
-                if ui.button(format!("{}  New asset…", icons::ADD)).clicked() {
+                if ui.button(format!("{}  New asset…", icons::ADD))
+                    .on_hover_text("Create reusable data or executable catalog behavior")
+                    .clicked() {
                     new_asset = true;
                     ui.close();
                 }
-                if ui.button(format!("{}  Add files…", icons::ADD)).clicked() {
+                if ui.button(format!("{}  Add files…", icons::ADD))
+                    .on_hover_text("Copy existing files into the selected project folder")
+                    .clicked() {
                     if let Some(directory) = root
                         .as_deref()
                         .map(|root| request_directory(&state.assets, root))
@@ -191,7 +196,9 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                     }
                     ui.close();
                 }
-            });
+            })
+            .response
+            .on_hover_text("Create requests, assets or import files");
         });
         new_folder = ui
             .add_enabled(
@@ -206,25 +213,35 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                 .on_hover_text("Refresh project index")
                 .clicked();
             ui.menu_button(icons::ELLIPSIS, |ui| {
-                if ui.button("New sequence…").clicked() {
+                if ui.button("New sequence…")
+                    .on_hover_text("Create an ordered request sequence")
+                    .clicked() {
                     new_sequence = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Migrate request…").clicked() {
+                if ui.button("Migrate request…")
+                    .on_hover_text("Convert one legacy request to format v1")
+                    .clicked() {
                     migrate_request = true;
                     ui.close();
                 }
-                if ui.button("Migrate tree…").clicked() {
+                if ui.button("Migrate tree…")
+                    .on_hover_text("Convert a legacy request tree to format v1")
+                    .clicked() {
                     migrate_tree = true;
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Switch project…").clicked() {
+                if ui.button("Switch project…")
+                    .on_hover_text("Open another project.json folder")
+                    .clicked() {
                     switch_project = true;
                     ui.close();
                 }
-            });
+            })
+            .response
+            .on_hover_text("More project actions");
         });
     });
 
@@ -296,7 +313,11 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                     ui.visuals().weak_text_color()
                 }))
                 .sense(egui::Sense::click()),
-            );
+            )
+            .on_hover_text(match view {
+                ProjectView::Files => "Browse project files and folders",
+                ProjectView::Git => "Browse added, modified and untracked files",
+            });
             if active {
                 ui.painter().line_segment(
                     [
@@ -856,34 +877,61 @@ fn folder_context_menu(
         }
         ui.separator();
         if (node.path == root || node.path.starts_with(root.join("requests")))
-            && ui.button("New request…").clicked()
+            && ui
+                .button("New request…")
+                .on_hover_text("Create a request in this folder")
+                .clicked()
         {
             *action = Some(ProjectAction::NewRequest(node.path.clone()));
             ui.close();
         }
-        if ui.button("New folder…").clicked() {
+        if ui
+            .button("New folder…")
+            .on_hover_text("Create a subfolder for related requests")
+            .clicked()
+        {
             *action = Some(ProjectAction::NewFolder(node.path.clone()));
             ui.close();
         }
-        if ui.button("Add files…").clicked() {
+        if ui
+            .button("Add files…")
+            .on_hover_text("Copy existing request or asset files into this folder")
+            .clicked()
+        {
             *action = Some(ProjectAction::AddFiles(node.path.clone()));
             ui.close();
         }
-        if ui.button("Beautify JSON recursively").clicked() {
+        if ui
+            .button("Beautify JSON recursively")
+            .on_hover_text("Format JSON files in this folder and its subfolders")
+            .clicked()
+        {
             *action = Some(ProjectAction::Beautify(node.path.clone()));
             ui.close();
         }
         export_menu(ui, &node.path, action);
-        if ui.button("Import Forge bundle…").clicked() {
+        if ui
+            .button("Import Forge bundle…")
+            .on_hover_text("Import requests, assertions and hooks from a Forge bundle")
+            .clicked()
+        {
             *action = Some(ProjectAction::Import(node.path.clone()));
             ui.close();
         }
         ui.separator();
-        if ui.button("Properties…").clicked() {
+        if ui
+            .button("Properties…")
+            .on_hover_text("Configure folder environment, OpenAPI and metadata")
+            .clicked()
+        {
             *action = Some(ProjectAction::Properties(node.path.clone()));
             ui.close();
         }
-        if ui.button("Open in file manager").clicked() {
+        if ui
+            .button("Open in file manager")
+            .on_hover_text("Reveal this folder in your operating system")
+            .clicked()
+        {
             *action = Some(ProjectAction::Open(node.path.clone()));
             ui.close();
         }

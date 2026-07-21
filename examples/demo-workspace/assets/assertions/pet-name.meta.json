@@ -1,0 +1,16 @@
+{
+  "title": "Pet name matches",
+  "description": "Shows a project-owned assertion with a typed catalog form.",
+  "intent": "validate",
+  "phase": "afterResponse",
+  "parameters": [
+    {
+      "name": "expected",
+      "label": "Expected name",
+      "kind": "string",
+      "required": true,
+      "example": "Ada"
+    }
+  ],
+  "example": { "expected": "Ada" }
+}

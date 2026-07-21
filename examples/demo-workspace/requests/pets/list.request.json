@@ -1,0 +1,33 @@
+{
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "demo.pets.list",
+    "name": "List pets",
+    "description": "OpenAPI-aligned GET with query parameters and a static mock.",
+    "tags": ["smoke", "regression"]
+  },
+  "request": {
+    "method": "GET",
+    "url": "${env.baseUrl}/pets",
+    "query": [
+      { "name": "limit", "value": "10", "enabled": true },
+      { "name": "tag", "value": "demo", "enabled": false }
+    ]
+  },
+  "mock": {
+    "status": 200,
+    "headers": [
+      { "name": "Content-Type", "value": "application/json", "enabled": true },
+      { "name": "X-Request-Id", "value": "demo-list-1", "enabled": true }
+    ],
+    "body": {
+      "type": "json",
+      "value": [
+        { "id": 42, "name": "Ada", "tag": "demo" },
+        { "id": 43, "name": "Grace", "tag": "regression" }
+      ]
+    },
+    "delayMs": 25
+  }
+}

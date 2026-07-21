@@ -1,0 +1,9 @@
+{
+  "formatVersion": 1,
+  "kind": "assertions",
+  "assertions": [
+    { "use": "builtin:assert-status@1", "with": { "expected": 200 } },
+    { "use": "builtin:assert-json-path@1", "with": { "path": "$.name", "operator": "equals", "value": "${matrix.case.expectedName}" } },
+    { "use": "builtin:assert-body-regex@1", "with": { "pattern": "\\\"tag\\\":\\s*\\\"matrix\\\"" } }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "formatVersion": 1,
+  "kind": "assertions",
+  "assertions": [
+    { "use": "builtin:assert-status@1", "with": { "expected": 200 } },
+    { "use": "builtin:assert-json-path@1", "with": { "path": "$.access_token", "operator": "exists" } }
+  ]
+}
