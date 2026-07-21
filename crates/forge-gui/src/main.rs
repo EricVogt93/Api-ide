@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod advisor;
 mod app;
 mod bridge;
 mod git;
@@ -14,7 +15,7 @@ mod dialogs;
 
 use std::path::PathBuf;
 
-use app::ForgeApp;
+use app::{ForgeApp, DARK_WINDOW_ICON_PNG};
 
 /// Forward `log` records (egui warns about widget-Id clashes there) to
 /// stderr. Debug builds only — release stays silent.
@@ -50,11 +51,12 @@ fn main() -> eframe::Result {
     let initial_workspace: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
 
     let mut viewport = egui::ViewportBuilder::default()
+        .with_app_id("forge-ide")
         .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([560.0, 360.0])
-        .with_title("Forge — API Test IDE");
+        .with_min_inner_size([1100.0, 680.0])
+        .with_title("Forge — API IDE");
     // Window/taskbar icon. A bad decode just means no icon, never a crash.
-    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/logo.png")) {
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(DARK_WINDOW_ICON_PNG) {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
 

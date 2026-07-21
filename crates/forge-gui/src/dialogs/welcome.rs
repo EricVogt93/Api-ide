@@ -1,5 +1,4 @@
-//! The empty-workspace landing pane: rendered in the central panel instead
-//! of an empty editor area whenever `state.workspace` is `None`.
+//! Focused project launcher shown when no API project is open.
 
 use std::path::{Path, PathBuf};
 
@@ -67,47 +66,118 @@ pub fn remember_recent(path: &Path) {
     }
 }
 
-/// Render the centered welcome pane.
+/// Render the project launcher.
 pub fn show(ui: &mut Ui, state: &mut AppState) {
-    let recents = load_recents();
+    let recents: Vec<PathBuf> = load_recents()
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|path| {
+            path.join(forge_core::store::WORKSPACE_FILE).is_file()
+                || path.join("project.json").is_file()
+        })
+        .take(6)
+        .collect();
     let mut open_path: Option<PathBuf> = None;
+    let accent = state.theme.accent_color();
+    let width = ui.available_width().min(780.0);
 
-    ui.vertical_centered(|ui| {
-        ui.add_space((ui.available_height() * 0.15).min(120.0));
-        ui.heading("Forge");
-        ui.weak("An IntelliJ-style API testing IDE.");
-        ui.add_space(24.0);
-
-        ui.horizontal(|ui| {
-            ui.add_space((ui.available_width() - 264.0).max(0.0) / 2.0);
-            if ui
-                .add_sized([120.0, 32.0], egui::Button::new("Open Workspace..."))
-                .clicked()
-            {
-                super::open_workspace(state);
-            }
+    ui.add_space((ui.available_height() * 0.12).clamp(36.0, 96.0));
+    ui.horizontal(|ui| {
+        ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            ui.label(
+                egui::RichText::new("FORGE")
+                    .size(13.0)
+                    .strong()
+                    .color(accent),
+            );
             ui.add_space(8.0);
-            if ui
-                .add_sized([120.0, 32.0], egui::Button::new("New Workspace..."))
-                .clicked()
-            {
-                super::new_workspace(state);
-            }
-        });
-
-        if !recents.is_empty() {
+            ui.label(
+                egui::RichText::new("Build, inspect, and verify APIs.")
+                    .size(32.0)
+                    .strong(),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(
+                    "A local-first API workspace with reusable assertions, scripts, mocks, and test data.",
+                )
+                .size(16.0)
+                .color(ui.visuals().weak_text_color()),
+            );
             ui.add_space(28.0);
-            ui.label("Recent workspaces:");
-            ui.add_space(4.0);
-            ui.scope(|ui| {
-                ui.set_max_width(460.0);
-                for p in &recents {
-                    if ui.selectable_label(false, p).clicked() {
-                        open_path = Some(PathBuf::from(p));
-                    }
+            ui.horizontal(|ui| {
+                if ui
+                    .add_sized(
+                        [150.0, 40.0],
+                        crate::theme::primary_button("New project", accent),
+                    )
+                    .clicked()
+                {
+                    super::new_workspace(state);
+                }
+                if ui
+                    .add_sized([150.0, 40.0], egui::Button::new("Open project…"))
+                    .clicked()
+                {
+                    super::open_workspace(state);
                 }
             });
-        }
+            ui.add_space(42.0);
+
+            if !recents.is_empty() {
+                ui.label(egui::RichText::new("RECENT PROJECTS").small().strong().weak());
+                ui.add_space(8.0);
+                for (index, path) in recents.iter().enumerate() {
+                    let row = egui::Frame::NONE
+                        .fill(ui.visuals().faint_bg_color)
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            path.file_name()
+                                                .unwrap_or_default()
+                                                .to_string_lossy(),
+                                        )
+                                        .strong(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(
+                                            path.parent()
+                                                .unwrap_or(Path::new(""))
+                                                .to_string_lossy(),
+                                        )
+                                        .small()
+                                        .weak(),
+                                    );
+                                });
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new("Open  →").color(accent).strong(),
+                                        );
+                                    },
+                                );
+                            });
+                        });
+                    let click = ui.interact(
+                        row.response.rect,
+                        ui.id().with(("recent-project", index)),
+                        egui::Sense::click(),
+                    );
+                    if click.clicked() {
+                        open_path = Some(path.clone());
+                    }
+                    ui.add_space(6.0);
+                }
+            }
+        });
     });
 
     if let Some(path) = open_path {

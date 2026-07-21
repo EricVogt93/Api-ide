@@ -130,14 +130,19 @@ pub fn example_from_schema(schema: &Value, depth: u32) -> Value {
     }
 
     match schema_type.as_deref() {
-        Some("string") => string_example(obj.get("format").and_then(Value::as_str)),
-        Some("integer") => Value::Number(0.into()),
-        Some("number") => serde_json::json!(0.0),
+        Some("string") => string_example(obj),
+        Some("integer") => integer_example(obj),
+        Some("number") => number_example(obj),
         Some("boolean") => Value::Bool(true),
         Some("array") => {
             let empty = Value::Object(serde_json::Map::new());
             let item_schema = obj.get("items").unwrap_or(&empty);
-            Value::Array(vec![example_from_schema(item_schema, depth + 1)])
+            let count = obj
+                .get("minItems")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 32) as usize;
+            Value::Array(vec![example_from_schema(item_schema, depth + 1); count])
         }
         Some("object") => Value::Object(serde_json::Map::new()),
         _ => Value::Null,
@@ -157,16 +162,91 @@ fn schema_type_name(t: &Value) -> Option<String> {
     }
 }
 
-fn string_example(format: Option<&str>) -> Value {
-    let s = match format {
+fn string_example(obj: &serde_json::Map<String, Value>) -> Value {
+    let format = obj.get("format").and_then(Value::as_str);
+    let mut value = match format {
         Some("email") => "user@example.com",
         Some("uuid") => "00000000-0000-0000-0000-000000000000",
         Some("date-time") => "2024-01-01T00:00:00Z",
         Some("date") => "2024-01-01",
         Some("uri") | Some("url") => "https://example.com",
         _ => "string",
-    };
-    Value::String(s.to_string())
+    }
+    .to_string();
+    let min = obj
+        .get("minLength")
+        .and_then(Value::as_u64)
+        .unwrap_or_default()
+        .min(1024) as usize;
+    while value.chars().count() < min {
+        value.push('x');
+    }
+    if let Some(max) = obj.get("maxLength").and_then(Value::as_u64) {
+        value = value.chars().take(max as usize).collect();
+    }
+    if let Some(pattern) = obj.get("pattern").and_then(Value::as_str) {
+        if let Ok(regex) = regex::Regex::new(pattern) {
+            if !regex.is_match(&value) {
+                if let Some(candidate) = [
+                    "ABC",
+                    "abc",
+                    "123",
+                    "test",
+                    "user@example.com",
+                    "00000000-0000-0000-0000-000000000000",
+                ]
+                .into_iter()
+                .find(|candidate| {
+                    let len = candidate.chars().count();
+                    len >= min
+                        && obj
+                            .get("maxLength")
+                            .and_then(Value::as_u64)
+                            .is_none_or(|max| len <= max as usize)
+                        && regex.is_match(candidate)
+                }) {
+                    value = candidate.to_string();
+                }
+            }
+        }
+    }
+    Value::String(value)
+}
+
+fn integer_example(obj: &serde_json::Map<String, Value>) -> Value {
+    let minimum = obj
+        .get("minimum")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let value = obj
+        .get("exclusiveMinimum")
+        .and_then(Value::as_i64)
+        .map(|minimum| minimum.saturating_add(1))
+        .unwrap_or(minimum);
+    let value = obj
+        .get("maximum")
+        .and_then(Value::as_i64)
+        .map_or(value, |maximum| value.min(maximum));
+    Value::Number(value.into())
+}
+
+fn number_example(obj: &serde_json::Map<String, Value>) -> Value {
+    let minimum = obj
+        .get("minimum")
+        .and_then(Value::as_f64)
+        .unwrap_or_default();
+    let value = obj
+        .get("exclusiveMinimum")
+        .and_then(Value::as_f64)
+        .map(|minimum| minimum + f64::EPSILON)
+        .unwrap_or(minimum);
+    let value = obj
+        .get("maximum")
+        .and_then(Value::as_f64)
+        .map_or(value, |maximum| value.min(maximum));
+    serde_json::Number::from_f64(value)
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
 }
 
 fn build_object_example(obj: &serde_json::Map<String, Value>, depth: u32) -> Value {
@@ -325,6 +405,25 @@ mod tests {
             example_from_schema(&schema, 0),
             Value::String("hello".into())
         );
+    }
+
+    #[test]
+    fn example_from_schema_respects_basic_validation_limits() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["code", "count", "items"],
+            "properties": {
+                "code": {"type": "string", "pattern": "^[A-Z]{3}$", "minLength": 3},
+                "count": {"type": "integer", "minimum": 4},
+                "items": {"type": "array", "minItems": 2, "items": {"type": "boolean"}}
+            }
+        });
+
+        let example = example_from_schema(&schema, 0);
+
+        assert_eq!(example["code"], "ABC");
+        assert_eq!(example["count"], 4);
+        assert_eq!(example["items"].as_array().unwrap().len(), 2);
     }
 
     #[test]

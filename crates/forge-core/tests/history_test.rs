@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use forge_core::exec::{ExecutionResult, Sizes, TimingBreakdown};
-use forge_core::history::{diff_entries, diff_text, HistoryFilter, HistoryStore, NewEntry};
+use forge_core::history::{
+    diff_entries, diff_text, HistoryFilter, HistoryRecord, HistoryStore, NewEntry,
+};
 
 fn exec_result(status: u16, body: &[u8], headers: Vec<(&str, &str)>) -> ExecutionResult {
     ExecutionResult {
@@ -108,6 +110,32 @@ fn record_list_get_roundtrip() {
     assert_eq!(full.duration_ms, 15);
 
     assert!(store.get(id + 1).unwrap().is_none());
+}
+
+#[test]
+fn owned_adapter_record_uses_the_same_store() {
+    let store = store();
+    let id = store
+        .record_raw(HistoryRecord {
+            executed_at: Utc::now().to_rfc3339(),
+            request_id: "v1.users".to_string(),
+            name: "List users".to_string(),
+            method: "GET".to_string(),
+            url: "${env.baseUrl}/users".to_string(),
+            status: Some(200),
+            duration_ms: 7,
+            request_headers: Vec::new(),
+            request_body: None,
+            response_headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            response_body: Some(b"[]".to_vec()),
+            error: None,
+            env: Some("local".to_string()),
+        })
+        .unwrap();
+
+    let entry = store.get(id).unwrap().unwrap();
+    assert_eq!(entry.request_id, "v1.users");
+    assert_eq!(entry.response_body.as_deref(), Some(&b"[]"[..]));
 }
 
 #[test]

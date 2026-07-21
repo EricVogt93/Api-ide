@@ -63,7 +63,6 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     env_editor::show(ctx, state);
     hooks_editor::show(ctx, state);
     grpc_call::show(ctx, state, bridge);
-    v1_editor::show(ctx, state, bridge);
 }
 
 /// Detect the global dialog-opening gestures that don't fit a single
@@ -90,16 +89,39 @@ pub fn dispatch_action(state: &mut AppState, bridge: &Bridge, action: ActionId) 
         ActionId::Send => request_editor::send_active(state, bridge),
         ActionId::CloseTab => {
             if let Some(idx) = state.active_tab {
+                if state.auto_save && state.tabs.get(idx).is_some_and(|tab| tab.dirty) {
+                    crate::app::save_tab(state, idx);
+                }
                 state.close_tab(idx);
             }
         }
-        ActionId::NextTab => state.next_tab(),
-        ActionId::PrevTab => state.prev_tab(),
+        ActionId::NextTab => {
+            auto_save_active(state);
+            state.next_tab();
+        }
+        ActionId::PrevTab => {
+            auto_save_active(state);
+            state.prev_tab();
+        }
         ActionId::OpenWorkspace => open_workspace(state),
         ActionId::ToggleCollections => state.show_collections = !state.show_collections,
+        ActionId::ToggleZen => {
+            state.zen_mode = !state.zen_mode;
+            state.zen_left_revealed = false;
+            state.zen_right_revealed = false;
+            state.zen_bottom_revealed = false;
+        }
         ActionId::OpenSettings => state.dialogs.settings.open = true,
         ActionId::ImportCurl => state.dialogs.curl_import.open(),
         ActionId::SearchActions => state.dialogs.search.open(true),
+    }
+}
+
+fn auto_save_active(state: &mut AppState) {
+    if let Some(idx) = state.active_tab {
+        if state.auto_save && state.tabs.get(idx).is_some_and(|tab| tab.dirty) {
+            crate::app::save_tab(state, idx);
+        }
     }
 }
 
@@ -122,8 +144,7 @@ pub fn open_workspace(state: &mut AppState) {
     }
 }
 
-/// Create a fresh workspace via a folder picker. Shared by the File menu and
-/// the Welcome pane's "New Workspace..." button.
+/// Create a ready-to-use API project via one folder picker.
 pub fn new_workspace(state: &mut AppState) {
     if let Some(path) = rfd::FileDialog::new().pick_folder() {
         let name = path
@@ -133,8 +154,12 @@ pub fn new_workspace(state: &mut AppState) {
         match Workspace::create(&path, &name) {
             Ok(ws) => {
                 state.pending_workspace = Some(ws);
+                state.show_assets = true;
+                state.show_collections = false;
+                state.show_environment = false;
+                state.dialogs.v1_editor.open_new(path.clone(), None);
                 state.status = Some(StatusMessage::info(format!(
-                    "Created workspace at {}",
+                    "Created project at {}",
                     path.display()
                 )));
                 welcome::remember_recent(&path);

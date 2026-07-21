@@ -7,13 +7,21 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::state::{AppState, BottomTool};
+use crate::state::{AppState, BottomTool, UiFont, DEFAULT_EDITOR_FONT_SIZE};
 use crate::theme::ThemeKind;
 
 const UI_STATE_FILE: &str = "ui-state.json";
 
 fn default_true() -> bool {
     true
+}
+
+fn default_editor_font_size() -> f32 {
+    DEFAULT_EDITOR_FONT_SIZE
+}
+
+fn default_ui_font_size() -> f32 {
+    14.0
 }
 
 /// A serializable snapshot of the UI-relevant bits of [`AppState`].
@@ -31,6 +39,22 @@ pub struct UiState {
     pub show_collections: bool,
     #[serde(default = "default_true")]
     pub show_environment: bool,
+    #[serde(default = "default_true")]
+    pub show_assets: bool,
+    #[serde(default = "default_true")]
+    pub show_activity_bar: bool,
+    #[serde(default = "default_true")]
+    pub show_status_bar: bool,
+    #[serde(default = "default_true")]
+    pub show_bottom_bar: bool,
+    #[serde(default = "default_true")]
+    pub auto_save: bool,
+    #[serde(default = "default_editor_font_size")]
+    pub editor_font_size: f32,
+    #[serde(default = "default_ui_font_size")]
+    pub ui_font_size: f32,
+    #[serde(default)]
+    pub ui_font: String,
     #[serde(default)]
     pub bottom_panel_selected: Option<String>,
 }
@@ -49,6 +73,14 @@ pub fn capture(state: &AppState) -> UiState {
         theme: state.theme.label().to_string(),
         show_collections: state.show_collections,
         show_environment: state.show_environment,
+        show_assets: state.show_assets,
+        show_activity_bar: state.show_activity_bar,
+        show_status_bar: state.show_status_bar,
+        show_bottom_bar: state.show_bottom_bar,
+        auto_save: state.auto_save,
+        editor_font_size: state.editor_font_size,
+        ui_font_size: state.ui_font_size,
+        ui_font: state.ui_font.label().to_string(),
         bottom_panel_selected: state.bottom_tool.map(|t| t.label().to_string()),
     }
 }
@@ -113,6 +145,17 @@ pub fn apply(state: &mut AppState, snapshot: UiState) {
     }
     state.show_collections = snapshot.show_collections;
     state.show_environment = snapshot.show_environment;
+    state.show_assets = snapshot.show_assets;
+    state.show_activity_bar = snapshot.show_activity_bar;
+    state.show_status_bar = snapshot.show_status_bar;
+    state.show_bottom_bar = snapshot.show_bottom_bar;
+    state.auto_save = snapshot.auto_save;
+    state.editor_font_size = snapshot.editor_font_size;
+    state.ui_font_size = snapshot.ui_font_size;
+    state.ui_font = UiFont::ALL
+        .into_iter()
+        .find(|font| font.label() == snapshot.ui_font)
+        .unwrap_or_default();
     state.bottom_tool = snapshot
         .bottom_panel_selected
         .and_then(|s| BottomTool::ALL.into_iter().find(|t| t.label() == s));
@@ -132,6 +175,7 @@ mod tests {
             show_collections: true,
             show_environment: false,
             bottom_panel_selected: Some("History".to_string()),
+            ..UiState::default()
         };
         let json = serde_json::to_string(&original).expect("serialize");
         let restored: UiState = serde_json::from_str(&json).expect("deserialize");
@@ -224,6 +268,7 @@ mod tests {
             show_collections: true,
             show_environment: true,
             bottom_panel_selected: None,
+            ..UiState::default()
         };
 
         apply(&mut state, snapshot);
@@ -260,6 +305,7 @@ mod tests {
             show_collections: true,
             show_environment: true,
             bottom_panel_selected: None,
+            ..UiState::default()
         };
 
         apply(&mut state, snapshot);

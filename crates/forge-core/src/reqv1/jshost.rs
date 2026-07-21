@@ -23,10 +23,21 @@ use super::diag::{Code, Diagnostic};
 
 const MEMORY_LIMIT_BYTES: usize = 128 * 1024 * 1024;
 const TIME_BUDGET: Duration = Duration::from_secs(5);
+const MAX_LOG_LINES: usize = 100;
+const MAX_LOG_CHARS: usize = 4_096;
 
 /// Execute `run(ctx, input)` from the asset at `path` and return its result
 /// as JSON. `ctx_json` and `input` are marshalled through JSON text.
 pub fn run_js_asset(path: &str, ctx_json: &Value, input: &Value) -> Result<Value, Diagnostic> {
+    run_js_asset_with_logs(path, ctx_json, input).map(|(value, _)| value)
+}
+
+/// [`run_js_asset`] plus bounded `console.log` output for IDE previews.
+pub fn run_js_asset_with_logs(
+    path: &str,
+    ctx_json: &Value,
+    input: &Value,
+) -> Result<(Value, Vec<String>), Diagnostic> {
     if path.ends_with(".ts") {
         return Err(Diagnostic::new(
             Code::AssetError,
@@ -48,7 +59,7 @@ pub fn run_js_asset(path: &str, ctx_json: &Value, input: &Value) -> Result<Value
     let context =
         Context::full(&runtime).map_err(|e| host_err(path, &format!("QuickJS context: {e}")))?;
 
-    context.with(|ctx| -> Result<Value, Diagnostic> {
+    context.with(|ctx| -> Result<(Value, Vec<String>), Diagnostic> {
         // Define the asset's globals (its `run` function).
         ctx.eval::<(), _>(source.as_bytes())
             .map_err(|e| asset_err(&ctx, path, e))?;
@@ -58,26 +69,66 @@ pub fn run_js_asset(path: &str, ctx_json: &Value, input: &Value) -> Result<Value
         let input_text = serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string());
         let call_src = format!(
             r#"(function () {{
-                var __ctx = Object.freeze(JSON.parse({ctx_lit}));
+                var __forgeLogs = [];
+                globalThis.console = Object.freeze({{
+                    log: function () {{
+                        if (__forgeLogs.length >= {max_lines}) return;
+                        var parts = Array.prototype.map.call(arguments, function (value) {{
+                            if (typeof value === "string") return value;
+                            try {{
+                                var json = JSON.stringify(value);
+                                return json === undefined ? String(value) : json;
+                            }} catch (_) {{
+                                return String(value);
+                            }}
+                        }});
+                        __forgeLogs.push(parts.join(" ").slice(0, {max_chars}));
+                    }}
+                }});
+                function __deepFreeze(value) {{
+                    if (value && typeof value === "object" && !Object.isFrozen(value)) {{
+                        Object.freeze(value);
+                        Object.keys(value).forEach(function (key) {{
+                            __deepFreeze(value[key]);
+                        }});
+                    }}
+                    return value;
+                }}
+                var __ctx = __deepFreeze(JSON.parse({ctx_lit}));
                 var __input = JSON.parse({input_lit});
                 if (typeof run !== "function") {{
                     throw new Error("asset must define a global function run(ctx, input)");
                 }}
                 var __out = run(__ctx, __input);
-                return JSON.stringify(__out === undefined ? null : __out);
+                return JSON.stringify({{
+                    value: __out === undefined ? null : __out,
+                    logs: __forgeLogs
+                }});
             }})()"#,
+            max_lines = MAX_LOG_LINES,
+            max_chars = MAX_LOG_CHARS,
             ctx_lit = js_string_literal(&ctx_text),
             input_lit = js_string_literal(&input_text),
         );
         let out: String = ctx
             .eval(call_src.as_bytes())
             .map_err(|e| asset_err(&ctx, path, e))?;
-        serde_json::from_str(&out).map_err(|e| {
+        let envelope: Value = serde_json::from_str(&out).map_err(|e| {
             host_err(
                 path,
                 &format!("asset returned non-JSON-serializable value: {e}"),
             )
-        })
+        })?;
+        let value = envelope.get("value").cloned().unwrap_or(Value::Null);
+        let logs = envelope
+            .get("logs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+        Ok((value, logs))
     })
 }
 
@@ -133,7 +184,29 @@ mod tests {
     }
 
     #[test]
-    fn ctx_mutation_stays_in_the_snapshot() {
+    fn captures_and_bounds_console_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_asset(
+            dir.path(),
+            "logs.js",
+            r#"function run() {
+                console.log("x".repeat(5000));
+                for (var i = 0; i < 104; i++) console.log("line", i);
+                return { passed: true };
+            }"#,
+        );
+        let (out, logs) = run_js_asset_with_logs(&path, &json!({}), &json!({})).unwrap();
+        assert_eq!(out["passed"], true);
+        assert_eq!(logs.len(), MAX_LOG_LINES);
+        assert_eq!(logs[0].chars().count(), MAX_LOG_CHARS);
+        assert_eq!(logs[1], "line 0");
+        assert!(logs
+            .iter()
+            .all(|line| line.chars().count() <= MAX_LOG_CHARS));
+    }
+
+    #[test]
+    fn ctx_snapshot_is_deeply_frozen() {
         let dir = tempfile::tempdir().unwrap();
         let path = write_asset(
             dir.path(),
@@ -145,12 +218,7 @@ mod tests {
         );
         let ctx = json!({ "request": { "url": "http://original" } });
         let out = run_js_asset(&path, &ctx, &json!({})).unwrap();
-        // Top-level freeze; nested objects are frozen too? Object.freeze is
-        // shallow — nested mutation would stick. Verify at least the assert:
-        // shallow-frozen `request` slot cannot be replaced, and the returned
-        // url reflects what the engine will use (host state is a copy anyway:
-        // assets only ever see a JSON snapshot, never engine memory).
-        assert_eq!(out, json!("hacked"));
+        assert_eq!(out, json!("http://original"));
     }
 
     #[test]

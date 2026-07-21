@@ -29,8 +29,21 @@ impl Lockfile {
     pub fn from_index(index: &ProjectIndex) -> Result<Lockfile, Diagnostic> {
         let mut assets = BTreeMap::new();
         for asset in &index.assets {
-            let hash = hash_file(&asset.path)?;
+            let hash = hash_file(Path::new(&asset.path))?;
             assets.insert(asset.rel_path.clone(), hash);
+            let path = Path::new(&asset.path);
+            let stem = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            let metadata = path.with_file_name(format!("{stem}.meta.json"));
+            if metadata.exists() {
+                let rel = Path::new(&asset.rel_path)
+                    .with_file_name(format!("{stem}.meta.json"))
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                assets.insert(rel, hash_file(&metadata)?);
+            }
         }
         Ok(Lockfile {
             format_version: 1,
@@ -98,9 +111,13 @@ impl Lockfile {
     }
 }
 
-fn hash_file(path: &str) -> Result<String, Diagnostic> {
-    let bytes = std::fs::read(path)
-        .map_err(|e| Diagnostic::new(Code::AssetNotFound, format!("cannot read {path}: {e}")))?;
+fn hash_file(path: &Path) -> Result<String, Diagnostic> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        Diagnostic::new(
+            Code::AssetNotFound,
+            format!("cannot read {}: {e}", path.display()),
+        )
+    })?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let hex: String = hasher
@@ -123,6 +140,9 @@ mod tests {
     fn build_hashes_every_asset() {
         let lock = Lockfile::build(&fixture_root()).expect("build");
         assert!(lock.assets.contains_key("assets/data/users.json"));
+        assert!(lock
+            .assets
+            .contains_key("assets/assertions/user-created.meta.json"));
         assert!(lock.assets.values().all(|h| h.starts_with("sha256:")));
     }
 

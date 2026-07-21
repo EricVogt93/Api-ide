@@ -209,6 +209,47 @@ impl RequestDocument {
     pub fn parse(text: &str) -> Result<RequestDocument, serde_json::Error> {
         serde_json::from_str(text)
     }
+
+    /// Whether running this document can execute repository-owned code.
+    /// Builtins are shipped by Forge; every other `use` target is a project
+    /// asset and requires adapter-level trust confirmation.
+    pub fn uses_project_code(&self) -> bool {
+        let project_use = |uses: &str| !uses.starts_with("builtin:");
+        self.bindings
+            .values()
+            .chain(self.matrix.values())
+            .any(|binding| matches!(binding, Binding::Use(binding) if project_use(&binding.uses)))
+            || self.pipeline.iter().any(|entry| project_use(&entry.uses))
+            || matches!(
+                &self.mock,
+                Some(MockDef::Dynamic(mock)) if project_use(&mock.uses)
+            )
+    }
+
+    /// Insert a binding under a stable, collision-free name and return that
+    /// name for UI feedback.
+    pub fn insert_binding(&mut self, suggested_name: &str, binding: Binding) -> String {
+        let base: String = suggested_name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || character == '_' {
+                    character
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let base = base.trim_matches('_');
+        let base = if base.is_empty() { "asset" } else { base };
+        let mut name = base.to_string();
+        let mut suffix = 2;
+        while self.bindings.contains_key(&name) {
+            name = format!("{base}{suffix}");
+            suffix += 1;
+        }
+        self.bindings.insert(name.clone(), binding);
+        name
+    }
 }
 
 // `formatVersion` is a plain integer that must equal 1. Model it as a unit
@@ -243,6 +284,85 @@ pub struct ProjectConfig {
     /// Secret provider order, e.g. ["env"]. Empty = env only.
     #[serde(default)]
     pub secrets: Vec<String>,
+    /// One project-wide request that supplies short-lived authentication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<ProjectAuthConfig>,
+}
+
+/// Project-wide auth fetched by running an ordinary request document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectAuthConfig {
+    /// Project-relative `*.request.json` used to obtain the token.
+    pub request: String,
+    /// JSONPath selecting the token from that request's response body.
+    #[serde(default = "default_auth_token_path")]
+    pub token_path: String,
+    /// Token lifetime as supplied by the user/API contract.
+    #[serde(default = "default_auth_lifetime_seconds")]
+    pub lifetime_seconds: u64,
+    /// Always refresh at least this long before expiry.
+    #[serde(default = "default_auth_refresh_before_seconds")]
+    pub refresh_before_seconds: u64,
+    /// Project-relative request folder or file receiving the Bearer header.
+    #[serde(default = "default_auth_apply_to")]
+    pub apply_to: String,
+}
+
+impl ProjectAuthConfig {
+    pub fn for_request(request: String) -> Self {
+        Self {
+            request,
+            token_path: default_auth_token_path(),
+            lifetime_seconds: default_auth_lifetime_seconds(),
+            refresh_before_seconds: default_auth_refresh_before_seconds(),
+            apply_to: default_auth_apply_to(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.lifetime_seconds == 0 || self.refresh_before_seconds >= self.lifetime_seconds {
+            return Err(
+                "auth lifetime must be positive and greater than its refresh reserve".to_string(),
+            );
+        }
+        if !self.request.ends_with(".request.json") || self.token_path.trim().is_empty() {
+            return Err(
+                "auth request must be a *.request.json and tokenPath must not be empty".to_string(),
+            );
+        }
+        for (label, value) in [
+            ("auth request", self.request.as_str()),
+            ("auth applyTo", self.apply_to.as_str()),
+        ] {
+            let path = std::path::Path::new(value);
+            if value.trim().is_empty()
+                || path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(format!("{label} must be a project-relative path"));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn default_auth_token_path() -> String {
+    "$.access_token".to_string()
+}
+
+fn default_auth_lifetime_seconds() -> u64 {
+    900
+}
+
+fn default_auth_refresh_before_seconds() -> u64 {
+    30
+}
+
+fn default_auth_apply_to() -> String {
+    "requests".to_string()
 }
 
 #[cfg(test)]
@@ -295,5 +415,44 @@ mod tests {
         assert_eq!(parsed.meta.id, "users.create");
         assert_eq!(parsed.pipeline.len(), 4);
         assert!(parsed.mock.is_some());
+    }
+
+    #[test]
+    fn detects_only_project_owned_executable_assets() {
+        let builtin = RequestDocument::parse(
+            r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x"},
+                "request":{"method":"GET","url":"http://x"},
+                "pipeline":[{"phase":"afterResponse","use":"builtin:assert-status@1",
+                    "with":{"expected":200}}]}"#,
+        )
+        .unwrap();
+        assert!(!builtin.uses_project_code());
+
+        let project = RequestDocument::parse(
+            r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x"},
+                "request":{"method":"GET","url":"http://x"},
+                "pipeline":[{"phase":"afterResponse","use":"project:assertions/check"}]}"#,
+        )
+        .unwrap();
+        assert!(project.uses_project_code());
+    }
+
+    #[test]
+    fn inserted_binding_gets_a_safe_unique_name() {
+        let mut document = RequestDocument::parse(
+            r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x"},
+                "request":{"method":"GET","url":"http://x"},
+                "bindings":{"request_tag":{"value":1}}}"#,
+        )
+        .unwrap();
+        let name = document.insert_binding(
+            "request-tag",
+            Binding::Value(ValueBinding {
+                value: Value::Bool(true),
+            }),
+        );
+
+        assert_eq!(name, "request_tag2");
+        assert!(document.bindings.contains_key("request_tag2"));
     }
 }

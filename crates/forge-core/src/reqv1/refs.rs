@@ -160,9 +160,11 @@ impl RefResolver {
                     ));
                 }
                 let mut path = dir.join(normalize_rel(rest));
-                // Executable assets may omit the extension: try .ts then .js.
+                // Prefer the format the runtime can execute today. A lone
+                // .ts asset still resolves and gets the host's clear
+                // "transpile to .js" diagnostic.
                 if path.extension().is_none() && !path.exists() {
-                    for ext in ["ts", "js"] {
+                    for ext in ["js", "ts"] {
                         let with_ext = path.with_extension(ext);
                         if with_ext.exists() {
                             path = with_ext;
@@ -284,13 +286,14 @@ mod tests {
     }
 
     #[test]
-    fn prefix_alias_infers_ts_extension_and_version() {
+    fn prefix_alias_prefers_executable_js_and_keeps_version() {
         let dir = tempfile::tempdir().unwrap();
         let r = resolver(dir.path());
+        std::fs::write(dir.path().join("assets/assertions/user-created.js"), "").unwrap();
         let d = r
             .resolve("project:assertions/user-created@2", dir.path())
             .unwrap();
-        assert!(d.address.ends_with("user-created.ts"), "{}", d.address);
+        assert!(d.address.ends_with("user-created.js"), "{}", d.address);
         assert_eq!(d.version, Some(2));
     }
 

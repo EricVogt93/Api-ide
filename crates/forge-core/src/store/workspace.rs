@@ -139,12 +139,53 @@ impl Workspace {
         if meta_path.exists() {
             return Err(StoreError::AlreadyExists(meta_path));
         }
-        for dir in [COLLECTIONS_DIR, ENVIRONMENTS_DIR, SPECS_DIR] {
+        let project_path = root.join("project.json");
+        if project_path.exists() {
+            return Err(StoreError::AlreadyExists(project_path));
+        }
+        for dir in [
+            COLLECTIONS_DIR,
+            ENVIRONMENTS_DIR,
+            SPECS_DIR,
+            "requests",
+            "sequences",
+            "assets/data",
+            "assets/hooks",
+            "assets/assertions",
+            "assets/extractors",
+            "assets/generators",
+            "assets/mocks",
+        ] {
             let p = root.join(dir);
             std::fs::create_dir_all(&p).map_err(io_err(&p))?;
         }
         let meta = WorkspaceMeta::new(name);
         save_json(&meta_path, &meta)?;
+        save_json(
+            &project_path,
+            &crate::reqv1::ProjectConfig {
+                format_version: Some(1),
+                aliases: BTreeMap::from([
+                    ("data".to_string(), "./assets/data".to_string()),
+                    (
+                        "project:assertions".to_string(),
+                        "./assets/assertions".to_string(),
+                    ),
+                    (
+                        "project:extractors".to_string(),
+                        "./assets/extractors".to_string(),
+                    ),
+                    (
+                        "project:generators".to_string(),
+                        "./assets/generators".to_string(),
+                    ),
+                    ("project:hooks".to_string(), "./assets/hooks".to_string()),
+                    ("project:mocks".to_string(), "./assets/mocks".to_string()),
+                ]),
+                secrets: vec!["env".to_string()],
+                auth: None,
+            },
+        )?;
         ensure_gitignore(&root)?;
         Ok(Workspace {
             root,
@@ -315,7 +356,11 @@ fn sort_by_order(nodes: &mut [TreeNode], order: &[String]) {
 /// Make sure the workspace `.gitignore` covers local state and secrets.
 pub fn ensure_gitignore(root: &Path) -> StoreResult<()> {
     let path = root.join(".gitignore");
-    let required = [format!("{LOCAL_DIR}/"), format!("*{SECRETS_SUFFIX}")];
+    let required = [
+        format!("{LOCAL_DIR}/"),
+        format!("*{SECRETS_SUFFIX}"),
+        ".env.local".to_string(),
+    ];
     let existing = match std::fs::read_to_string(&path) {
         Ok(existing) => existing,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -337,7 +382,33 @@ pub fn ensure_gitignore(root: &Path) -> StoreResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::ensure_gitignore;
+    use super::{ensure_gitignore, Workspace};
+
+    #[test]
+    fn fresh_workspace_is_a_ready_api_project() {
+        let root = tempfile::tempdir().expect("tempdir");
+
+        Workspace::create(root.path(), "Ready").expect("create project");
+
+        for path in [
+            "project.json",
+            "requests",
+            "sequences",
+            "assets/data",
+            "assets/hooks",
+            "assets/assertions",
+            "assets/extractors",
+            "assets/generators",
+            "assets/mocks",
+        ] {
+            assert!(root.path().join(path).exists(), "missing {path}");
+        }
+        let project =
+            crate::reqv1::load_project(root.path()).expect("generated project config is valid");
+        assert_eq!(project.aliases["project:assertions"], "./assets/assertions");
+        let gitignore = std::fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(gitignore.lines().any(|line| line == ".env.local"));
+    }
 
     #[test]
     fn invalid_utf8_gitignore_is_not_overwritten() {

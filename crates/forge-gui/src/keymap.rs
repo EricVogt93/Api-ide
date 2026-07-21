@@ -17,6 +17,7 @@ pub enum ActionId {
     PrevTab,
     OpenWorkspace,
     ToggleCollections,
+    ToggleZen,
     /// Open the Settings dialog (`dialogs::settings`).
     OpenSettings,
     /// Open the curl-import dialog (`dialogs::curl_import`).
@@ -77,13 +78,21 @@ pub const ACTIONS: &[Action] = &[
     },
     Action {
         id: ActionId::OpenWorkspace,
-        title: "Open Workspace...",
+        title: "Open Project...",
         shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::O)),
     },
     Action {
         id: ActionId::ToggleCollections,
         title: "Toggle Collections",
         shortcut: Some(KeyboardShortcut::new(Modifiers::COMMAND, Key::Num1)),
+    },
+    Action {
+        id: ActionId::ToggleZen,
+        title: "Toggle Zen Mode",
+        shortcut: Some(KeyboardShortcut::new(
+            Modifiers::COMMAND.plus(Modifiers::SHIFT),
+            Key::F11,
+        )),
     },
     Action {
         id: ActionId::OpenSettings,

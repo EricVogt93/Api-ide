@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/assertions-v1.schema.json",
+  "title": "Forge assertion document (v1)",
+  "description": "Assertions stored beside a request as <name>.assertions.json.",
+  "type": "object",
+  "required": ["formatVersion", "kind", "assertions"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "formatVersion": { "const": 1 },
+    "kind": { "const": "assertions" },
+    "assertions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assertion" }
+    }
+  },
+  "$defs": {
+    "assertion": {
+      "type": "object",
+      "required": ["use"],
+      "additionalProperties": false,
+      "properties": {
+        "use": {
+          "type": "string",
+          "pattern": "^[^\\\\]+$"
+        },
+        "with": { "type": "object" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/asset-metadata-v1.schema.json",
+  "title": "Forge executable asset metadata (v1)",
+  "type": "object",
+  "required": ["title", "intent"],
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "intent": { "enum": ["validate", "prepare", "capture", "generate", "simulate"] },
+    "phase": { "enum": ["beforeRequest", "afterResponse", "onError", "finally"] },
+    "parameters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "label", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["string", "integer", "boolean", "json"] },
+          "required": { "type": "boolean" },
+          "default": {},
+          "options": { "type": "array", "items": { "type": "string" } },
+          "example": { "type": "string" }
+        }
+      }
+    },
+    "example": {}
+  }
+}

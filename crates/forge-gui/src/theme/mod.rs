@@ -1,6 +1,5 @@
-//! Theming: complete [`egui::Style`]s for the two built-in themes (JetBrains
-//! *New UI* Dark and Light), plus font setup and small icon glyph constants
-//! used across the shell.
+//! Forge's shared visual system: dark/light palettes, typography, spacing,
+//! and the few controls that need consistent emphasis across screens.
 
 pub mod darcula;
 pub mod fonts;
@@ -16,32 +15,55 @@ pub enum ThemeKind {
     Light,
 }
 
-/// Shared New-UI spacing polish applied by both theme builders: more air
-/// between widgets, larger paddings, comfortable menus. Also bumps every
-/// default text style +2px (13px body baseline reads too small on hidpi).
+/// Shared density and typography for both themes.
 pub(crate) fn polish_spacing(style: &mut egui::Style) {
-    for font in style.text_styles.values_mut() {
-        font.size += 2.0;
-    }
-    // Tool windows snap open/closed instantly, IntelliJ-style — egui's
-    // default size-lerp reads as sluggish since frames only repaint on input.
+    use egui::{FontFamily, FontId, TextStyle};
+
+    style.text_styles.insert(
+        TextStyle::Heading,
+        FontId::new(24.0, FontFamily::Proportional),
+    );
+    style
+        .text_styles
+        .insert(TextStyle::Body, FontId::new(14.0, FontFamily::Proportional));
+    style.text_styles.insert(
+        TextStyle::Button,
+        FontId::new(14.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Small,
+        FontId::new(13.0, FontFamily::Proportional),
+    );
+    style.text_styles.insert(
+        TextStyle::Monospace,
+        FontId::new(14.0, FontFamily::Monospace),
+    );
     style.animation_time = 0.0;
-    // Debug builds: egui paints red outlines over every widget whose auto-id
-    // shifted between the two layout passes of a frame (panel toggles resize
-    // the editor, whose size-dependent branches then reorder auto-ids). The
-    // frame freezes on screen until the next input, so users see a "red
-    // skeleton". Purely cosmetic diagnostics — off.
-    style.debug.warn_if_rect_changes_id = false;
+    #[cfg(debug_assertions)]
+    {
+        style.debug.warn_if_rect_changes_id = false;
+    }
+    style.interaction.tooltip_delay = 2.0;
     let s = &mut style.spacing;
-    s.item_spacing = egui::vec2(8.0, 6.0);
-    s.button_padding = egui::vec2(10.0, 5.0);
-    s.menu_margin = egui::Margin::same(6);
-    s.window_margin = egui::Margin::same(10);
+    s.item_spacing = egui::vec2(8.0, 7.0);
+    s.button_padding = egui::vec2(12.0, 6.0);
+    s.menu_margin = egui::Margin::same(8);
+    s.window_margin = egui::Margin::same(14);
     s.icon_width = 16.0;
     s.icon_spacing = 6.0;
-    s.interact_size.y = 24.0;
+    s.interact_size.y = 32.0;
     s.combo_height = 240.0;
     s.scroll = egui::style::ScrollStyle::thin();
+}
+
+pub fn primary_button(label: impl Into<String>, accent: egui::Color32) -> egui::Button<'static> {
+    egui::Button::new(
+        egui::RichText::new(label.into())
+            .color(egui::Color32::WHITE)
+            .strong(),
+    )
+    .fill(accent)
+    .stroke(egui::Stroke::NONE)
 }
 
 impl ThemeKind {

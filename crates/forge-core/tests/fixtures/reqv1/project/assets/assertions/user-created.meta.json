@@ -1,0 +1,20 @@
+{
+  "title": "Created user matches",
+  "description": "Checks the created user's name and the 201 response status.",
+  "intent": "validate",
+  "phase": "afterResponse",
+  "parameters": [
+    {
+      "name": "expectedUser",
+      "label": "Expected user",
+      "kind": "json",
+      "required": true,
+      "example": "{\"name\":\"Ada\"}"
+    }
+  ],
+  "example": {
+    "expectedUser": {
+      "name": "Ada"
+    }
+  }
+}

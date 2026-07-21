@@ -1,237 +1,228 @@
-# Forge — API Test IDE
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="crates/forge-gui/assets/logo-light.png">
+    <source media="(prefers-color-scheme: light)" srcset="crates/forge-gui/assets/logo-dark.png">
+    <img src="crates/forge-gui/assets/logo-dark.png" alt="Forge" width="116">
+  </picture>
+</p>
 
-<img src="crates/forge-gui/assets/logo.png" alt="Forge logo" width="128" align="right" />
+<h1 align="center">Forge</h1>
 
-Forge is a native, GUI-free-core desktop IDE for writing, running and
-managing API tests — built in Rust, styled after the JetBrains / IntelliJ
-family of tools (dockable panels, dark **Darcula** and **Light** themes, a
-keyboard-first workflow with a global "Search Everywhere"). It's the kind
-of tool you reach for instead of Postman/Insomnia when you want your API
-tests to live in git, review cleanly in diffs, and run the same way on
-your laptop and in CI.
+<p align="center">
+  A native, git-first IDE for building, running, and maintaining API tests.
+  <br>
+  The useful parts of Postman and Bruno—without cloud lock-in, repeated assertions, or workspace ceremony.
+</p>
 
-The project is a Cargo workspace:
+<p align="center">
+  <a href="https://github.com/EricVogt93/Api-ide/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/EricVogt93/Api-ide/actions/workflows/ci.yml/badge.svg?branch=development"></a>
+  <a href="https://github.com/EricVogt93/Api-ide/actions/workflows/release.yml"><img alt="Release packages" src="https://github.com/EricVogt93/Api-ide/actions/workflows/release.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-4c8bf5.svg"></a>
+  <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-b7410e?logo=rust">
+</p>
 
-- **`forge-core`** — the GUI-free domain core: the workspace file format,
-  variable interpolation, the HTTP execution engine, assertions, scripting,
-  the test runner, OpenAPI import/contract tests, curl/code-snippet
-  conversion and execution history. Both the GUI and the CLI are thin
-  shells over this crate.
-- **`forge-gui`** — the desktop IDE (`forge-ide` binary), built with
-  [`egui`](https://github.com/emilk/egui)/`eframe`.
-- **`forge-cli`** — the headless runner (`forge` binary) for local use and CI.
+> [!NOTE]
+> Forge is under active development. The request format is versioned and validated, but the desktop packages are not code-signed yet.
 
-## Features
+## Why Forge?
 
-- **Collections tree** — requests and folders organized on disk exactly as
-  they appear in the sidebar, with drag-and-drop reordering and rename.
-- **Environments & secrets** — named environments with plain and secret
-  variables; secret *values* are always kept out of git.
-- **`{{variables}}`** — interpolation across URLs, headers, params, bodies
-  and auth configs, resolved through request → folder → collection →
-  environment scopes, plus built-in dynamic variables (e.g. `{{$uuid}}`).
-- **HTTP execution engine** — a `reqwest`-based engine with full timing
-  breakdowns (DNS, connect, TLS, TTFB, download), redirects, proxies,
-  cookies and gzip/brotli/deflate.
-- **Declarative assertions** — status code/class, headers, content type,
-  JSONPath, body contains/matches, response time, JSON Schema — plus
-  **one-click assertion generation** from a live response.
-- **Contract tests from OpenAPI** — import an OpenAPI 3.x spec and bind
-  requests to `operationId`s to keep your collection honest as the spec
-  evolves.
-- **Rhai & JavaScript pre-/post-request scripts** — full scripting hooks
-  per request for request mutation, chaining and custom validation, in
-  either Rhai or sandboxed JavaScript (QuickJS).
-- **Suite lifecycle hooks** — `beforeAll` / `beforeEach` / `afterEach` /
-  `afterAll` scripts on collections and folders, sharing variables with the
-  requests they wrap.
-- **Data-driven runs** — replay a request or a whole collection once per
-  row of a CSV or JSON dataset.
-- **JUnit XML reports** — CI-friendly output from both the GUI runner and
-  the CLI.
-- **Headless CLI runner (`forge`)** — run collections in CI with the same
-  engine and assertions as the IDE.
-- **curl import/export** — paste a curl command to create a request, or
-  copy any request back out as curl (plus other code snippets).
-- **Postman import** — bring over Postman v2.x collections (folders,
-  auth, all body modes, variables) and environment exports, with an
-  honest report of anything that can't be mapped (e.g. `pm.*` scripts).
-- **GraphQL, WebSocket & SSE** support alongside plain HTTP.
-- **Request history & diff** — every run is recorded locally so you can
-  diff responses over time.
-- **Darcula & Light themes**, a **keyboard-first** UI, and **Search
-  Everywhere** for jumping to any request, environment or setting.
+API test tools tend to turn a request into a document full of scripts, copied assertions, hidden state, and team-specific setup. Forge takes the opposite approach:
 
-## Building
+- **Install, create a project, start working.** Conventional folders and asset paths are generated automatically.
+- **Your project is the source of truth.** Requests, environments, hooks, assertions, and metadata are ordinary reviewable files.
+- **Reusable behavior stays reusable.** The catalog turns common assertions, extractors, generators, hooks, and mocks into typed references with forms—not pasted code.
+- **The IDE and CI run the same core.** The native GUI and headless CLI are adapters around the same Rust execution engine.
+- **OpenAPI is active tooling.** Browse operations, generate valid values, complete requests, validate responses, track coverage, and generate test suites.
 
-Requires a recent stable Rust toolchain (see `rust-toolchain.toml`).
+## Highlights
+
+| Area | What Forge provides |
+| --- | --- |
+| Project view | File-explorer hierarchy, story folders, Git state, branch/worktree actions, inherited Jira links, recursive formatting and export |
+| Request editor | JSON beautification, syntax highlighting, diagnostics, minimap, completion, OpenAPI suggestions, autosave and Zen mode |
+| Response tools | Pretty JSON/XML/HTML, raw view, headers, timing, assertions, runtime variables, diagnostics and trace workspace |
+| Catalog | Built-ins and project assets grouped by intent: Validate, Prepare, Capture, Generate and Simulate |
+| Assertions | Status, headers, timing, body text/regex, JSONPath value/type/length, cookies, JSON Schema and OpenAPI response validation |
+| Hooks | Request preparation, response processing, extractors, logs, request diffs and runtime-variable changes |
+| Authentication | Basic/Bearer helpers, reusable auth requests, Keycloak/Auth0/Azure presets, expiry-aware refresh before a dependent request |
+| Protocols | HTTP, GraphQL, WebSocket, SSE and unary gRPC |
+| Portability | Lossless Forge bundles, cURL export/import, Postman import, JUnit XML and a headless runner |
+
+## Install
+
+Download the latest package from [GitHub Releases](https://github.com/EricVogt93/Api-ide/releases):
+
+| Platform | Artifact |
+| --- | --- |
+| Windows x86_64 | `Forge-<version>-windows-x86_64.exe` |
+| Linux x86_64 | `Forge-<version>-linux-x86_64.AppImage` |
+| macOS Apple Silicon | `Forge-<version>-macOS-arm64.dmg` |
+
+Until signed builds are available, Windows SmartScreen and macOS Gatekeeper may show an unknown-publisher warning. Release assets include SHA-256 checksums.
+
+### Build from source
+
+Install the stable Rust toolchain, then run:
 
 ```sh
-cargo build --release
+git clone https://github.com/EricVogt93/Api-ide.git
+cd Api-ide
+cargo run --release -p forge-gui --bin forge-ide
 ```
 
-On Linux, the desktop GUI links against the system windowing stack. Install
-the following before building `forge-gui`:
+Linux builds also need the native windowing headers:
 
 ```sh
-sudo apt install libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
-    libxi-dev libxcursor-dev libgl1-mesa-dev cmake pkg-config
+sudo apt install cmake pkg-config libgl1-mesa-dev libwayland-dev \
+  libx11-dev libxcursor-dev libxi-dev libxkbcommon-dev libxrandr-dev
 ```
 
-The headless `forge-cli` and the `forge-core` library have no such
-requirement and build anywhere Rust does.
+## The zero-config workflow
 
-Binaries are produced at `target/release/forge-ide` (GUI) and
-`target/release/forge` (CLI).
+1. Start Forge.
+2. Select **New Project** and choose a directory.
+3. Forge creates the conventional project structure and opens the first request.
+4. Add story folders and requests from the project tree.
+5. Run, inspect, assert, and commit.
 
-## Workspace-on-disk format
+There are no separate save-path dialogs for every asset. Paths derive from the selected project node and asset kind.
 
-A Forge workspace is a plain directory tree, designed to be readable,
-diffable and merge-friendly in git. **Identity is the file or directory
-name** — there are no UUIDs in committed files, so renaming a request in
-the IDE is just a `git mv`.
-
-```
-my-workspace/
-├── forge.json                          # workspace marker + global settings
-├── .gitignore                          # generated; ignores .forge-local/ and *.secrets.json
-├── .forge-local/                       # local-only state (never committed)
+```text
+my-api/
+├── project.json
+├── requests/
+│   └── checkout/
+│       ├── create-order.request.json
+│       ├── create-order.assertions.json
+│       └── create-order.hooks.json
+├── assets/
+│   ├── assertions/
+│   ├── extractors/
+│   ├── generators/
+│   ├── hooks/
+│   └── mocks/
 ├── environments/
-│   ├── dev.env.json                    # committed: variable names + non-secret values
-│   ├── dev.secrets.json                # gitignored: secret variable values
-│   ├── staging.env.json
-│   └── staging.secrets.json
-├── specs/
-│   └── api.yaml                        # imported OpenAPI specs
-└── collections/
-    └── payments/
-        ├── collection.json             # collection metadata, variables, auth, child order
-        ├── create-charge.request.json
-        ├── list-charges.request.json
-        └── refunds/                    # sub-folder
-            ├── folder.json             # folder metadata, variables, auth, child order
-            └── create-refund.request.json
+└── specs/
 ```
 
-- **`forge.json`** — the workspace root marker. Holds the `format`
-  version, workspace `name`, and global `settings` (timeout, redirects,
-  TLS verification, proxy, user agent).
-- **`environments/<name>.env.json`** — a committed environment. Variables
-  are either a plain `value`, or declared as `"secret": true` with no
-  value. **`environments/<name>.secrets.json`** is the gitignored sibling
-  holding the actual secret values, keyed by variable name.
-- **`collections/<name>/collection.json`** — a collection's metadata:
-  `name`, `description`, `variables`, `auth`, an `openapi` binding when the
-  collection was generated from a spec, an `order` array, and optional
-  suite lifecycle `hooks`:
+Assertions and hooks deliberately live beside a request instead of inside it. The request document remains focused on HTTP data; Forge loads the sidecars as one effective executable request.
 
-  ```json
-  {
-    "hooks": {
-      "beforeAll": "vars.set(\"token\", \"...\");",
-      "beforeEach": "log(\"about to run a request\");",
-      "afterEach": "assert(res.status < 500, \"no server errors\");",
-      "afterAll": "log(\"suite done\");",
-      "language": "rhai"
-    }
+## Request format v1
+
+```json
+{
+  "$schema": "../../schemas/request-v1.schema.json",
+  "formatVersion": 1,
+  "kind": "request",
+  "meta": {
+    "id": "checkout.create-order",
+    "name": "Create order"
+  },
+  "bindings": {
+    "orderId": { "value": "" }
+  },
+  "request": {
+    "method": "POST",
+    "url": "${env.baseUrl}/orders/${bindings.orderId}",
+    "headers": [
+      { "name": "Content-Type", "value": "application/json" }
+    ],
+    "body": { "type": "json", "value": { "sku": "ABC-1" } }
   }
-  ```
+}
+```
 
-  All four scripts are optional; `language` is `"rhai"` (default, omitted
-  when default) or `"js"` and applies to all four.
-- **`collections/<name>/folder.json`** — the same shape as a collection's
-  metadata (minus the OpenAPI binding) for a sub-folder, including `hooks`.
-- **`*.request.json`** — one HTTP request: `method`, `url`, `params`,
-  `headers`, `auth`, `body`, `assertions`, `extractors`, pre-/post-request
-  `scripts` (with an optional `"language": "rhai" | "js"`), and per-request
-  `settings` overrides.
-- **`specs/`** — OpenAPI specs imported into the workspace.
-- **`.forge-local/`** — local-only state (run history, UI layout) that is
-  never committed.
+The schemas in [`schemas/`](schemas) define requests and sidecars. The complete design is documented in [Request Format v1](docs/architecture/request-format-v1.md).
 
-**Ordering:** `collection.json` and `folder.json` each carry an explicit
-`order` array of child file/directory names. Children not listed are
-appended alphabetically. This keeps reordering a one-line diff instead of
-producing spurious changes across the whole file, and keeps merges of
-concurrent additions conflict-free.
+## One catalog, no assertion copy-paste
 
-**Filename is identity:** a request's file name (not its `name` field) is
-its stable identifier within its parent folder; the IDE keeps it in sync
-with the display name but you're free to diverge (e.g. `v2-create.request.json`
-titled "Create Charge (v2)").
+A catalog entry contains a title, description, intent, execution phase, typed parameters, defaults, and an example. Selecting **Status is**, entering `201`, and inserting it produces a stable reference:
 
-See [`examples/demo-workspace`](examples/demo-workspace) for a complete,
-working example of this layout.
+```json
+{
+  "use": "builtin:assert-status@1",
+  "with": { "expected": 201 },
+  "enabled": true
+}
+```
 
-## Scripting & lifecycle hooks
+Project-owned assets use the same UI. A JavaScript implementation such as `assets/assertions/customer-shape.js` can have a colocated `customer-shape.meta.json`; every request then references the same implementation while providing its own parameters. Bindings and parameter sources avoid hard-coding variable names between tests.
 
-Scripts run in one of two sandboxed languages, chosen per request (Scripts
-tab → Language) or per hook set (`hooks.language`):
+## OpenAPI, environments, and auth
 
-- **Rhai** (default) — the embedded Rust scripting language. Snake_case
-  API: `req.set_header(n, v)`, `res.body_text`, `base64_encode(s)`.
-- **JavaScript** — QuickJS, fully sandboxed (32 MB memory cap, ~2 s wall
-  clock budget, no filesystem/network/process access). CamelCase API:
-  `req.setHeader(n, v)`, `res.bodyText`, `base64Encode(s)`, plus
-  `console.log(...)`.
+- Put a spec below `specs/`, configure a project URL, or inherit an OpenAPI source from folder properties.
+- Browse operations by method and request shape, generate valid parameter values, add operations to the current request, and see which endpoints are already covered.
+- Assign environments at project, folder, or request level; children inherit unless they override.
+- Mark an existing request as an auth provider or configure a provider preset. Forge tracks token lifetime and refreshes before a dependent request would outlive the remaining token window.
+- Jira links and OpenAPI/environment properties inherit from folders to descendants, keeping story-level setup in one place.
 
-Both expose the same surface: `req` (pre-request only: `url` get/set,
-`method`, header get/set/remove, body text get/set), `res` (post-response:
-`status`, `bodyText`/`body_text`, `header(n)`, `timeMs`/`time_ms`,
-`json()`), `vars.get(n)`/`vars.set(n, v)` (persisted into the run's
-variable scope), `log(msg)`, `assert(cond, message)` and `test(name, cond)`
-(recorded as assertion results), and helpers `uuid()`, `timestamp()`,
-base64 encode/decode. Compile errors, runtime errors and runaway scripts
-are captured as script errors — they never crash the app or the runner.
+### Generated OpenAPI suites
 
-**Suite lifecycle hooks** attach to a collection or folder (right-click →
-"Edit Hooks..." in the IDE, or edit `collection.json`/`folder.json`) and
-run around the requests underneath during collection/folder/workspace runs:
+Select a project folder and open the tools on the right. Forge writes generated output below that folder and keeps hand-written files outside it untouched:
 
-- **Order.** For each request, `beforeEach` hooks fire outermost-first
-  (collection first, then each folder down to the request's parent);
-  `afterEach` fires in reverse (innermost first). `beforeAll` fires once
-  per run, immediately before a scope's first executed request; `afterAll`
-  once per run, after its last (on the final data iteration).
-- **API.** `beforeAll`/`beforeEach` get the vars-only API (`vars`, `log`,
-  `assert`/`test`, helpers — no `req`/`res`). `afterEach`/`afterAll`
-  additionally get `res`, the just-finished request's response.
-- **Variables.** `vars.set` from any hook lands in the shared runtime
-  scope, visible to the affected request itself and everything after it.
-- **Errors.** A `beforeAll`/`beforeEach` error fails the affected request
-  (it is not sent; the outcome reads `beforeEach hook failed: ...`), and
-  `--bail` semantics apply. `afterEach`/`afterAll` errors are appended to
-  the request's script log (prefixed `afterEach:`/`afterAll:`) without
-  flipping a passed request to failed.
-- **Assertions.** `assert`/`test` from `afterEach`/`afterAll` extend the
-  request's assertion list (a failing hook assertion fails the request);
-  assertion calls from `before*` hooks are dropped by design.
-- **Logs.** Hook log lines flow into the affected request's script log
-  prefixed `hook:`; `beforeAll`/`afterAll` output attaches to the scope's
-  first/last request.
+| Generator | Output | Contents |
+| --- | --- | --- |
+| Contract tests | `contract/` | Runnable requests plus status, content-type and response-schema assertion sidecars |
+| API tests | `api/` | Complete operation requests, assertions and an ordered sequence |
+| Load & performance | `performance/` | k6 operation data and smoke, load, stress, spike and soak profiles |
 
-Hooks are a runner concept: single ad-hoc sends from the editor run only
-the request's own pre/post scripts.
-
-## CLI usage
+Generated folders carry a Forge manifest and can be regenerated. Existing folders without that manifest are never replaced. k6 runs only GET, HEAD and OPTIONS by default:
 
 ```sh
-forge run <workspace> --env dev --report junit.xml --data rows.csv --bail
+cd requests/checkout/performance
+k6 run -e BASE_URL=https://api.example.com -e PROFILE=load k6.js
+# Explicitly opt in only against disposable test data:
+k6 run -e BASE_URL=https://staging.example.com -e INCLUDE_MUTATIONS=true k6.js
 ```
 
-- `<workspace>` — path to a workspace directory (containing `forge.json`).
-- `--env <name>` — environment to resolve `{{variables}}` against.
-- `--report <path>` — write a JUnit XML report to `<path>`.
-- `--data <rows.csv|rows.json>` — run the target once per row for
-  data-driven testing.
-- `--bail` — stop the run on the first failing request.
+## CLI
 
-## Screenshots
+The `forge` binary is suitable for local scripts and CI:
 
-_Coming soon — the desktop IDE is under active development. This section
-will hold screenshots of the collections tree, request editor, and run
-results once the GUI reaches a demonstrable state._
+```sh
+cargo run -p forge-cli -- validate requests/users/get.request.json --root .
+cargo run -p forge-cli -- run-v1 requests/users/get.request.json --root .
+cargo run -p forge-cli -- run-sequence smoke.sequence.json --root .
+cargo run -p forge-cli -- assets .
+cargo run -p forge-cli -- export requests/users --format json -o users.forge.json
+cargo run -p forge-cli -- export requests/users/get.request.json --format curl -o get-user.sh
+cargo run -p forge-cli -- import users.forge.json requests
+```
+
+Legacy `forge.json` workspaces remain runnable through `forge run`, and `forge migrate` / `forge migrate-all` convert them without silently dropping unsupported fields.
+
+## Architecture
+
+```text
+forge-gui ─┐
+           ├──> forge-core ──> HTTP, storage, scripting, OpenAPI
+forge-cli ─┘
+```
+
+- [`forge-core`](crates/forge-core) owns request models, validation, execution, reusable assets, import/export and history.
+- [`forge-gui`](crates/forge-gui) is the native `egui` desktop adapter.
+- [`forge-cli`](crates/forge-cli) is the headless automation adapter.
+
+The GUI should not reimplement execution rules, and the CLI should not need GUI state. See [Repository Guidelines](AGENTS.md) before contributing.
+
+## Development
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+cargo build --release --workspace
+```
+
+GitHub Actions runs those checks on pull requests and builds the Windows EXE, Linux AppImage, and macOS DMG on version tags. A tag must match the Cargo version, for example `v0.1.0`.
+
+## Security and local state
+
+- `.forge-local/`, `.forge/`, `.env.local`, and `*.secrets.json` are excluded from version control.
+- Export bundles omit secrets and runtime state.
+- Project JavaScript is disabled until explicitly allowed after review.
+- The embedded JavaScript runtime has resource limits and no exposed filesystem, network, or process API; it is not presented as an adversarial security boundary.
 
 ## License
 
-Licensed under the [MIT License](https://opensource.org/licenses/MIT).
+Forge is available under the [MIT License](LICENSE).

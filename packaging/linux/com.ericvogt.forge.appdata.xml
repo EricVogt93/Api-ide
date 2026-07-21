@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.ericvogt.forge</id>
+  <name>Forge</name>
+  <summary>Git-first API IDE</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="com.ericvogt">
+    <name>Eric Vogt</name>
+  </developer>
+  <description>
+    <p>Forge is a native IDE for building, running, validating, and maintaining API requests and automated tests in Git.</p>
+  </description>
+  <launchable type="desktop-id">com.ericvogt.forge.desktop</launchable>
+  <url type="homepage">https://github.com/EricVogt93/Api-ide</url>
+  <content_rating type="oars-1.1"/>
+</component>

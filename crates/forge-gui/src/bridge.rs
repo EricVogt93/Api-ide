@@ -15,6 +15,22 @@ use forge_core::protocols::{sse, websocket, SseEvent, TlsMaterial, WsEvent, WsOu
 use forge_core::runner::{self, CancellationToken, RunEvent, RunOptions, RunScope};
 use forge_core::store::Workspace;
 
+pub struct V1RunItem {
+    pub label: String,
+    pub matrix: forge_core::reqv1::MatrixCase,
+    pub result: forge_core::reqv1::RunResult,
+    pub response: Option<forge_core::reqv1::ResponseView>,
+    pub name: String,
+    pub method: String,
+    pub url: String,
+    pub request_headers: Vec<(String, String)>,
+    pub request_body: Option<Vec<u8>>,
+}
+
+pub struct V1RunOutput {
+    pub items: Vec<V1RunItem>,
+}
+
 /// A command sent from the UI thread to the bridge thread.
 pub enum Cmd {
     Run {
@@ -73,6 +89,41 @@ pub enum Cmd {
         text: String,
         env_name: Option<String>,
         mock: bool,
+        allow_project_code: bool,
+    },
+    /// Run saved reqv1 documents in the selected order, threading runtime
+    /// extractor output forward.
+    RunV1Sequence {
+        run_id: u64,
+        root: PathBuf,
+        files: Vec<PathBuf>,
+        env_name: Option<String>,
+        mock: bool,
+        allow_project_code: bool,
+    },
+    /// Run saved reqv1 documents independently. Unlike a sequence, runtime
+    /// extractor output is not threaded between documents.
+    RunV1Batch {
+        run_id: u64,
+        root: PathBuf,
+        files: Vec<PathBuf>,
+        env_name: Option<String>,
+        mock: bool,
+        allow_project_code: bool,
+    },
+    /// Preview one catalog asset against the current request IR and optional
+    /// response from the last run. This never sends an HTTP request.
+    PreviewV1Asset {
+        preview_id: u64,
+        root: PathBuf,
+        file: PathBuf,
+        text: String,
+        env_name: Option<String>,
+        phase: forge_core::reqv1::model::PipelinePhase,
+        uses: String,
+        with: serde_json::Map<String, serde_json::Value>,
+        response: Option<forge_core::reqv1::ResponseView>,
+        allow_project_code: bool,
     },
     /// Ask for a snapshot of the shared `HttpEngine`'s cookie jar.
     ListCookies,
@@ -95,6 +146,14 @@ pub enum Cmd {
     FetchOpenApi {
         root: PathBuf,
         source: String,
+    },
+    /// Ask the configured OpenAI-compatible advisor without blocking egui.
+    AskAdvisor {
+        advisor_id: u64,
+        root: PathBuf,
+        config: crate::advisor::AdvisorConfig,
+        question: String,
+        context: String,
     },
     Shutdown,
 }
@@ -131,12 +190,21 @@ pub enum Evt {
     /// Outcome of a `Cmd::RunV1`: the run result, or a parse/setup error.
     V1Run {
         run_id: u64,
-        result: Result<forge_core::reqv1::RunResult, String>,
+        result: Result<V1RunOutput, String>,
+    },
+    /// Outcome of a `Cmd::PreviewV1Asset`.
+    V1Preview {
+        preview_id: u64,
+        result: Result<forge_core::reqv1::runner::CatalogPreview, String>,
     },
     /// Raw OpenAPI spec text fetched by `Cmd::FetchOpenApi` (or the fetch
     /// error), together with the source it was loaded from.
     OpenApi {
         source: String,
+        result: Result<String, String>,
+    },
+    Advisor {
+        advisor_id: u64,
         result: Result<String, String>,
     },
 }
@@ -211,6 +279,7 @@ fn bridge_main(
 
     rt.block_on(async move {
         let engine = Arc::new(HttpEngine::new());
+        let v1_auth = Arc::new(forge_core::reqv1::AuthSession::default());
         let cancels: Arc<Mutex<HashMap<u64, CancellationToken>>> =
             Arc::new(Mutex::new(HashMap::new()));
         // Outgoing-message senders for live WebSocket connections, keyed by
@@ -319,21 +388,111 @@ fn bridge_main(
                     text,
                     env_name,
                     mock,
+                    allow_project_code,
                 } => {
                     let engine = engine.clone();
+                    let v1_auth = v1_auth.clone();
                     let evt_tx = evt_tx.clone();
                     let ctx = ctx.clone();
                     tokio::spawn(async move {
                         let result = run_v1_document(
                             &engine,
+                            V1RunSpec {
+                                root: &root,
+                                file: &file,
+                                text: &text,
+                                env_name: env_name.as_deref(),
+                                mock,
+                                allow_project_code,
+                            },
+                            &v1_auth,
+                        )
+                        .await;
+                        let _ = evt_tx.send(Evt::V1Run { run_id, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::RunV1Sequence {
+                    run_id,
+                    root,
+                    files,
+                    env_name,
+                    mock,
+                    allow_project_code,
+                } => {
+                    let engine = engine.clone();
+                    let v1_auth = v1_auth.clone();
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = run_v1_sequence(
+                            &engine,
+                            &root,
+                            &files,
+                            env_name.as_deref(),
+                            mock,
+                            allow_project_code,
+                            &v1_auth,
+                        )
+                        .await;
+                        let _ = evt_tx.send(Evt::V1Run { run_id, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::RunV1Batch {
+                    run_id,
+                    root,
+                    files,
+                    env_name,
+                    mock,
+                    allow_project_code,
+                } => {
+                    let engine = engine.clone();
+                    let v1_auth = v1_auth.clone();
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = run_v1_batch(
+                            &engine,
+                            &root,
+                            &files,
+                            env_name.as_deref(),
+                            mock,
+                            allow_project_code,
+                            &v1_auth,
+                        )
+                        .await;
+                        let _ = evt_tx.send(Evt::V1Run { run_id, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::PreviewV1Asset {
+                    preview_id,
+                    root,
+                    file,
+                    text,
+                    env_name,
+                    phase,
+                    uses,
+                    with,
+                    response,
+                    allow_project_code,
+                } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = preview_v1_asset(
                             &root,
                             &file,
                             &text,
                             env_name.as_deref(),
-                            mock,
-                        )
-                        .await;
-                        let _ = evt_tx.send(Evt::V1Run { run_id, result });
+                            phase,
+                            uses,
+                            with,
+                            response.as_ref(),
+                            allow_project_code,
+                        );
+                        let _ = evt_tx.send(Evt::V1Preview { preview_id, result });
                         ctx.request_repaint();
                     });
                 }
@@ -360,6 +519,33 @@ fn bridge_main(
                                     .map_err(|e| format!("{}: {e}", path.display()))
                             };
                         let _ = evt_tx.send(Evt::OpenApi { source, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::AskAdvisor {
+                    advisor_id,
+                    root,
+                    config,
+                    question,
+                    context,
+                } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            match crate::advisor::resolve_api_key(&root, &config.api_key_env) {
+                                Ok(api_key) => {
+                                    crate::advisor::ask(
+                                        &config,
+                                        api_key.as_deref(),
+                                        &question,
+                                        &context,
+                                    )
+                                    .await
+                                }
+                                Err(error) => Err(error),
+                            };
+                        let _ = evt_tx.send(Evt::Advisor { advisor_id, result });
                         ctx.request_repaint();
                     });
                 }
@@ -518,32 +704,29 @@ fn bridge_main(
 /// Run a reqv1 document from the v1 editor: parse `text`, load the named
 /// environment, and run over the shared HTTP engine (or serve its mock).
 /// Secrets come from `<root>/.env.local` then the process environment.
+struct V1RunSpec<'a> {
+    root: &'a std::path::Path,
+    file: &'a std::path::Path,
+    text: &'a str,
+    env_name: Option<&'a str>,
+    mock: bool,
+    allow_project_code: bool,
+}
+
 async fn run_v1_document(
     engine: &HttpEngine,
-    root: &std::path::Path,
-    file: &std::path::Path,
-    text: &str,
-    env_name: Option<&str>,
-    mock: bool,
-) -> Result<forge_core::reqv1::RunResult, String> {
+    spec: V1RunSpec<'_>,
+    auth: &forge_core::reqv1::AuthSession,
+) -> Result<V1RunOutput, String> {
     use forge_core::reqv1::{self, RunMode};
 
-    let doc = reqv1::RequestDocument::parse(text).map_err(|e| e.to_string())?;
-    let env = reqv1::load_environment(root, env_name).map_err(|d| d.message)?;
+    let doc = reqv1::RequestDocument::parse(spec.text).map_err(|e| e.to_string())?;
+    ensure_project_code_allowed(spec.root, &doc, spec.allow_project_code)?;
+    let env = reqv1::load_request_environment(spec.root, spec.file, spec.env_name)
+        .map_err(|diagnostic| diagnostic.message)?;
 
     // Secret provider: .env.local (KEY=value) first, then process env.
-    let mut file_secrets = HashMap::new();
-    if let Ok(text) = std::fs::read_to_string(root.join(".env.local")) {
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((k, v)) = line.split_once('=') {
-                file_secrets.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
-            }
-        }
-    }
+    let file_secrets = reqv1::load_file_secrets(spec.root);
     let secret = move |name: &str| {
         file_secrets
             .get(name)
@@ -551,19 +734,246 @@ async fn run_v1_document(
             .or_else(|| std::env::var(name).ok())
     };
 
-    let mode = if mock { RunMode::Mock } else { RunMode::Http };
-    Ok(reqv1::run(
+    let mode = if spec.mock {
+        RunMode::Mock
+    } else {
+        RunMode::Http
+    };
+    let items = reqv1::run_matrix_with_responses_in_session(
         &doc,
-        root,
-        file,
+        spec.root,
+        spec.file,
         env,
         &secret,
         engine,
         mode,
         CancellationToken::new(),
-        serde_json::Value::Null,
+        auth,
     )
-    .await)
+    .await
+    .map_err(|errors| errors.to_string())?
+    .into_iter()
+    .enumerate()
+    .map(|(index, (matrix, result, response))| V1RunItem {
+        label: if matrix.is_empty() {
+            result.request_id.clone()
+        } else {
+            format!(
+                "case {} · {}",
+                index + 1,
+                serde_json::Value::Object(matrix.clone())
+            )
+        },
+        matrix,
+        result,
+        response,
+        name: doc.meta.name.clone(),
+        method: doc.request.method.as_str().to_string(),
+        url: doc.request.url.clone(),
+        request_headers: doc
+            .request
+            .headers
+            .iter()
+            .filter(|header| header.enabled)
+            .map(|header| (header.name.clone(), header.value.clone()))
+            .collect(),
+        request_body: doc
+            .request
+            .body
+            .as_ref()
+            .and_then(|body| serde_json::to_vec(body).ok()),
+    })
+    .collect();
+    Ok(V1RunOutput { items })
+}
+
+async fn run_v1_sequence(
+    engine: &HttpEngine,
+    root: &std::path::Path,
+    files: &[PathBuf],
+    env_name: Option<&str>,
+    mock: bool,
+    allow_project_code: bool,
+    auth: &forge_core::reqv1::AuthSession,
+) -> Result<V1RunOutput, String> {
+    use forge_core::reqv1::{self, RunMode};
+
+    if files.is_empty() {
+        return Err("select at least one request for the sequence".to_string());
+    }
+    let mut documents = Vec::with_capacity(files.len());
+    for file in files {
+        let document = reqv1::load_request_document(file)?;
+        ensure_project_code_allowed(root, &document, allow_project_code)?;
+        if !document.matrix.is_empty() {
+            return Err(format!(
+                "{} has a matrix; run its matrix separately before adding it to a sequence",
+                file.display()
+            ));
+        }
+        documents.push(document);
+    }
+    let environments = files
+        .iter()
+        .map(|file| {
+            reqv1::load_request_environment(root, file, env_name)
+                .map_err(|diagnostic| diagnostic.message)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let file_secrets = reqv1::load_file_secrets(root);
+    let secret = move |name: &str| {
+        file_secrets
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+    };
+    let mode = if mock { RunMode::Mock } else { RunMode::Http };
+    let items = reqv1::run_sequence_with_environment_values_in_session(
+        files,
+        root,
+        &environments,
+        &secret,
+        engine,
+        mode,
+        CancellationToken::new(),
+        auth,
+    )
+    .await
+    .map_err(|diagnostic| diagnostic.message)?
+    .into_iter()
+    .zip(documents)
+    .map(|((result, response), document)| {
+        let request_body = document
+            .request
+            .body
+            .as_ref()
+            .and_then(|body| serde_json::to_vec(body).ok());
+        V1RunItem {
+            label: result.request_id.clone(),
+            matrix: serde_json::Map::new(),
+            result,
+            response,
+            name: document.meta.name,
+            method: document.request.method.as_str().to_string(),
+            url: document.request.url,
+            request_headers: document
+                .request
+                .headers
+                .into_iter()
+                .filter(|header| header.enabled)
+                .map(|header| (header.name, header.value))
+                .collect(),
+            request_body,
+        }
+    })
+    .collect();
+    Ok(V1RunOutput { items })
+}
+
+async fn run_v1_batch(
+    engine: &HttpEngine,
+    root: &std::path::Path,
+    files: &[PathBuf],
+    env_name: Option<&str>,
+    mock: bool,
+    allow_project_code: bool,
+    auth: &forge_core::reqv1::AuthSession,
+) -> Result<V1RunOutput, String> {
+    if files.is_empty() {
+        return Err("no affected requests found".to_string());
+    }
+    let mut items = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(file)
+            .map_err(|error| format!("cannot read {}: {error}", file.display()))?;
+        let output = run_v1_document(
+            engine,
+            V1RunSpec {
+                root,
+                file,
+                text: &text,
+                env_name,
+                mock,
+                allow_project_code,
+            },
+            auth,
+        )
+        .await?;
+        items.extend(output.items);
+    }
+    Ok(V1RunOutput { items })
+}
+
+fn ensure_project_code_allowed(
+    root: &std::path::Path,
+    document: &forge_core::reqv1::RequestDocument,
+    allowed: bool,
+) -> Result<(), String> {
+    let auth_uses_project_code = if allowed {
+        false
+    } else {
+        forge_core::reqv1::load_project_auth_document(root)
+            .map_err(|diagnostic| diagnostic.message)?
+            .is_some_and(|(_, document)| document.uses_project_code())
+    };
+    if !allowed && (document.uses_project_code() || auth_uses_project_code) {
+        Err(
+            "project-owned code is disabled; inspect the asset and enable “Allow project code”"
+                .to_string(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn preview_v1_asset(
+    root: &std::path::Path,
+    file: &std::path::Path,
+    text: &str,
+    env_name: Option<&str>,
+    phase: forge_core::reqv1::model::PipelinePhase,
+    uses: String,
+    with: serde_json::Map<String, serde_json::Value>,
+    response: Option<&forge_core::reqv1::ResponseView>,
+    allow_project_code: bool,
+) -> Result<forge_core::reqv1::runner::CatalogPreview, String> {
+    use forge_core::reqv1::{self, model::PipelineEntry};
+
+    let mut doc = reqv1::RequestDocument::parse(text).map_err(|error| error.to_string())?;
+    doc.pipeline = vec![PipelineEntry {
+        phase,
+        uses,
+        with,
+        enabled: true,
+    }];
+    if !allow_project_code && doc.uses_project_code() {
+        return Err(
+            "project-owned code is disabled; inspect the asset and enable “Allow project code”"
+                .to_string(),
+        );
+    }
+    let env = reqv1::load_request_environment(root, file, env_name)
+        .map_err(|diagnostic| diagnostic.message)?;
+    let file_secrets = reqv1::load_file_secrets(root);
+    let secret = move |name: &str| {
+        file_secrets
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+    };
+    let ir = reqv1::validate(&doc, root, file, env, &secret).map_err(|diagnostics| {
+        diagnostics
+            .into_iter()
+            .map(|diagnostic| format!("[{}] {}", diagnostic.code, diagnostic.message))
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    let entry = ir
+        .pipeline
+        .first()
+        .ok_or_else(|| "preview asset did not resolve".to_string())?;
+    reqv1::runner::preview_asset(&ir, entry, response).map_err(|diagnostic| diagnostic.message)
 }
 
 /// Persist the shared cookie jar to whichever path `Cmd::LoadCookies` last
@@ -626,6 +1036,19 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn project_code_requires_explicit_gui_confirmation() {
+        let root = tempfile::tempdir().unwrap();
+        let document = forge_core::reqv1::RequestDocument::parse(
+            r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x"},
+                "request":{"method":"GET","url":"https://example.test"},
+                "pipeline":[{"phase":"afterResponse","use":"./check.js"}]}"#,
+        )
+        .unwrap();
+        assert!(ensure_project_code_allowed(root.path(), &document, false).is_err());
+        assert!(ensure_project_code_allowed(root.path(), &document, true).is_ok());
+    }
 
     /// Poll `bridge` until an `Evt::Cookies` arrives (or panic after
     /// `timeout`). The bridge thread runs its own async runtime, so replies

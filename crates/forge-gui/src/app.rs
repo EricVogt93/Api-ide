@@ -17,10 +17,21 @@ use crate::panels::{
 use crate::state::{AppState, BottomTool, RunState, StatusMessage};
 use crate::theme::{icons, ThemeKind};
 
+pub(crate) const LIGHT_WINDOW_ICON_PNG: &[u8] = include_bytes!("../assets/logo-light.png");
+pub(crate) const DARK_WINDOW_ICON_PNG: &[u8] = include_bytes!("../assets/logo-dark.png");
+
+fn window_icon_png(theme: egui::Theme) -> &'static [u8] {
+    match theme {
+        egui::Theme::Light => LIGHT_WINDOW_ICON_PNG,
+        egui::Theme::Dark => DARK_WINDOW_ICON_PNG,
+    }
+}
+
 /// The Forge IDE application.
 pub struct ForgeApp {
     state: AppState,
     bridge: Bridge,
+    window_icon_theme: Option<egui::Theme>,
 }
 
 impl ForgeApp {
@@ -31,6 +42,7 @@ impl ForgeApp {
         let mut app = Self {
             state: AppState::new(),
             bridge,
+            window_icon_theme: None,
         };
         if let Some(path) = initial_workspace {
             match Workspace::load(&path) {
@@ -40,8 +52,28 @@ impl ForgeApp {
                     crate::dialogs::welcome::remember_recent(&path);
                 }
                 Err(e) => {
-                    app.state.status =
-                        Some(StatusMessage::error(format!("{}: {e}", path.display())))
+                    if path.join("project.json").exists() {
+                        app.state.assets.load(path.clone());
+                        match history::open_store(&path) {
+                            Ok(store) => app.state.history_store = Some(store),
+                            Err(error) => {
+                                app.state.log.error("history", error.clone());
+                                app.state.status = Some(StatusMessage::error(error));
+                            }
+                        }
+                        if let Err(error) = app.bridge.send(Cmd::LoadCookies {
+                            path: cookies::cookies_path(&path),
+                        }) {
+                            app.state.log.error("bridge", error);
+                        }
+                        app.state.show_assets = true;
+                        app.state.show_collections = false;
+                        app.state.show_environment = false;
+                        app.state.dialogs.v1_editor.open_new(path, None);
+                    } else {
+                        app.state.status =
+                            Some(StatusMessage::error(format!("{}: {e}", path.display())));
+                    }
                 }
             }
         }
@@ -56,6 +88,17 @@ impl ForgeApp {
         app
     }
 
+    fn sync_window_icon(&mut self, ctx: &egui::Context) {
+        let theme = ctx.system_theme().unwrap_or(egui::Theme::Dark);
+        if self.window_icon_theme == Some(theme) {
+            return;
+        }
+        if let Ok(icon) = eframe::icon_data::from_png_bytes(window_icon_png(theme)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(icon))));
+        }
+        self.window_icon_theme = Some(theme);
+    }
+
     /// Side effects that belong to "a workspace just became `self.state.workspace`":
     /// open its history store, ask the bridge to load its persisted cookie
     /// jar, and restore the last saved UI snapshot (open tabs, active
@@ -68,7 +111,10 @@ impl ForgeApp {
             .log
             .info("workspace", format!("Opened workspace {}", root.display()));
         match history::open_store(&root) {
-            Ok(store) => self.state.history_store = Some(store),
+            Ok(store) => {
+                self.state.history_store = Some(store);
+                self.state.history_ui.loaded = false;
+            }
             Err(error) => {
                 self.state.history_store = None;
                 self.state.log.error("history", error.clone());
@@ -81,9 +127,16 @@ impl ForgeApp {
             self.state.log.error("bridge", error.clone());
             self.state.status = Some(StatusMessage::error(error));
         }
+        if root.join("project.json").exists() {
+            self.state.assets.load(root.clone());
+        }
         if let Some(snapshot) = local::load(&root) {
             local::apply(&mut self.state, snapshot);
             self.state.theme.apply(ctx);
+            crate::dialogs::settings::apply_typography(ctx, &self.state);
+        } else if root.join("project.json").exists() {
+            self.state.show_assets = true;
+            self.state.show_collections = false;
         }
     }
 
@@ -97,6 +150,7 @@ impl ForgeApp {
         self.state.tabs.clear();
         self.state.active_tab = None;
         self.state.history_store = None;
+        self.state.assets = Default::default();
         self.on_workspace_opened(ctx);
     }
 
@@ -118,22 +172,54 @@ impl ForgeApp {
         }
     }
 
+    fn record_v1_history(&mut self, output: &crate::bridge::V1RunOutput) {
+        let Some(store) = self.state.history_store.as_ref() else {
+            return;
+        };
+        for item in &output.items {
+            let entry = history::record_from_v1(item, self.state.active_env.clone());
+            if let Err(error) = store.record_raw(entry) {
+                let error = format!("failed to record reqv1 history: {error}");
+                self.state.log.error("history", error.clone());
+                self.state.status = Some(StatusMessage::error(error));
+            }
+        }
+        self.state.history_ui.loaded = false;
+    }
+
     /// Keep the parsed OpenAPI spec in sync with the workspace's
     /// `settings.openapi_url`: any change (workspace switch, settings save)
     /// triggers exactly one refetch through the bridge.
     fn sync_openapi(&mut self) {
-        let want = self
+        let root = self
             .state
             .workspace
             .as_ref()
-            .and_then(|w| w.meta.settings.openapi_url.clone());
+            .map(|workspace| workspace.root.clone())
+            .or_else(|| self.state.assets.project_root());
+        let scoped = root.as_deref().and_then(|root| {
+            self.state
+                .dialogs
+                .v1_editor
+                .active_file()
+                .and_then(|file| {
+                    forge_core::reqv1::effective_openapi(root, file)
+                        .ok()
+                        .flatten()
+                })
+                .map(|selection| selection.value)
+        });
+        let want = scoped.or_else(|| {
+            self.state
+                .workspace
+                .as_ref()
+                .and_then(|workspace| workspace.meta.settings.openapi_url.clone())
+        });
         if want != self.state.openapi_source {
             self.state.openapi = None;
             self.state.openapi_error = None;
             self.state.openapi_source = want.clone();
-            if let (Some(source), Some(root)) =
-                (want, self.state.workspace.as_ref().map(|w| w.root.clone()))
-            {
+            if let (Some(source), Some(root)) = (want, root) {
                 if let Err(error) = self.bridge.send(Cmd::FetchOpenApi { root, source }) {
                     self.state.log.error("bridge", error.clone());
                     self.state.openapi_error = Some(error.clone());
@@ -163,8 +249,16 @@ impl ForgeApp {
                     self.state.dialogs.grpc_call.handle_result(call_id, result)
                 }
                 Evt::V1Run { run_id, result } => {
+                    if let Ok(output) = &result {
+                        self.record_v1_history(output);
+                    }
                     self.state.dialogs.v1_editor.handle_result(run_id, result)
                 }
+                Evt::V1Preview { preview_id, result } => self
+                    .state
+                    .dialogs
+                    .v1_editor
+                    .handle_preview(preview_id, result),
                 Evt::OpenApi { source, result } => {
                     // Ignore replies for a source that is no longer wanted.
                     if self.state.openapi_source.as_deref() == Some(source.as_str()) {
@@ -191,6 +285,11 @@ impl ForgeApp {
                         }
                     }
                 }
+                Evt::Advisor { advisor_id, result } => self
+                    .state
+                    .dialogs
+                    .v1_editor
+                    .handle_advisor(advisor_id, result),
             }
         }
     }
@@ -298,7 +397,7 @@ impl ForgeApp {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button(egui::RichText::new(icons::COLLAPSE).size(13.0))
+                    .small_button(egui::RichText::new(icons::TRIANGLE_LEFT).size(13.0))
                     .on_hover_text("Hide (reopen via stripe / View menu)")
                     .clicked()
                 {
@@ -332,6 +431,51 @@ impl ForgeApp {
 
     fn new_workspace_dialog(&mut self) {
         crate::dialogs::new_workspace(&mut self.state);
+    }
+
+    fn open_api_project_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new().pick_folder() else {
+            return;
+        };
+        if !path.join("project.json").exists() {
+            self.state.status = Some(StatusMessage::error(format!(
+                "{} does not contain project.json",
+                path.display()
+            )));
+            return;
+        }
+        if let Some(old_root) = self
+            .state
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+        {
+            local::save(&old_root, &self.state);
+        }
+        self.state.workspace = None;
+        self.state.tabs.clear();
+        self.state.active_tab = None;
+        self.state.assets.load(path.clone());
+        match history::open_store(&path) {
+            Ok(store) => {
+                self.state.history_store = Some(store);
+                self.state.history_ui.loaded = false;
+            }
+            Err(error) => {
+                self.state.history_store = None;
+                self.state.status = Some(StatusMessage::error(error));
+            }
+        }
+        if let Err(error) = self.bridge.send(Cmd::LoadCookies {
+            path: cookies::cookies_path(&path),
+        }) {
+            self.state.log.error("bridge", error);
+        }
+        self.state.show_assets = true;
+        self.state.show_collections = false;
+        self.state.show_environment = false;
+        let env = self.state.active_env.clone();
+        self.state.dialogs.v1_editor.open_new(path, env);
     }
 
     fn run_workspace(&mut self) {
@@ -393,8 +537,12 @@ impl ForgeApp {
             v.override_text_color = Some(dim);
         }
         ui.horizontal(|ui| {
-            ui.add_space(2.0);
+            ui.add_space(6.0);
             ui.menu_button("File", |ui| {
+                if ui.button("New Project...").clicked() {
+                    self.new_workspace_dialog();
+                    ui.close();
+                }
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace))
                     .clicked()
@@ -402,8 +550,8 @@ impl ForgeApp {
                     self.open_workspace_dialog();
                     ui.close();
                 }
-                if ui.button("New Workspace...").clicked() {
-                    self.new_workspace_dialog();
+                if ui.button("Open Standalone API Project...").clicked() {
+                    self.open_api_project_dialog();
                     ui.close();
                 }
                 ui.separator();
@@ -482,8 +630,11 @@ impl ForgeApp {
             });
             ui.menu_button("View", |ui| {
                 ui.checkbox(&mut self.state.show_collections, "Collections");
-                ui.checkbox(&mut self.state.show_assets, "Assets");
+                ui.checkbox(&mut self.state.show_assets, "Project");
                 ui.checkbox(&mut self.state.show_environment, "Environment");
+                ui.checkbox(&mut self.state.show_activity_bar, "Activity bar");
+                ui.checkbox(&mut self.state.show_bottom_bar, "Bottom tool bar");
+                ui.checkbox(&mut self.state.show_status_bar, "Status bar");
                 ui.separator();
                 ui.menu_button("Theme", |ui| {
                     for kind in ThemeKind::ALL {
@@ -493,10 +644,19 @@ impl ForgeApp {
                         {
                             self.state.theme = kind;
                             kind.apply(ui.ctx());
+                            crate::dialogs::settings::apply_typography(ui.ctx(), &self.state);
                             ui.close();
                         }
                     }
                 });
+                ui.separator();
+                if ui
+                    .add(Self::action_button(ui.ctx(), ActionId::ToggleZen))
+                    .clicked()
+                {
+                    self.dispatch_action(ActionId::ToggleZen);
+                    ui.close();
+                }
                 ui.separator();
                 if ui.button("Manage Environments...").clicked() {
                     let preferred = self.state.active_env.clone();
@@ -511,24 +671,16 @@ impl ForgeApp {
                 }
             });
 
-            // Right cluster (laid out right-to-left, so first added = rightmost):
-            // theme toggle, environment switcher pill.
+            // Right cluster (laid out right-to-left, so first added = rightmost).
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(icons::THEME)
-                    .on_hover_text("Toggle theme")
-                    .clicked()
-                {
-                    self.state.theme = if self.state.theme == ThemeKind::Darcula {
-                        ThemeKind::Light
-                    } else {
-                        ThemeKind::Darcula
-                    };
-                    self.state.theme.apply(ui.ctx());
+                if ui.button(icons::ZEN).on_hover_text("Zen mode").clicked() {
+                    self.dispatch_action(ActionId::ToggleZen);
                 }
                 ui.add_space(2.0);
 
-                self.env_pill(ui);
+                if self.state.workspace.is_some() {
+                    self.env_pill(ui);
+                }
             });
         });
     }
@@ -554,7 +706,7 @@ impl ForgeApp {
             .state
             .active_env
             .clone()
-            .unwrap_or_else(|| "No Environment".to_string());
+            .unwrap_or_else(|| "Automatic".to_string());
         let dot = if self.state.active_env.is_some() {
             "\u{25CF}"
         } else {
@@ -563,7 +715,7 @@ impl ForgeApp {
         ui.menu_button(format!("{dot} {current} \u{25BE}"), |ui| {
             ui.label(egui::RichText::new("ENVIRONMENTS").weak().small());
             if ui
-                .selectable_label(self.state.active_env.is_none(), "No Environment")
+                .selectable_label(self.state.active_env.is_none(), "Automatic (properties)")
                 .clicked()
             {
                 self.state.active_env = None;
@@ -655,9 +807,19 @@ impl ForgeApp {
                 });
             });
         if let Some(i) = select_idx {
+            if self.state.auto_save {
+                if let Some(active) = self.state.active_tab {
+                    if active != i && self.state.tabs.get(active).is_some_and(|tab| tab.dirty) {
+                        save_tab(&mut self.state, active);
+                    }
+                }
+            }
             self.state.active_tab = Some(i);
         }
         if let Some(i) = close_idx {
+            if self.state.auto_save && self.state.tabs.get(i).is_some_and(|tab| tab.dirty) {
+                save_tab(&mut self.state, i);
+            }
             self.state.close_tab(i);
         }
     }
@@ -672,11 +834,7 @@ impl ForgeApp {
                 (BottomTool::Run, icons::RUN),
                 (BottomTool::Problems, icons::PROBLEMS),
                 (BottomTool::Terminal, icons::TERMINAL),
-                (BottomTool::Log, icons::LOG),
                 (BottomTool::History, icons::HISTORY),
-                (BottomTool::Console, icons::CONSOLE),
-                (BottomTool::Cookies, icons::COOKIES),
-                (BottomTool::Variables, icons::ENVIRONMENT),
             ] {
                 let active = self.state.bottom_tool == Some(tool);
                 if ui
@@ -686,6 +844,19 @@ impl ForgeApp {
                     self.state.bottom_tool = if active { None } else { Some(tool) };
                 }
             }
+            ui.menu_button(format!("{}  More", icons::ELLIPSIS), |ui| {
+                for (tool, icon) in [
+                    (BottomTool::Log, icons::LOG),
+                    (BottomTool::Console, icons::CONSOLE),
+                    (BottomTool::Cookies, icons::COOKIES),
+                    (BottomTool::Variables, icons::ENVIRONMENT),
+                ] {
+                    if ui.button(format!("{icon}  {}", tool.label())).clicked() {
+                        self.state.bottom_tool = Some(tool);
+                        ui.close();
+                    }
+                }
+            });
             if self.state.bottom_tool.is_some() {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
@@ -701,14 +872,18 @@ impl ForgeApp {
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
-        // Relay status bar: 11px mono, dim, sparse separators.
-        if let Some(root) = self.state.workspace.as_ref().map(|w| w.root.clone()) {
-            self.state.git.refresh(&root, false);
+        let root = self
+            .state
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+            .or_else(|| self.state.assets.project_root());
+        if let Some(root) = root.as_deref() {
+            self.state.git.refresh(root, false);
         }
         let dim = self.state.theme.dim_color();
         let mono = |t: String| egui::RichText::new(t).monospace().size(13.0).color(dim);
         ui.horizontal(|ui| {
-            // Real git branch when the workspace is in a repo, its name otherwise.
             let left = self
                 .state
                 .git
@@ -716,26 +891,68 @@ impl ForgeApp {
                 .as_ref()
                 .and_then(|s| s.branch.clone())
                 .or_else(|| self.state.workspace.as_ref().map(|w| w.meta.name.clone()))
-                .unwrap_or_else(|| "No workspace".to_string());
-            ui.label(mono(format!("{}  {left}", icons::BRANCH)));
+                .or_else(|| self.state.assets.project_name())
+                .unwrap_or_else(|| {
+                    if self.state.dialogs.v1_editor.open {
+                        "API project".to_string()
+                    } else {
+                        "No workspace".to_string()
+                    }
+                });
+            if let Some(root) = root.clone().filter(|_| self.state.git.status.is_some()) {
+                ui.menu_button(mono(format!("{}  {left}", icons::BRANCH)), |ui| {
+                    match crate::git::branches(&root) {
+                        Ok(branches) => {
+                            for branch in branches {
+                                if ui.selectable_label(branch == left, &branch).clicked() {
+                                    match crate::git::switch_branch(&root, &branch) {
+                                        Ok(()) => {
+                                            self.state.git.refresh(&root, true);
+                                            self.state.status = Some(StatusMessage::info(format!(
+                                                "Switched to {branch}"
+                                            )));
+                                        }
+                                        Err(error) => {
+                                            self.state.status = Some(StatusMessage::error(error));
+                                        }
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            ui.colored_label(ui.visuals().error_fg_color, error);
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("New worktree…").clicked() {
+                        self.open_worktree_dialog(&root);
+                        ui.close();
+                    }
+                });
+            } else {
+                ui.label(mono(format!("{}  {left}", icons::BRANCH)));
+            }
 
             // Active environment (read-only here; switch via the top-bar pill).
-            ui.add_space(6.0);
-            let env_active = self.state.active_env.is_some();
-            status_dot(
-                ui,
-                if env_active {
-                    self.state.theme.accent_color()
-                } else {
-                    dim
-                },
-            );
-            ui.label(mono(
-                self.state
-                    .active_env
-                    .clone()
-                    .unwrap_or_else(|| "No Environment".to_string()),
-            ));
+            if self.state.workspace.is_some() {
+                ui.add_space(6.0);
+                let env_active = self.state.active_env.is_some();
+                status_dot(
+                    ui,
+                    if env_active {
+                        self.state.theme.accent_color()
+                    } else {
+                        dim
+                    },
+                );
+                ui.label(mono(
+                    self.state
+                        .active_env
+                        .clone()
+                        .unwrap_or_else(|| "No Environment".to_string()),
+                ));
+            }
 
             ui.add_space(6.0);
             if self.state.run_state.is_running() {
@@ -749,16 +966,148 @@ impl ForgeApp {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(mono(self.state.theme.label().to_string()));
-                ui.add_space(6.0);
-                ui.label(mono("Ln 1, Col 1".into()));
-                ui.add_space(6.0);
-                ui.label(mono("UTF-8".into()));
-                ui.add_space(6.0);
-                let n = self.state.tabs.len();
-                ui.label(mono(format!("{n} tab{}", if n == 1 { "" } else { "s" })));
+                ui.label(mono(format!("v{}", env!("CARGO_PKG_VERSION"))));
+                if let Some(milliseconds) = self.current_execution_ms() {
+                    ui.label(mono(format!("{milliseconds} ms")));
+                }
             });
         });
+    }
+
+    fn current_execution_ms(&self) -> Option<u128> {
+        if self.state.dialogs.v1_editor.open {
+            return self
+                .state
+                .dialogs
+                .v1_editor
+                .last_execution_ms()
+                .map(u128::from);
+        }
+        self.state
+            .active_tab_ref()?
+            .response
+            .as_ref()?
+            .result
+            .as_ref()
+            .ok()
+            .map(|response| response.timing.total.as_millis())
+    }
+
+    fn open_worktree_dialog(&mut self, root: &std::path::Path) {
+        let project_name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("project");
+        self.state.git.worktree_branch = "feature".to_string();
+        self.state.git.worktree_path = root
+            .parent()
+            .unwrap_or(root)
+            .join(format!("{project_name}-feature"))
+            .display()
+            .to_string();
+        self.state.git.worktree_open = true;
+    }
+
+    fn worktree_dialog(&mut self, ctx: &egui::Context) {
+        if !self.state.git.worktree_open {
+            return;
+        }
+        let Some(root) = self
+            .state
+            .workspace
+            .as_ref()
+            .map(|workspace| workspace.root.clone())
+            .or_else(|| self.state.assets.project_root())
+        else {
+            self.state.git.worktree_open = false;
+            return;
+        };
+        let mut open = true;
+        let mut create = false;
+        egui::Window::new("New worktree")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(480.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                egui::Grid::new("worktree-form")
+                    .num_columns(2)
+                    .spacing([12.0, 10.0])
+                    .show(ui, |ui| {
+                        ui.label("Branch");
+                        ui.text_edit_singleline(&mut self.state.git.worktree_branch);
+                        ui.end_row();
+                        ui.label("Path");
+                        ui.text_edit_singleline(&mut self.state.git.worktree_path);
+                        ui.end_row();
+                    });
+                ui.add_space(10.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    create = ui.button("Create").clicked();
+                });
+            });
+        if create {
+            let path = PathBuf::from(self.state.git.worktree_path.trim());
+            match crate::git::create_worktree(&root, &path, &self.state.git.worktree_branch) {
+                Ok(()) => {
+                    self.state.status = Some(StatusMessage::info(format!(
+                        "Created worktree {}",
+                        path.display()
+                    )));
+                    open = false;
+                }
+                Err(error) => self.state.status = Some(StatusMessage::error(error)),
+            }
+        }
+        self.state.git.worktree_open = open;
+    }
+
+    fn update_zen_reveals(&mut self, ctx: &egui::Context) {
+        if !self.state.zen_mode {
+            self.state.zen_left_revealed = false;
+            self.state.zen_right_revealed = false;
+            self.state.zen_bottom_revealed = false;
+            return;
+        }
+        let Some(pointer) = ctx.pointer_hover_pos() else {
+            return;
+        };
+        let rect = ctx.content_rect();
+        if pointer.x <= rect.left() + 12.0 {
+            self.state.zen_left_revealed = true;
+        } else if self.state.zen_left_revealed && pointer.x > rect.left() + 500.0 {
+            self.state.zen_left_revealed = false;
+        }
+        if pointer.x >= rect.right() - 12.0 {
+            self.state.zen_right_revealed = true;
+        } else if self.state.zen_right_revealed && pointer.x < rect.right() - 500.0 {
+            self.state.zen_right_revealed = false;
+        }
+        if pointer.y >= rect.bottom() - 12.0 {
+            self.state.zen_bottom_revealed = true;
+        } else if self.state.zen_bottom_revealed && pointer.y < rect.bottom() - 420.0 {
+            self.state.zen_bottom_revealed = false;
+        }
+    }
+
+    fn zen_exit_button(&mut self, ctx: &egui::Context) {
+        if !self.state.zen_mode {
+            return;
+        }
+        let reveal = ctx.pointer_hover_pos().is_some_and(|pointer| {
+            let rect = ctx.content_rect();
+            pointer.x >= rect.right() - 72.0 && pointer.y <= rect.top() + 56.0
+        });
+        if reveal {
+            egui::Area::new(egui::Id::new("zen-exit"))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    if ui.button(format!("{}  Exit Zen", icons::ZEN)).clicked() {
+                        self.dispatch_action(ActionId::ToggleZen);
+                    }
+                });
+        }
     }
 
     fn toast(&mut self, ui: &mut egui::Ui) {
@@ -794,91 +1143,111 @@ impl ForgeApp {
 
 impl eframe::App for ForgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.sync_window_icon(ui.ctx());
         self.drain_bridge_events();
         if let Some(ws) = self.state.pending_workspace.take() {
             self.switch_workspace(ws, ui.ctx());
         }
         self.sync_openapi();
+        self.update_zen_reveals(ui.ctx());
 
         crate::dialogs::handle_global_shortcuts(ui.ctx(), &mut self.state);
         if let Some(action) = keymap::dispatch(ui.ctx()) {
             self.dispatch_action(action);
         }
+        let api_project = self.state.assets.is_loaded();
+        let has_project = self.state.workspace.is_some() || api_project;
 
-        egui::Panel::top("menu-bar")
-            .resizable(false)
-            .show(ui, |ui| {
-                self.menu_bar(ui);
-            });
-
-        egui::Panel::bottom("status-bar")
-            .exact_size(26.0)
-            .resizable(false)
-            .show(ui, |ui| {
-                self.status_bar(ui);
-            });
-
-        egui::Panel::left("activity-rail")
-            .exact_size(46.0)
-            .resizable(false)
-            .show(ui, |ui| {
-                let accent = self.state.theme.accent_color();
-                ui.add_space(6.0);
-                ui.vertical_centered(|ui| {
-                    if rail_button(
-                        ui,
-                        self.state.show_collections,
-                        icons::COLLECTIONS,
-                        "Collections",
-                        accent,
-                    ) {
-                        self.state.show_collections = !self.state.show_collections;
-                    }
-                    ui.add_space(3.0);
-                    if rail_button(
-                        ui,
-                        self.state.show_assets,
-                        icons::ASSETS,
-                        "Assets (reqv1 store)",
-                        accent,
-                    ) {
-                        self.state.show_assets = !self.state.show_assets;
-                    }
-                    ui.add_space(3.0);
-                    let hist = self.state.bottom_tool == Some(BottomTool::History);
-                    if rail_button(ui, hist, icons::HISTORY, "History", accent) {
-                        self.state.bottom_tool = if hist {
-                            None
-                        } else {
-                            Some(BottomTool::History)
-                        };
-                    }
-                    ui.add_space(3.0);
-                    if rail_button(
-                        ui,
-                        self.state.show_environment,
-                        icons::ENVIRONMENT,
-                        "Environment",
-                        accent,
-                    ) {
-                        self.state.show_environment = !self.state.show_environment;
-                    }
-                    ui.add_space(3.0);
-                    let run = self.state.bottom_tool == Some(BottomTool::Run);
-                    if rail_button(ui, run, icons::PULSE, "Run results", accent) {
-                        self.state.bottom_tool = if run { None } else { Some(BottomTool::Run) };
-                    }
+        if !self.state.zen_mode {
+            egui::Panel::top("menu-bar")
+                .resizable(false)
+                .show(ui, |ui| {
+                    self.menu_bar(ui);
                 });
-                // Gear pinned to the bottom of the rail.
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                    ui.add_space(6.0);
-                    if rail_button(ui, false, icons::GEAR, "Settings", accent) {
-                        self.state.dialogs.settings.open = true;
-                    }
-                });
-            });
+        }
 
-        if self.state.show_collections {
+        if has_project
+            && self.state.show_status_bar
+            && (!self.state.zen_mode || self.state.zen_bottom_revealed)
+        {
+            egui::Panel::bottom("status-bar")
+                .exact_size(26.0)
+                .resizable(false)
+                .show(ui, |ui| {
+                    self.status_bar(ui);
+                });
+        }
+
+        if has_project
+            && self.state.show_activity_bar
+            && (!self.state.zen_mode || self.state.zen_left_revealed)
+        {
+            egui::Panel::left("activity-rail")
+                .exact_size(50.0)
+                .resizable(false)
+                .show(ui, |ui| {
+                    let accent = self.state.theme.accent_color();
+                    ui.add_space(8.0);
+                    ui.vertical_centered(|ui| {
+                        if !api_project
+                            && rail_button(
+                                ui,
+                                self.state.show_collections,
+                                icons::COLLECTIONS,
+                                "Collections",
+                                accent,
+                            )
+                        {
+                            self.state.show_collections = !self.state.show_collections;
+                        }
+                        if !api_project {
+                            ui.add_space(4.0);
+                        }
+                        if rail_button(ui, self.state.show_assets, icons::ASSETS, "Project", accent)
+                        {
+                            self.state.show_assets = !self.state.show_assets;
+                        }
+                        ui.add_space(4.0);
+                        let hist = self.state.bottom_tool == Some(BottomTool::History);
+                        if rail_button(ui, hist, icons::HISTORY, "History", accent) {
+                            self.state.bottom_tool = if hist {
+                                None
+                            } else {
+                                Some(BottomTool::History)
+                            };
+                        }
+                        ui.add_space(4.0);
+                        let run = self.state.bottom_tool == Some(BottomTool::Run);
+                        if rail_button(ui, run, icons::PULSE, "Run results", accent) {
+                            self.state.bottom_tool = if run { None } else { Some(BottomTool::Run) };
+                        }
+                        if !api_project {
+                            ui.add_space(4.0);
+                            if rail_button(
+                                ui,
+                                self.state.show_environment,
+                                icons::ENVIRONMENT,
+                                "Environment",
+                                accent,
+                            ) {
+                                self.state.show_environment = !self.state.show_environment;
+                            }
+                        }
+                    });
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                        ui.add_space(8.0);
+                        if rail_button(ui, false, icons::GEAR, "Settings", accent) {
+                            self.state.dialogs.settings.open = true;
+                        }
+                    });
+                });
+        }
+
+        if has_project
+            && self.state.show_collections
+            && !api_project
+            && (!self.state.zen_mode || self.state.zen_left_revealed)
+        {
             egui::Panel::left("left-panel")
                 .exact_size(280.0)
                 .resizable(true)
@@ -891,20 +1260,27 @@ impl eframe::App for ForgeApp {
                 });
         }
 
-        if self.state.show_assets {
+        if has_project && (!self.state.zen_mode || self.state.zen_left_revealed) {
+            let mut show_assets = self.state.show_assets;
+            let mut collapse_requested = false;
             egui::Panel::left("assets-panel")
-                .exact_size(300.0)
+                .default_size(320.0)
                 .resizable(true)
-                .size_range(200.0..=560.0)
-                .show(ui, |ui| {
-                    if Self::tool_window_header(ui, "Assets") {
-                        self.state.show_assets = false;
+                .size_range(260.0..=460.0)
+                .show_collapsible(ui, &mut show_assets, |ui| {
+                    if Self::tool_window_header(ui, "Project") {
+                        collapse_requested = true;
                     }
-                    assets::show(ui, &mut self.state);
+                    assets::show(ui, &mut self.state, &self.bridge);
                 });
+            self.state.show_assets = show_assets && !collapse_requested;
         }
 
-        if self.state.show_environment {
+        if has_project
+            && self.state.show_environment
+            && !api_project
+            && (!self.state.zen_mode || self.state.zen_right_revealed)
+        {
             egui::Panel::right("right-panel")
                 .exact_size(260.0)
                 .resizable(true)
@@ -917,53 +1293,83 @@ impl eframe::App for ForgeApp {
                 });
         }
 
-        // Relay-style console tab strip: the bottom-tool switcher lives here
-        // (always visible), not crammed into the status bar.
-        egui::Panel::bottom("tool-tabs")
-            .exact_size(30.0)
-            .resizable(false)
-            .show(ui, |ui| {
-                self.bottom_tool_tabs(ui);
-            });
-
-        if let Some(tool) = self.state.bottom_tool {
-            egui::Panel::bottom("bottom-tool-panel")
-                .default_size(240.0)
-                .resizable(true)
-                .size_range(120.0..=560.0)
+        if has_project
+            && self.state.show_bottom_bar
+            && (!self.state.zen_mode || self.state.zen_bottom_revealed)
+        {
+            egui::Panel::bottom("tool-tabs")
+                .exact_size(34.0)
+                .resizable(false)
                 .show(ui, |ui| {
-                    // Claim the full panel height regardless of content: egui
-                    // persists the *content* rect as the panel's next size, so
-                    // a shorter-than-panel tool (e.g. the terminal) would
-                    // otherwise shrink the panel a little on every repaint.
-                    ui.set_min_height(ui.available_height());
-                    match tool {
-                        BottomTool::Run => test_results::show(ui, &mut self.state, &self.bridge),
-                        BottomTool::Problems => {
-                            if let Some(rel_id) = problems::show(ui, &mut self.state) {
-                                self.open_request_tab(&rel_id);
-                            }
-                        }
-                        BottomTool::Terminal => terminal::show(ui, &mut self.state),
-                        BottomTool::Log => log::show(ui, &mut self.state),
-                        BottomTool::History => history::show(ui, &mut self.state),
-                        BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
-                        BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
-                        BottomTool::Variables => {
-                            if let Some(rel_id) = variables::show(ui, &mut self.state) {
-                                self.open_request_tab(&rel_id);
-                            }
-                        }
-                    }
+                    self.bottom_tool_tabs(ui);
                 });
+        }
+
+        if has_project && (!self.state.zen_mode || self.state.zen_bottom_revealed) {
+            if let Some(tool) = self.state.bottom_tool {
+                egui::Panel::bottom("bottom-tool-panel")
+                    .default_size(240.0)
+                    .resizable(true)
+                    .size_range(120.0..=560.0)
+                    .show(ui, |ui| {
+                        ui.set_min_height(ui.available_height());
+                        match tool {
+                            BottomTool::Run => {
+                                test_results::show(ui, &mut self.state, &self.bridge)
+                            }
+                            BottomTool::Problems => {
+                                if let Some(rel_id) = problems::show(ui, &mut self.state) {
+                                    self.open_request_tab(&rel_id);
+                                }
+                            }
+                            BottomTool::Terminal => terminal::show(ui, &mut self.state),
+                            BottomTool::Log => log::show(ui, &mut self.state),
+                            BottomTool::History => history::show(ui, &mut self.state),
+                            BottomTool::Console => console::show(ui, &mut self.state, &self.bridge),
+                            BottomTool::Cookies => cookies::show(ui, &mut self.state, &self.bridge),
+                            BottomTool::Variables => {
+                                if let Some(rel_id) = variables::show(ui, &mut self.state) {
+                                    self.open_request_tab(&rel_id);
+                                }
+                            }
+                        }
+                    });
+            }
         }
 
         let editor_bg = self.state.theme.editor_bg();
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(editor_bg))
             .show(ui, |ui| {
-                if self.state.workspace.is_none() {
+                if self.state.dialogs.v1_editor.open {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 8,
+                            bottom: 0,
+                        })
+                        .show(ui, |ui| {
+                            crate::dialogs::v1_editor::show(ui, &mut self.state, &self.bridge);
+                        });
+                    return;
+                }
+                if !has_project {
                     crate::dialogs::welcome::show(ui, &mut self.state);
+                    return;
+                }
+                if api_project {
+                    ui.centered_and_justified(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new("No request open").size(20.0).strong());
+                            ui.label(
+                                egui::RichText::new(
+                                    "Select a request from the Project panel or create a new one.",
+                                )
+                                .weak(),
+                            );
+                        });
+                    });
                     return;
                 }
                 // Tab strip sits on the lighter panel bg (chrome), full-width, so
@@ -999,6 +1405,8 @@ impl eframe::App for ForgeApp {
             });
 
         crate::dialogs::show(ui.ctx(), &mut self.state, &self.bridge);
+        self.worktree_dialog(ui.ctx());
+        self.zen_exit_button(ui.ctx());
         self.toast(ui);
     }
 
@@ -1075,8 +1483,8 @@ fn environment_panel(ui: &mut egui::Ui, state: &mut AppState) {
     };
     let Some(env_name) = &state.active_env else {
         ui.add_space(8.0);
-        ui.weak("No active environment.");
-        ui.weak("Select one from the status bar.");
+        ui.weak("Automatic environment selection.");
+        ui.weak("Folder and request properties decide at run time.");
         return;
     };
     let Some(loaded) = workspace.environment(env_name) else {
@@ -1140,6 +1548,15 @@ pub(crate) fn save_all(state: &mut AppState) {
 mod tests {
     use super::*;
     use forge_core::runner::RunSummary;
+
+    #[test]
+    fn themed_window_icons_are_distinct_valid_pngs() {
+        let light = eframe::icon_data::from_png_bytes(window_icon_png(egui::Theme::Light)).unwrap();
+        let dark = eframe::icon_data::from_png_bytes(window_icon_png(egui::Theme::Dark)).unwrap();
+        assert_eq!((light.width, light.height), (256, 256));
+        assert_eq!((dark.width, dark.height), (256, 256));
+        assert_ne!(light.rgba, dark.rgba);
+    }
 
     fn dummy_outcome(id: &str) -> RequestOutcome {
         RequestOutcome {

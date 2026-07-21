@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Forge
+GenericName=API IDE
+Comment=Build, inspect, and verify APIs
+Exec=forge-ide
+Icon=forge-ide-symbolic
+Terminal=false
+Categories=Development;
+StartupNotify=true

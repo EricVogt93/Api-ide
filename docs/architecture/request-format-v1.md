@@ -18,8 +18,8 @@ Design goals, taken as hard constraints:
   Schema (2020-12).
 
 The recurring theme: **the request document is a thin, declarative description; all
-reuse is a reference; all behavior is an asset in the pipeline.** New assertion or hook
-types never add request-schema fields.
+reuse is a reference.** Hooks/extractors and assertions live in the derived siblings
+`*.hooks.json` and `*.assertions.json`, so the request stays focused on HTTP data.
 
 ---
 
@@ -30,6 +30,9 @@ A working first version lives in `crates/forge-core/src/reqv1/` and the
 
 - Document model + `deny_unknown_fields` validation (`model.rs`), schema at
   `schemas/request-v1.schema.json`.
+- Request-adjacent hook and assertion documents (`hooks.rs`, `assertions.rs`), schemas at
+  `schemas/hooks-v1.schema.json` and `schemas/assertions-v1.schema.json`; no path
+  configuration is required.
 - Ref parsing, alias (exact/prefix) resolution, path-escape guard (`refs.rs`).
 - Data-asset resolution: load, JSON Pointer, JSON Patch, clone-on-read cache,
   reference-cycle detection, full diagnostic set (`resolve.rs`, `diag.rs`).
@@ -68,8 +71,10 @@ Since landed (originally deferred, all additive):
   none exists.
 - **Runtime threading + sequences** (§9): `${runtime.*}` resolves from
   earlier requests, and `run_sequence` runs a list of request files in order,
-  carrying each request's extracted runtime to the next. CLI `run-v1` takes
-  multiple files.
+  carrying each request's extracted runtime to the next. Persisted
+  `*.sequence.json` documents use `schemas/sequence-v1.schema.json`; CLI
+  `run-sequence` and the IDE execute them in declared order and retain each
+  response.
 - **`builtin:assert-schema@1`**: validates the response body against an
   inline JSON Schema (reuses the crate's `jsonschema` validator).
 
@@ -77,8 +82,10 @@ Since landed (originally deferred, all additive):
 authoring a `*.request.json` with chill store access — the asset store on the
 left (data fixtures browsable to any JSON node, hooks/assertions/extractors/
 generators/mocks), each with an "insert" that drops a ready `ref`/`use`
-snippet into the JSON at the cursor, so you *reference* a stored dataset or
-assertion instead of rewriting it. The right side is a Postman/Bruno-style vertical split (draggable): the
+entry into the typed request model or assertion sidecar. Bindings receive a safe, collision-free
+name and the editor shows the corresponding `${bindings.name}` expression;
+pipeline entries, assertions, and mocks go to their structural slots. The right side is a
+Postman/Bruno-style vertical split (draggable): the
 request JSON on top (toolbar: Validate/Save/mock/environment picker/Run), and
 below it a tabbed results pane — **Result**, **Assertions** (its own pane,
 with a pass/fail count), **Runtime** (extracted vars), **Diagnostics**. Run
@@ -109,10 +116,15 @@ filesystem stays the source of truth.
   the request document (§10). Matching is a pure `handle(method, path)`,
   socket-free-testable.
 
+The Assets tool window can scaffold executable JavaScript assets together
+with typed colocated metadata, run every request affected by an asset, create
+and run stored sequences, and preview/execute whole-tree migrations. Execution
+history for both request generations shares `.forge-local/history.sqlite`.
+
 Still deferred (each additive, no format break): keychain/external secret
 providers (interface exists; not built — headless-untestable); Worker-process
-isolation tiers beyond trusted-local; asset CRUD from the UI (create/rename/
-move — v1 is deliberately discovery-only); matrix × sequence combined (niche).
+isolation tiers beyond trusted-local; asset rename/move; matrix × sequence
+combined (niche).
 
 The shipped runnable example is
 `crates/forge-core/tests/fixtures/reqv1/project/` — the canonical §1 document
@@ -128,7 +140,7 @@ by `crates/forge-core/tests/reqv1_test.rs`.
 | Binding shapes | `value` \| `ref` \| `use` (unchanged from brief) | One model for static-local, static-ref, executable. | — |
 | Parameterization | Separate top-level `matrix`, not magic array-in-bindings | Explicit iteration marker; bindings stay single-valued and predictable. | — |
 | Variable resolution | Namespaced (`env`/`secret`/`bindings`/`runtime`/`matrix`), strict, type-preserving, **no re-scan of data-asset content** | No implicit precedence; deterministic; prevents data-driven `${}` injection. | — |
-| Executable assets | TS/JS modules in Worker thread, timeout+memory cap, curated context; **not an adversarial sandbox** | JS cannot securely sandbox in-process; honest about it. | Untrusted projects: refuse or run in a separate process/container (§15). |
+| Executable assets | Plain `.js` on in-process QuickJS, timeout+memory cap, deep-frozen JSON context; **not an adversarial sandbox** | Small host with an explicit trust gate. | Untrusted projects require a separate process/container (§15). |
 | Version suffix `@N` | **Required** on `builtin:` assets, **optional** on `project:` assets | Builtins evolve with the tool → need pinning; project assets evolve with git. | Use `@N` on project assets to run two contract versions during a migration. |
 | Lockfile | Optional `.forge/lock.json`, off by default | Reproducibility for CI; git already pins project assets. | Turn on for release CI or shared fixtures. |
 | Asset index | Optional generated cache, never source of truth | Refs resolve from the filesystem; index only speeds lookup. | — |
@@ -137,10 +149,10 @@ by `crates/forge-core/tests/reqv1_test.rs`.
 
 ## 1. Persisted request document model
 
-A request document contains only: metadata, bindings, optional matrix, the request
-itself, an ordered pipeline, and an optional mock. Nothing else — no auth block (auth is
-a `beforeRequest` hook), no top-level `assertions`/`extractors`/`hooks` (they are
-pipeline entries), no response history, no IDE state.
+A request document contains only metadata, bindings, an optional matrix, the HTTP request
+and an optional mock. Hooks and assertions are stored in automatically derived siblings
+(`create.hooks.json` and `create.assertions.json`). Inline pipeline entries remain readable
+for compatibility and are split into those sidecars when the IDE saves the request.
 
 Canonical example (`requests/users/create.request.json`):
 
@@ -174,20 +186,40 @@ Canonical example (`requests/users/create.request.json`):
       }
     }
   },
-
-  "pipeline": [
-    { "phase": "beforeRequest", "use": "project:auth/service-token@1" },
-    { "phase": "afterResponse", "use": "builtin:assert-status@1", "with": { "expected": 201 } },
-    { "phase": "afterResponse", "use": "project:assertions/user-created@1",
-      "with": { "expectedUser": "${bindings.user}" } },
-    { "phase": "afterResponse", "use": "project:extractors/user-id@1",
-      "with": { "target": "runtime.userId" } }
-  ],
-
   "mock": {
     "status": 201,
     "body": { "ref": "data:user-responses#/created" }
   }
+}
+```
+
+Companion `requests/users/create.hooks.json`:
+
+```json
+{
+  "$schema": "../../schemas/hooks-v1.schema.json",
+  "formatVersion": 1,
+  "kind": "hooks",
+  "hooks": [
+    { "phase": "beforeRequest", "use": "project:auth/service-token@1" },
+    { "phase": "afterResponse", "use": "project:extractors/user-id@1",
+      "with": { "target": "runtime.userId" } }
+  ]
+}
+```
+
+Companion `requests/users/create.assertions.json`:
+
+```json
+{
+  "$schema": "../../schemas/assertions-v1.schema.json",
+  "formatVersion": 1,
+  "kind": "assertions",
+  "assertions": [
+    { "use": "builtin:assert-status@1", "with": { "expected": 201 } },
+    { "use": "project:assertions/user-created@1",
+      "with": { "expectedUser": "${bindings.user}" } }
+  ]
 }
 ```
 
@@ -206,7 +238,10 @@ See `schemas/request-v1.schema.json`. Shape summary:
 - `bindings` / `matrix`: maps of `binding` (`$defs/binding`, a `oneOf` over
   value/ref/use — mutually exclusive by `additionalProperties: false`).
 - `request.body` is `{ type, value? | ref? }` — the body can itself be an asset ref.
-- `pipeline[]`: `{ phase, use, with?, enabled? }`.
+- `<name>.hooks.json`: `{ formatVersion, kind: "hooks", hooks[] }`; each hook is
+  `{ phase, use, with?, enabled? }`.
+- `<name>.assertions.json`: `{ formatVersion, kind: "assertions", assertions[] }`;
+  each assertion is `{ use, with?, enabled? }` and runs in `afterResponse`.
 - `mock`: `oneOf` static (`status`+…) or executable (`use`+`with?`).
 - `assetRef` pattern forbids backslashes (OS portability, §11).
 
@@ -365,19 +400,9 @@ return patches the runner validates and merges.
 ```ts
 export interface ExecutionContext {
   readonly request: DeepReadonly<ResolvedRequest>;
-  readonly env: DeepReadonly<Record<string, unknown>>;
-  readonly runtime: DeepReadonly<Record<string, unknown>>; // snapshot at phase start
-  readonly response?: DeepReadonly<HttpResponseView>;       // afterResponse/onError only
-  readonly error?: DeepReadonly<ExecError>;                 // onError only
-  readonly matrixCase?: DeepReadonly<Record<string, unknown>>;
-
-  // Controlled capabilities — no ambient globals.
-  now(): number;                     // deterministic clock (seedable in CI)
-  random(): number;                  // seeded PRNG
-  http?: HttpClient;                 // present only if the asset declared needsNetwork
-  secret(name: string): string;      // present only if the asset declared needsSecrets
-  abortSignal: AbortSignal;
-  log(msg: string): void;            // masked writer
+  readonly bindings: DeepReadonly<Record<string, unknown>>;
+  readonly response?: DeepReadonly<HttpResponseView>; // reaction phases only
+  readonly error?: string;                            // onError/finally only
 }
 
 export interface RequestPatch {
@@ -404,31 +429,15 @@ export interface MockResponse {
 }
 ```
 
-Asset entry-point contracts (what a module exports):
+Assets log through bounded `console.log`. Environment, secret, runtime and
+matrix values are exposed only when the request explicitly resolves them into
+bindings or `with`; no ambient capability API is injected.
 
-```ts
-export interface GeneratorAsset<W = unknown, R = unknown> {
-  kind: "generator"; version: number;
-  run(ctx: ExecutionContext, input: W): R | Promise<R>;
-}
-export interface HookAsset<W = unknown> {
-  kind: "hook"; version: number;
-  run(ctx: ExecutionContext, input: W): RequestPatch | void | Promise<RequestPatch | void>;
-}
-export interface AssertionAsset<W = unknown> {
-  kind: "assertion"; version: number;
-  run(ctx: ExecutionContext, input: W):
-    AssertionResult | AssertionResult[] | Promise<AssertionResult | AssertionResult[]>;
-}
-export interface ExtractorAsset<W = unknown> {
-  kind: "extractor"; version: number;
-  run(ctx: ExecutionContext, input: W): RuntimePatch | Promise<RuntimePatch>;
-}
-export interface MockAsset<W = unknown> {
-  kind: "mock"; version: number;
-  run(ctx: ExecutionContext, input: W): MockResponse | Promise<MockResponse>;
-}
-```
+Every executable is a plain script defining synchronous global
+`function run(ctx, input)`. Its directory/use position supplies the kind; the
+return shape is `RequestPatch`, assertion result(s), `RuntimePatch`, generated
+JSON value, or `MockResponse`. ES modules, imports, promises and TypeScript are
+not executed by v1.
 
 `data` assets are plain JSON files with an optional companion `*.schema.json`; they have
 no module contract.
@@ -447,8 +456,8 @@ export type AssetKind =
 
 - **`data`** — `*.json`. Selected by JSON Pointer, patched locally with JSON Patch,
   validated against an optional sibling `*.schema.json`. Never re-scanned for `${...}`.
-- **`generator`** — pure module producing a value for a binding. No `response` in
-  context. Must be deterministic (use `ctx.now()`/`ctx.random()`).
+- **`generator`** — script producing a JSON value for a binding. No `response` in
+  context.
 - **`hook`** — `beforeRequest` (or `onError`/`finally`); returns a `RequestPatch`.
   Auth, dynamic headers, signing are all hooks. A "transformer" is a hook.
 - **`assertion`** — `afterResponse`; returns `AssertionResult[]`. Never throws for a
@@ -641,6 +650,47 @@ assertion/extraction (`afterResponse`), retry-or-report (`onError`), teardown
 resolved request, no response, and almost no useful input; generators already cover
 "produce data before the request." Add it later only with a concrete use case.
 
+### Persisted sequences
+
+A sequence is a small, versioned project artifact, not an IDE-only selection:
+
+```json
+{
+  "$schema": "./schemas/sequence-v1.schema.json",
+  "formatVersion": 1,
+  "kind": "sequence",
+  "meta": { "id": "smoke", "name": "Smoke" },
+  "requests": [
+    "requests/auth/login.request.json",
+    "requests/users/me.request.json"
+  ]
+}
+```
+
+Entries are project-relative `*.request.json` paths and cannot escape the
+project. They run in array order and thread `${runtime.*}` forward. “Run
+affected” is intentionally different: it runs every consumer independently,
+including its matrix, so unrelated tests cannot exchange runtime state.
+
+### Jira links and folder inheritance
+
+Story folders may contain a versioned `.forge-jira` file with either a Jira
+key (`API-123`) or full ticket URL. Requests and child folders inherit the
+nearest ancestor link. A test-specific override is stored beside the request
+as `.<request-file>.forge-jira`; removing it restores folder inheritance.
+These files contain only the link, never Jira credentials or remote state. The
+GUI stores full URLs so tickets open directly without a Jira host setting;
+key-only files remain readable for compatibility.
+
+### Environment defaults and inheritance
+
+Project and story folders can select a default environment in a versioned
+`.forge-environment` file. Descendants inherit the nearest selection; a
+request-specific override lives beside the request as
+`.<request-file>.forge-environment`. Removing an override restores inheritance.
+The files contain only the environment name, never variable values or secrets.
+An explicit GUI or CLI environment selection takes precedence for that run.
+
 ---
 
 ## 10. Mock execution model
@@ -664,8 +714,9 @@ Decided behavior:
   `response`.
 - **Response contract.** `MockResponse` (status/headers/body/delayMs). `delayMs`
   simulates latency; a mock may set a 5xx status to simulate errors.
-- **Determinism.** Mock assets follow the same determinism rules (`ctx.now`/`ctx.random`
-  only). A static mock is trivially deterministic.
+- **Determinism.** Static mocks are deterministic. Dynamic project scripts are trusted
+  code; v1 does not currently lint `Date`/`Math.random`, so reproducibility remains the
+  asset author's responsibility.
 - **Validation.** If the mock's `body` ref has a sibling schema, it is validated on load —
   a malformed fixture fails before it is ever served.
 - **Matching/routing is out of the document.** The request document says *what* a mock
@@ -705,15 +756,16 @@ Matching rules, decided:
   be exactly the alias, optionally followed by `#pointer` and/or `@version`.
 - An alias whose target is a **directory** is a **prefix** alias (`project:assertions`).
   The remainder after the alias is a path *under* that directory
-  (`project:assertions/user-created@1` → `<dir>/user-created.ts@1`).
+  (`project:assertions/user-created@1` → `<dir>/user-created.js@1`).
 - **Exact beats prefix.** If both an exact alias and a prefix alias could match, exact
   wins.
 - **Longest prefix wins** among competing prefix aliases.
 - **Ambiguity is a load-time error.** If two aliases normalize to the same key, or an
   exact and prefix alias collide unresolvably, `project.json` fails validation — not at
   request time.
-- **Extension inference** for executable assets: `.ts` then `.js` (first that exists).
-  Data refs must name the file explicitly.
+- **Extension inference** for executable assets: `.js` then `.ts` (first that exists).
+  A lone `.ts` file resolves only to produce the explicit "transpile to .js"
+  diagnostic. Data refs must name the file explicitly.
 
 Path security:
 
@@ -730,6 +782,11 @@ No global manifest is required. An optional generated index (`.forge/index.json`
 cache "alias/kind → path" for fast lookup and editor autocomplete, but it is
 **rebuildable from the filesystem** and never the source of truth; a stale or missing
 index only costs a rescan.
+
+An executable may optionally have a colocated `<stem>.meta.json`. This is not a
+registry: moving the executable moves its metadata. The file supplies `title`,
+`description`, `intent`, optional `phase`, typed `parameters`, and an `example` for the
+IDE form. The lockfile hashes both executable and metadata.
 
 ---
 
@@ -772,12 +829,12 @@ stay single and iteration is explicit.
     "url": "${env.baseUrl}/users",
     "body": { "type": "json", "value": "${matrix.case.payload}" }
   },
-  "pipeline": [
-    { "phase": "afterResponse", "use": "builtin:assert-status@1",
-      "with": { "expected": "${matrix.case.expectedStatus}" } }
-  ]
+  "pipeline": []
 }
 ```
+
+The sibling assertion document uses
+`{"use":"builtin:assert-status@1","with":{"expected":"${matrix.case.expectedStatus}"}}`.
 
 Where `data:create-user-cases#/cases` is an array. Decided semantics:
 
@@ -834,51 +891,30 @@ the lockfile — only the *reference* `${secret.apiToken}` is persisted.
 
 ## 15. Executable asset security
 
-Be honest: an in-process JavaScript runtime cannot provide a secure sandbox against
-adversarial code (`require('fs')`, prototype tricks, native addons). So v1 defines a
-**capability-scoped, resource-limited execution** that stops accidents and honest bugs,
-plus an explicit trust boundary for genuinely untrusted code — and does **not** pretend
-the in-process path is adversary-proof.
+Be honest: the current host is in-process QuickJS, not an adversarial sandbox.
+It has a 128 MB memory limit and a 5 s interrupt budget. Assets receive only
+deep-frozen JSON snapshots (`request`, optional `response`, `bindings`); there
+is no Node `require`, filesystem, process, ambient environment or built-in
+network API.
 
-Execution model (v1):
+CLI and GUI refuse repository-owned executable assets by default.
+`--allow-project-code` or the editor's **Allow project code** switch is an
+explicit per-run trust decision. CI that enables project code must provide its
+real isolation boundary (container and, where needed, an egress policy).
 
-- Each executable asset runs in a **Worker thread** with `resourceLimits`
-  (memory cap, e.g. 128 MB) and a **per-asset timeout** (default 5 s) enforced by
-  terminating the Worker. Infinite loops and runaway memory are bounded.
-- The asset receives only the frozen `ExecutionContext`. Capabilities are **opt-in and
-  declared** by the module:
-  - `needsNetwork: true` → `ctx.http` is provided (a runner-controlled client that logs
-    and honors the abort signal); otherwise absent.
-  - `needsSecrets: ["apiToken"]` → `ctx.secret("apiToken")` works for declared keys only.
-  - No `ctx` capability grants `fs`, `process`, `child_process`, or ambient `env`.
-- **Determinism:** `ctx.now()`/`ctx.random()` are the sanctioned sources; assets reaching
-  for `Date.now()`/`Math.random()` are non-deterministic and are flagged (a lint, not a
-  hard block, in v1).
-- **Imports:** an asset may import from the project's own `node_modules` and relative
-  files under the project root. A declared allowlist is checked in restricted mode.
-
-Trust tiers (explicit — this is the honest part):
-
-| Tier | Context | Policy |
-|------|---------|--------|
-| **Trusted local** | your own repo, `forge run` on your machine | Worker + timeout + memory + declared capabilities. You already trust this code; the limits catch mistakes. |
-| **Restricted** | shared repo, capability allowlist enforced | Same, plus import allowlist and no-network-by-default; violations are hard errors. |
-| **CI** | pipeline execution | Restricted tier **inside a container** with an egress policy; the container is the real boundary, the Worker limits are defense-in-depth. |
-| **Untrusted / imported** | a project you did not author | **Refuse to execute by default.** Require `--allow-untrusted`, and even then run each asset in a **separate process** (or container). Do not run unknown code in-process and call it sandboxed. |
-
-Rejected: a "perfect" in-process VM sandbox (`vm2`-style). It has a track record of
-escapes; promising isolation it cannot deliver is worse than an honest process/container
-boundary.
+Do not add a pretend in-process security tier. Separate process/container
+execution and capability declarations remain deferred until importing and
+running genuinely untrusted assets is a demonstrated workflow.
 
 ---
 
 ## 16. Asset versioning and lockfile strategy
 
 - **Document version:** every persisted document carries `formatVersion` + `kind`.
-  Schema migrations are explicit migrator functions keyed by `formatVersion`; the tool
-  can `forge migrate` a v0/v1 document forward. The existing `forge-core`
-  `*.request.json` is **v0**; a migrator maps its `auth`/`assertions`/`extractors`/
-  `scripts` fields onto v1 pipeline entries and builtins.
+  The existing `forge-core` `*.request.json` is **v0**. `forge migrate` maps the
+  representable request/auth/assertion/extractor subset onto v1 and refuses the
+  entire conversion when a field (for example inline scripts or unsupported
+  transport auth) would otherwise be lost.
 - **Built-in asset versions (`@N`, required):** builtins ship with the tool and evolve
   across releases, so a request pins the contract it was written against. `assert-status@1`
   and `assert-status@2` can coexist; a request keeps working when the tool upgrades.
@@ -926,9 +962,9 @@ export interface Diagnostic {
 
 - One `RunResult` per request, or an array of them for a `matrix` run.
 - Secrets are masked everywhere (`ResolvedRequest.secretRefs` drives redaction).
-- Response **history is not persisted in the request document** — results are separate
-  artifacts (stdout, a JUnit report, a results file), keeping request files clean and
-  diff-friendly.
+- Response **history is not persisted in the request document**. The IDE writes
+  it to `.forge-local/history.sqlite`; CLI output/JUnit remain separate artifacts,
+  keeping request files clean and diff-friendly.
 - The same `RunResult`/`Diagnostic` types back both the CLI (`forge run`, JUnit output)
   and the IDE; the GUI renders them but the types are UI-agnostic.
 
@@ -945,9 +981,9 @@ environments/local.json          { "baseUrl": "http://localhost:3000", "timeout"
 assets/data/users.json           { "valid": { "alice": { "name": "Alice", "email": "alice@example.com" } } }
 assets/data/tenants.json         { "default": { "id": "t-1" } }
 assets/data/responses/users.json { "created": { "id": "u-1", "name": "Alice" } }
-assets/hooks/service-token.ts    hook, needsSecrets:["API_TOKEN"] -> RequestPatch header Authorization
-assets/assertions/user-created.ts  assertion -> checks response.name === input.expectedUser.name
-assets/extractors/user-id.ts     extractor -> { runtime: { userId: response.id } }
+assets/hooks/service-token.js    hook -> RequestPatch header Authorization
+assets/assertions/user-created.js  assertion -> checks response.name === input.expectedUser.name
+assets/extractors/user-id.js     extractor -> { runtime: { userId: response.id } }
 requests/users/create.request.json   (the §1 document)
 ```
 
@@ -961,8 +997,9 @@ Run of `requests/users/create.request.json` against `local`:
    `"3f1c…"`; body →
    `{"name":"Alice","email":"alice@example.com","tenantId":"t-1"}` (types preserved).
 5. **Canonical IR** produced.
-6. **beforeRequest:** `project:auth/service-token@1` reads `ctx.secret("API_TOKEN")`,
-   returns `RequestPatch` upserting `Authorization: Bearer ***`. (Masked in results.)
+6. **beforeRequest:** `project:auth/service-token@1` reads the already resolved
+   secret-backed binding and returns a `RequestPatch` upserting
+   `Authorization: Bearer ***`. (Masked in results.)
 7. **Send** `POST /users` → `201 { "id": "u-1", "name": "Alice" }`.
 8. **afterResponse:** `builtin:assert-status@1` (expected 201) → pass;
    `project:assertions/user-created@1` (expectedUser=`{name:"Alice",…}`) → pass;
@@ -987,20 +1024,29 @@ project/
 │   └── staging.json
 ├── requests/
 │   └── users/
-│       └── create.request.json  # exactly one request per file
+│       ├── create.request.json    # exactly one request per file
+│       ├── create.hooks.json      # automatically derived hook sidecar
+│       └── create.assertions.json # automatically derived assertion sidecar
+├── sequences/
+│   └── smoke.sequence.json      # ordered, runtime-threaded request list
 ├── assets/
 │   ├── data/
 │   │   ├── users.json
 │   │   ├── users.schema.json     # optional sibling validation
 │   │   ├── tenants.json
 │   │   └── responses/users.json
-│   ├── generators/random-user.ts
-│   ├── hooks/service-token.ts
-│   ├── assertions/user-created.ts
-│   ├── extractors/user-id.ts
-│   └── mocks/create-user-response.ts
+│   ├── generators/random-user.js
+│   ├── hooks/service-token.js
+│   ├── assertions/user-created.js
+│   ├── assertions/user-created.meta.json
+│   ├── extractors/user-id.js
+│   └── mocks/create-user-response.js
 ├── schemas/
-│   └── request-v1.schema.json
+│   ├── request-v1.schema.json
+│   ├── hooks-v1.schema.json
+│   ├── assertions-v1.schema.json
+│   ├── sequence-v1.schema.json
+│   └── asset-metadata-v1.schema.json
 ├── mocks.routes.json            # optional: mock server routing (NOT part of request-v1)
 └── .forge/                      # generated, gitignorable
     ├── index.json               # rebuildable alias/kind cache
@@ -1060,11 +1106,11 @@ next to `users.json`) so a fixture and its contract move together.
   type-preserving, masking. (`matrix` namespace can land with the matrix feature.)
 - Pipeline: 4 phases; builtins `uuid`, `assert-status`, `assert-json-path`,
   `extract-json-path`, `bearer`, `basic`. Project hooks/assertions/extractors as
-  TS/JS modules.
+  plain `.js` modules.
 - Aliases + relative paths + path-escape guard.
 - Secret provider: `.env.local` + process env only.
-- Executable assets: Worker thread + timeout + memory cap + declared
-  `needsNetwork`/`needsSecrets`. Trusted-local tier only.
+- Executable assets: in-process QuickJS with timeout, memory cap, deep-frozen
+  context and explicit adapter-level trust confirmation.
 - `RunResult`/`Diagnostic`; JUnit output. `forge validate` (stages 1–5, no network) and
   `forge run`.
 
@@ -1080,8 +1126,8 @@ next to `users.json`) so a fixture and its contract move together.
 
 **Most likely to be overengineered, and the simple robust answer:**
 
-- *Security.* Do not build a sandbox. v1 = Worker + limits for your own code; refuse
-  untrusted code. Real isolation is a container in CI.
+- *Security.* Do not claim an in-process sandbox. v1 = QuickJS limits for
+  explicitly trusted project code; real isolation is a container in CI.
 - *Versioning.* Do not decorate every project ref with `@N`. Git + optional lockfile
   reproduce assets. Suffix builtins only.
 - *Providers/registries.* No central asset registry, no mandatory manifest, one secret

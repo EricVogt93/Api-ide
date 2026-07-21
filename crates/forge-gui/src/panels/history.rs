@@ -11,7 +11,8 @@ use egui::{Color32, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
 use forge_core::history::{
-    diff_entries, DiffResult, HistoryEntry, HistoryFilter, HistoryStore, HistorySummary, NewEntry,
+    diff_entries, DiffResult, HistoryEntry, HistoryFilter, HistoryRecord, HistoryStore,
+    HistorySummary, NewEntry,
 };
 use forge_core::model::{BodyDef, Method, RequestDef};
 use forge_core::runner::RequestOutcome;
@@ -73,6 +74,47 @@ pub fn new_entry_from_outcome<'a>(
             })
             .unwrap_or_default(),
         request_body: def.and_then(|node| configured_body(&node.def)),
+    }
+}
+
+/// Convert one reqv1 adapter result into the shared history representation.
+pub fn record_from_v1(item: &crate::bridge::V1RunItem, env: Option<String>) -> HistoryRecord {
+    let error = item.response.is_none().then(|| {
+        let diagnostics = item
+            .result
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        if diagnostics.is_empty() {
+            "request did not produce a response".to_string()
+        } else {
+            diagnostics
+        }
+    });
+    HistoryRecord {
+        executed_at: chrono::Utc::now().to_rfc3339(),
+        request_id: item.result.request_id.clone(),
+        name: item.name.clone(),
+        method: item.method.clone(),
+        url: item.url.clone(),
+        status: item.response.as_ref().map(|response| response.status),
+        duration_ms: item
+            .response
+            .as_ref()
+            .map(|response| response.time_ms as i64)
+            .unwrap_or_default(),
+        request_headers: item.request_headers.clone(),
+        request_body: item.request_body.clone(),
+        response_headers: item
+            .response
+            .as_ref()
+            .map(|response| response.headers.clone())
+            .unwrap_or_default(),
+        response_body: item.response.as_ref().map(|response| response.body.clone()),
+        error,
+        env,
     }
 }
 
@@ -432,6 +474,14 @@ pub fn show(ui: &mut Ui, state: &mut AppState) {
             .and_then(|ws| ws.find_request(&rel_id).map(|n| n.def.clone()))
         {
             state.open_tab(rel_id, def);
+        } else if let Some(path) = state.assets.request_path(&rel_id) {
+            if let Err(error) = state
+                .dialogs
+                .v1_editor
+                .open_file(path, state.active_env.clone())
+            {
+                operation_error = Some(error);
+            }
         }
     }
 

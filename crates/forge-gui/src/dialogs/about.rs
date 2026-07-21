@@ -17,7 +17,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.heading("Forge");
-            ui.label("An IntelliJ-style API testing IDE.");
+            ui.label("A local-first IDE for building, inspecting, and verifying APIs.");
             ui.add_space(8.0);
             egui::Grid::new("about-grid")
                 .num_columns(2)

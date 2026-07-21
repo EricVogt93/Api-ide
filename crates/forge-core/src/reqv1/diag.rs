@@ -35,6 +35,7 @@ pub enum Code {
     PipelineConflict,
     AssetError,
     HttpError,
+    AuthRefresh,
 }
 
 impl Code {
@@ -58,12 +59,14 @@ impl Code {
             Code::PipelineConflict => "PIPELINE_CONFLICT",
             Code::AssetError => "ASSET_ERROR",
             Code::HttpError => "HTTP_ERROR",
+            Code::AuthRefresh => "AUTH_REFRESH",
         }
     }
 
     fn severity(self) -> Severity {
         match self {
             Code::PipelineConflict => Severity::Warning,
+            Code::AuthRefresh => Severity::Info,
             _ => Severity::Error,
         }
     }

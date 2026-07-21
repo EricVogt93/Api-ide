@@ -28,6 +28,54 @@ fn secret(name: &str) -> Option<String> {
     (name == "apiToken").then(|| "s3cr3t-token".to_string())
 }
 
+fn auth_project(
+    root: &Path,
+    server: &MockServer,
+    lifetime_seconds: u64,
+) -> (PathBuf, reqv1::RequestDocument) {
+    let auth_file = root.join("requests/auth/token.request.json");
+    let target_file = root.join("requests/protected/me.request.json");
+    std::fs::create_dir_all(auth_file.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(target_file.parent().unwrap()).unwrap();
+    std::fs::write(
+        root.join("project.json"),
+        serde_json::to_vec_pretty(&json!({
+            "formatVersion": 1,
+            "auth": {
+                "request": "requests/auth/token.request.json",
+                "tokenPath": "$.access_token",
+                "lifetimeSeconds": lifetime_seconds,
+                "refreshBeforeSeconds": 0,
+                "applyTo": "requests/protected"
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        &auth_file,
+        serde_json::to_vec_pretty(&json!({
+            "formatVersion": 1,
+            "kind": "request",
+            "meta": {"id": "auth.token", "name": "Auth token"},
+            "request": {"method": "POST", "url": format!("{}/token", server.uri())}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let target = json!({
+        "formatVersion": 1,
+        "kind": "request",
+        "meta": {"id": "protected.me", "name": "Me"},
+        "request": {"method": "GET", "url": format!("{}/me", server.uri())}
+    });
+    std::fs::write(&target_file, serde_json::to_vec_pretty(&target).unwrap()).unwrap();
+    (
+        target_file,
+        reqv1::RequestDocument::parse(&target.to_string()).unwrap(),
+    )
+}
+
 #[test]
 fn validate_resolves_canonical_document_to_ir() {
     let doc = load_doc();
@@ -407,57 +455,75 @@ async fn js_dynamic_mock_serves_and_assertions_run_against_it() {
 }
 
 #[tokio::test]
-async fn runtime_threads_from_one_request_to_the_next_in_a_sequence() {
-    let server = MockServer::start().await;
+async fn runtime_and_per_request_environments_thread_through_a_sequence() {
+    let login_server = MockServer::start().await;
+    let profile_server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/login"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "token": "tok-xyz" })))
-        .mount(&server)
+        .mount(&login_server)
         .await;
     Mock::given(method("GET"))
         .and(path("/me"))
         .and(header("authorization", "Bearer tok-xyz")) // came from request A's extract
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "user": "alice" })))
-        .mount(&server)
+        .mount(&profile_server)
         .await;
 
     let root = project_root();
     let a = root.join("requests/users/seq-a.request.json");
     let b = root.join("requests/users/seq-b.request.json");
-    let env = json!({ "baseUrl": server.uri() });
+    let environments = vec![
+        json!({ "baseUrl": login_server.uri() }),
+        json!({ "baseUrl": profile_server.uri() }),
+    ];
     let engine = HttpEngine::new();
+    let auth = reqv1::AuthSession::default();
 
-    let results = reqv1::run_sequence(
+    let results = reqv1::run_sequence_with_environment_values_in_session(
         &[a, b],
         &root,
-        env,
+        &environments,
         &secret,
         &engine,
         RunMode::Http,
         CancellationToken::new(),
+        &auth,
     )
-    .await;
+    .await
+    .unwrap();
 
     assert_eq!(results.len(), 2);
     assert_eq!(
-        results[0].status,
+        results[0].0.status,
         RunStatus::Passed,
         "{:?}",
-        results[0].diagnostics
+        results[0].0.diagnostics
     );
-    assert_eq!(results[0].runtime.get("authToken"), Some(&json!("tok-xyz")));
+    assert_eq!(
+        results[0].0.runtime.get("authToken"),
+        Some(&json!("tok-xyz"))
+    );
+    assert_eq!(
+        results[0].1.as_ref().map(|response| response.status),
+        Some(200)
+    );
     // Request B only passes if ${runtime.authToken} reached it AND the
     // assert-schema builtin validated {user:"alice"}.
     assert_eq!(
-        results[1].status,
+        results[1].0.status,
         RunStatus::Passed,
         "{:?}",
-        results[1].diagnostics
+        results[1].0.diagnostics
     );
     assert!(
-        results[1].assertions.iter().all(|a| a.passed),
+        results[1].0.assertions.iter().all(|a| a.passed),
         "{:?}",
-        results[1].assertions
+        results[1].0.assertions
+    );
+    assert_eq!(
+        results[1].1.as_ref().map(|response| response.status),
+        Some(200)
     );
 }
 
@@ -636,4 +702,88 @@ async fn mock_server_serves_over_real_http() {
         .await
         .expect("request");
     assert_eq!(missing.status(), 404);
+}
+
+#[tokio::test]
+async fn project_auth_fetcher_reuses_a_live_bearer_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "token-1"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer token-1"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let root = tempfile::tempdir().unwrap();
+    let (file, doc) = auth_project(root.path(), &server, 60);
+    let engine = HttpEngine::new();
+    let auth = reqv1::AuthSession::default();
+    for _ in 0..2 {
+        let (result, _) = reqv1::run_with_response_in_session(
+            &doc,
+            root.path(),
+            &file,
+            json!({}),
+            &|_| None,
+            &engine,
+            RunMode::Http,
+            CancellationToken::new(),
+            Value::Null,
+            &auth,
+        )
+        .await;
+        assert_eq!(result.status, RunStatus::Passed, "{:?}", result.diagnostics);
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn project_auth_refreshes_before_observed_request_duration_exceeds_ttl() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "token-1"
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/me"))
+        .and(header("authorization", "Bearer token-1"))
+        .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_millis(1_200)))
+        .expect(2)
+        .mount(&server)
+        .await;
+
+    let root = tempfile::tempdir().unwrap();
+    let (file, doc) = auth_project(root.path(), &server, 2);
+    let engine = HttpEngine::new();
+    let auth = reqv1::AuthSession::default();
+    for _ in 0..2 {
+        let (result, _) = reqv1::run_with_response_in_session(
+            &doc,
+            root.path(),
+            &file,
+            json!({}),
+            &|_| None,
+            &engine,
+            RunMode::Http,
+            CancellationToken::new(),
+            Value::Null,
+            &auth,
+        )
+        .await;
+        assert_eq!(result.status, RunStatus::Passed, "{:?}", result.diagnostics);
+    }
+    server.verify().await;
 }

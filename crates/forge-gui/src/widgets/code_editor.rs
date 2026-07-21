@@ -8,9 +8,13 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use egui::text::{LayoutJob, TextFormat};
-use egui::{Color32, FontId, FontSelection, TextEdit, Ui};
+use egui::{Color32, FontId, FontSelection, Stroke, TextEdit, TextStyle, Ui};
 
 use forge_core::vars::{spans, VarScopes};
+
+pub(crate) fn editor_text_style() -> TextStyle {
+    TextStyle::Name("forge-code-editor".into())
+}
 
 /// Editor language, controlling which lexer produces syntax colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,6 +23,14 @@ pub enum Lang {
     Xml,
     GraphQl,
     Plain,
+}
+
+/// A one-based source location shown directly in the editor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorDiagnostic {
+    pub line: usize,
+    pub column: usize,
+    pub message: String,
 }
 
 struct Palette {
@@ -62,11 +74,21 @@ thread_local! {
     static CACHE: RefCell<HashMap<u64, LayoutJob>> = RefCell::new(HashMap::new());
 }
 
-fn cache_key(text: &str, dark: bool, lang: Lang) -> u64 {
+fn cache_key(
+    text: &str,
+    dark: bool,
+    lang: Lang,
+    font_size: f32,
+    diagnostic: Option<&EditorDiagnostic>,
+) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut h);
     dark.hash(&mut h);
     lang.hash(&mut h);
+    font_size.to_bits().hash(&mut h);
+    diagnostic
+        .map(|value| (value.line, value.column))
+        .hash(&mut h);
     h.finish()
 }
 
@@ -86,8 +108,33 @@ pub fn code_editor(
     min_rows: usize,
     wrap: bool,
 ) -> egui::Response {
+    code_editor_with_diagnostic(
+        ui, id_salt, text, lang, scopes, read_only, min_rows, wrap, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn code_editor_with_diagnostic(
+    ui: &mut Ui,
+    id_salt: &str,
+    text: &mut String,
+    lang: Lang,
+    scopes: Option<&VarScopes>,
+    read_only: bool,
+    min_rows: usize,
+    wrap: bool,
+    diagnostic: Option<&EditorDiagnostic>,
+) -> egui::Response {
     let dark = ui.visuals().dark_mode;
+    let font = ui
+        .style()
+        .text_styles
+        .get(&editor_text_style())
+        .cloned()
+        .unwrap_or_else(|| FontId::monospace(14.0));
+    let layout_font = font.clone();
     let var_spans = scopes.map(|s| spans(text, s)).unwrap_or_default();
+    let diagnostic = diagnostic.cloned();
     let desired_width = if wrap {
         ui.available_width()
     } else {
@@ -96,10 +143,17 @@ pub fn code_editor(
 
     let mut layouter = move |ui: &Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
         let text = buf.as_str();
-        let key = cache_key(text, dark, lang);
+        let key = cache_key(text, dark, lang, layout_font.size, diagnostic.as_ref());
         let mut job = CACHE.with(|c| c.borrow().get(&key).cloned());
         if job.is_none() {
-            let built = build_layout_job(text, lang, dark, &var_spans);
+            let built = build_layout_job(
+                text,
+                lang,
+                dark,
+                &var_spans,
+                layout_font.clone(),
+                diagnostic.as_ref(),
+            );
             CACHE.with(|c| {
                 let mut map = c.borrow_mut();
                 if map.len() > 200 {
@@ -117,7 +171,7 @@ pub fn code_editor(
     ui.add(
         TextEdit::multiline(text)
             .id_salt(id_salt)
-            .font(FontSelection::from(FontId::monospace(15.0)))
+            .font(FontSelection::from(font))
             .desired_width(desired_width)
             .desired_rows(min_rows)
             .code_editor()
@@ -132,8 +186,13 @@ pub fn code_editor(
 /// same scroll viewport they scroll and align together (with wrapping off).
 pub fn line_gutter(ui: &mut Ui, lines: usize) {
     let color = ui.visuals().weak_text_color();
-    let font = FontId::monospace(15.0);
-    let width = 3.max(lines.to_string().len()) as f32 * 8.0 + 12.0;
+    let font = ui
+        .style()
+        .text_styles
+        .get(&editor_text_style())
+        .cloned()
+        .unwrap_or_else(|| FontId::monospace(14.0));
+    let width = 3.max(lines.to_string().len()) as f32 * font.size * 0.58 + 12.0;
     ui.allocate_ui(egui::vec2(width, ui.available_height()), |ui| {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -174,14 +233,72 @@ pub fn code_editor_numbered(
     .inner
 }
 
+/// Numbered editor variant with an inline diagnostic underline.
+#[allow(clippy::too_many_arguments)]
+pub fn code_editor_numbered_diagnostic(
+    ui: &mut Ui,
+    id_salt: &str,
+    text: &mut String,
+    lang: Lang,
+    scopes: Option<&VarScopes>,
+    read_only: bool,
+    min_rows: usize,
+    wrap: bool,
+    diagnostic: Option<&EditorDiagnostic>,
+) -> egui::Response {
+    let lines = text.lines().count().max(min_rows);
+    ui.horizontal_top(|ui| {
+        line_gutter(ui, lines);
+        code_editor_with_diagnostic(
+            ui, id_salt, text, lang, scopes, read_only, min_rows, wrap, diagnostic,
+        )
+    })
+    .inner
+}
+
+/// Compact, non-interactive overview of the current document.
+pub fn code_minimap(ui: &mut Ui, text: &str, diagnostic: Option<&EditorDiagnostic>, height: f32) {
+    let width = 62.0;
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(width, height.max(1.0)), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    let lines: Vec<_> = text.lines().collect();
+    let count = lines.len().max(1);
+    let row = (rect.height() / count as f32).clamp(1.0, 3.0);
+    let color = ui.visuals().weak_text_color().gamma_multiply(0.55);
+    for (index, line) in lines.iter().enumerate() {
+        let y = rect.top() + index as f32 * row;
+        if y > rect.bottom() {
+            break;
+        }
+        let fraction = (line.trim().chars().count().min(100) as f32 / 100.0).max(0.08);
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + 3.0, y),
+                egui::pos2(rect.left() + 3.0 + fraction * (width - 7.0), y),
+            ],
+            Stroke::new(row.min(2.0), color),
+        );
+    }
+    if let Some(diagnostic) = diagnostic {
+        let y = rect.top()
+            + ((diagnostic.line.saturating_sub(1) as f32 / count as f32) * rect.height());
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            Stroke::new(2.0, ui.visuals().error_fg_color),
+        );
+    }
+}
+
 fn build_layout_job(
     text: &str,
     lang: Lang,
     dark: bool,
     var_spans: &[forge_core::vars::VarSpan],
+    font: FontId,
+    diagnostic: Option<&EditorDiagnostic>,
 ) -> LayoutJob {
     let pal = palette(dark);
-    let font = FontId::monospace(15.0);
 
     let base: Vec<(usize, usize, Color32)> = match lang {
         Lang::Json => lex_json(text, &pal),
@@ -201,6 +318,12 @@ fn build_layout_job(
     for v in var_spans {
         bounds.push(v.start);
         bounds.push(v.end);
+    }
+    let diagnostic_range =
+        diagnostic.and_then(|value| source_range(text, value.line, value.column));
+    if let Some(range) = &diagnostic_range {
+        bounds.push(range.start);
+        bounds.push(range.end);
     }
     bounds.sort_unstable();
     bounds.dedup();
@@ -225,9 +348,43 @@ fn build_layout_job(
         if var_hit {
             fmt.background = pal.var_bg;
         }
+        if diagnostic_range
+            .as_ref()
+            .is_some_and(|range| range.start <= s && e <= range.end)
+        {
+            fmt.underline = Stroke::new(1.5, Color32::from_rgb(0xF4, 0x47, 0x47));
+        }
         job.append(&text[s..e], 0.0, fmt);
     }
     job
+}
+
+fn source_range(text: &str, line: usize, column: usize) -> Option<std::ops::Range<usize>> {
+    let start = text
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1))
+        .map(str::len)
+        .sum::<usize>();
+    let current = text.get(start..)?.split('\n').next().unwrap_or_default();
+    let offset = current
+        .char_indices()
+        .nth(column.saturating_sub(1))
+        .map(|(offset, _)| offset)
+        .unwrap_or(current.len());
+    if offset >= current.len() {
+        let previous = current.char_indices().next_back()?.0;
+        return Some((start + previous)..(start + current.len()));
+    }
+    let at = start + offset;
+    let end = text
+        .get(at..)
+        .and_then(|tail| {
+            tail.chars()
+                .next()
+                .map(|character| at + character.len_utf8())
+        })
+        .filter(|end| *end > at)?;
+    Some(at..end)
 }
 
 /// Minimal JSON lexer: strings (keys vs. values), numbers, `true`/`false`/`null`.
@@ -398,4 +555,25 @@ fn lex_graphql(text: &str, pal: &Palette) -> Vec<(usize, usize, Color32)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_range_uses_one_based_line_and_column() {
+        let text = "{\n  \"name\": nope\n}";
+        let range = source_range(text, 2, 11).unwrap();
+
+        assert_eq!(&text[range], "n");
+    }
+
+    #[test]
+    fn diagnostic_at_line_end_marks_the_previous_character() {
+        let text = "{\n  \"name\":\n}";
+        let range = source_range(text, 2, 99).unwrap();
+
+        assert_eq!(&text[range], ":");
+    }
 }

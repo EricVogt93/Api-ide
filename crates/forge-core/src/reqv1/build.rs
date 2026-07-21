@@ -7,6 +7,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+use super::catalog::{validate_builtin, BuiltinTarget};
 use super::diag::{Code, Diagnostic, Errors};
 use super::ir::{
     ResolvedBody, ResolvedHeader, ResolvedMock, ResolvedPipelineEntry, ResolvedRequest,
@@ -58,7 +59,14 @@ pub fn build_ir(doc: &RequestDocument, inp: &BuildInputs<'_>) -> Result<Resolved
     let request = build_request(&doc.request, inp, &scopes, &mut sink, &mut errors);
 
     // 3. Resolve the pipeline (locate assets, interpolate `with`).
-    let pipeline = build_pipeline(&doc.pipeline, inp, &scopes, &mut sink, &mut errors);
+    let pipeline = build_pipeline(
+        &doc.pipeline,
+        request.as_ref(),
+        inp,
+        &scopes,
+        &mut sink,
+        &mut errors,
+    );
 
     // 4. Resolve the mock (if any).
     let mock = doc
@@ -67,6 +75,9 @@ pub fn build_ir(doc: &RequestDocument, inp: &BuildInputs<'_>) -> Result<Resolved
         .and_then(|m| build_mock(m, inp, &scopes, &mut sink, &mut errors));
 
     if !errors.is_empty() {
+        for diagnostic in &mut errors {
+            mask_diagnostic(diagnostic, &sink.values);
+        }
         return Err(Errors(errors));
     }
     let request = request.expect("no errors implies a request");
@@ -83,6 +94,26 @@ pub fn build_ir(doc: &RequestDocument, inp: &BuildInputs<'_>) -> Result<Resolved
         mock,
         bindings,
         secret_values: sink.values,
+    })
+}
+
+fn mask_diagnostic(diagnostic: &mut Diagnostic, secrets: &[String]) {
+    diagnostic.message = mask_text(&diagnostic.message, secrets);
+    if let Some(path) = &mut diagnostic.instance_path {
+        *path = mask_text(path, secrets);
+    }
+    if let Some(asset_ref) = &mut diagnostic.asset_ref {
+        *asset_ref = mask_text(asset_ref, secrets);
+    }
+}
+
+fn mask_text(text: &str, secrets: &[String]) -> String {
+    secrets.iter().fold(text.to_string(), |masked, secret| {
+        if secret.is_empty() {
+            masked
+        } else {
+            masked.replace(secret, "***")
+        }
     })
 }
 
@@ -278,20 +309,10 @@ fn topo_order<'a>(
 fn run_generator(
     name: &str,
     version: Option<u32>,
-    _input: &Value,
+    input: &Value,
     raw: &str,
 ) -> Result<Value, Diagnostic> {
-    // Builtins require an explicit version (§16). Default to 1 if omitted for
-    // ergonomics but reject an unknown one.
-    if let Some(v) = version {
-        if v != 1 {
-            return Err(Diagnostic::new(
-                Code::UnsupportedAssetVersion,
-                format!("builtin generator {name}@{v} not available (have @1)"),
-            )
-            .with_ref(raw));
-        }
-    }
+    validate_builtin(name, version, BuiltinTarget::Binding, input, raw)?;
     match name {
         "uuid" => Ok(Value::String(uuid::Uuid::new_v4().to_string())),
         "now" => Ok(Value::from(chrono::Utc::now().timestamp())),
@@ -428,6 +449,7 @@ fn value_to_form(value: &Value) -> Vec<ResolvedHeader> {
 
 fn build_pipeline(
     entries: &[PipelineEntry],
+    request: Option<&ResolvedReqParts>,
     inp: &BuildInputs<'_>,
     scopes: &Scopes<'_>,
     sink: &mut SecretSink,
@@ -447,7 +469,7 @@ fn build_pipeline(
                 continue;
             }
         };
-        let input = match interpolate(&Value::Object(e.with.clone()), scopes, sink) {
+        let mut input = match interpolate(&Value::Object(e.with.clone()), scopes, sink) {
             Ok(v) => v,
             Err(mut d) => {
                 d.instance_path = Some(format!("{path}/with"));
@@ -455,6 +477,26 @@ fn build_pipeline(
                 continue;
             }
         };
+        if asset.scheme == RefScheme::Builtin && asset.address == "assert-openapi-response" {
+            if let Err(mut diagnostic) = prepare_openapi_input(&mut input, request, inp, &e.uses) {
+                diagnostic.instance_path = Some(path);
+                errors.push(diagnostic);
+                continue;
+            }
+        }
+        if asset.scheme == RefScheme::Builtin {
+            if let Err(mut diagnostic) = validate_builtin(
+                &asset.address,
+                asset.version,
+                BuiltinTarget::Pipeline(e.phase),
+                &input,
+                &e.uses,
+            ) {
+                diagnostic.instance_path = Some(path);
+                errors.push(diagnostic);
+                continue;
+            }
+        }
         out.push(ResolvedPipelineEntry {
             phase: e.phase,
             asset,
@@ -462,6 +504,52 @@ fn build_pipeline(
         });
     }
     out
+}
+
+fn prepare_openapi_input(
+    input: &mut Value,
+    request: Option<&ResolvedReqParts>,
+    inp: &BuildInputs<'_>,
+    raw: &str,
+) -> Result<(), Diagnostic> {
+    let object = input.as_object_mut().ok_or_else(|| {
+        Diagnostic::new(Code::InvalidAssetInput, "builtin input must be an object").with_ref(raw)
+    })?;
+    if let Some(reference) = object.get("specRef").and_then(Value::as_str) {
+        if object.contains_key("spec") {
+            return Err(Diagnostic::new(
+                Code::InvalidAssetInput,
+                "OpenAPI response validation accepts only one of \"spec\" and \"specRef\"",
+            )
+            .with_ref(raw));
+        }
+        let descriptor = inp.resolver.resolve(reference, inp.base_dir)?;
+        if descriptor.pointer.is_some() {
+            return Err(Diagnostic::new(
+                Code::InvalidAssetInput,
+                "OpenAPI file references do not support JSON pointers",
+            )
+            .with_ref(reference));
+        }
+        let source = std::fs::read_to_string(&descriptor.address).map_err(|error| {
+            Diagnostic::new(
+                Code::AssetNotFound,
+                format!("cannot read OpenAPI spec {}: {error}", descriptor.address),
+            )
+            .with_ref(reference)
+        })?;
+        object.insert("spec".to_string(), Value::String(source));
+        object.remove("specRef");
+    }
+    if let Some(request) = request {
+        object
+            .entry("method".to_string())
+            .or_insert_with(|| Value::String(request.method.as_str().to_string()));
+        object
+            .entry("url".to_string())
+            .or_insert_with(|| Value::String(request.url.clone()));
+    }
+    Ok(())
 }
 
 fn build_mock(
@@ -519,5 +607,94 @@ fn interp_string(
             errors.push(d);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::model::ProjectConfig;
+    use super::*;
+
+    #[test]
+    fn failed_builtin_validation_masks_interpolated_secrets() {
+        let root = tempfile::tempdir().unwrap();
+        let project = ProjectConfig::default();
+        let resolver = RefResolver::new(root.path(), &project).unwrap();
+        let store = DataStore::new(&resolver);
+        let empty = Value::Object(Map::new());
+        let secret = |name: &str| (name == "pattern").then(|| "sensitive[".to_string());
+        let doc = RequestDocument::parse(
+            r#"{
+                "formatVersion": 1,
+                "kind": "request",
+                "meta": {"id": "mask", "name": "Mask"},
+                "request": {"method": "GET", "url": "https://example.test"},
+                "pipeline": [{
+                    "phase": "afterResponse",
+                    "use": "builtin:assert-body-regex@1",
+                    "with": {"pattern": "${secret.pattern}"}
+                }]
+            }"#,
+        )
+        .unwrap();
+        let inputs = BuildInputs {
+            resolver: &resolver,
+            store: &store,
+            base_dir: root.path(),
+            env: empty.clone(),
+            matrix: empty.clone(),
+            runtime: empty,
+            secret: &secret,
+        };
+
+        let errors = build_ir(&doc, &inputs).unwrap_err();
+
+        assert!(errors.0[0].message.contains("***"));
+        assert!(!format!("{errors:?}").contains("sensitive["));
+    }
+
+    #[test]
+    fn openapi_file_reference_loads_source_and_defaults_request_identity() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("api.yaml"),
+            "openapi: 3.0.3\ninfo: {title: API, version: '1'}\npaths: {}\n",
+        )
+        .unwrap();
+        let project = ProjectConfig::default();
+        let resolver = RefResolver::new(root.path(), &project).unwrap();
+        let store = DataStore::new(&resolver);
+        let empty = Value::Object(Map::new());
+        let secret = |_name: &str| None;
+        let doc = RequestDocument::parse(
+            r#"{
+                "formatVersion": 1,
+                "kind": "request",
+                "meta": {"id": "openapi", "name": "OpenAPI"},
+                "request": {"method": "GET", "url": "https://example.test/pets"},
+                "pipeline": [{
+                    "phase": "afterResponse",
+                    "use": "builtin:assert-openapi-response@1",
+                    "with": {"specRef": "api.yaml"}
+                }]
+            }"#,
+        )
+        .unwrap();
+        let inputs = BuildInputs {
+            resolver: &resolver,
+            store: &store,
+            base_dir: root.path(),
+            env: empty.clone(),
+            matrix: empty.clone(),
+            runtime: empty,
+            secret: &secret,
+        };
+
+        let ir = build_ir(&doc, &inputs).unwrap();
+        let input = &ir.pipeline[0].input;
+        assert!(input["spec"].as_str().unwrap().contains("openapi: 3.0.3"));
+        assert_eq!(input["method"], "GET");
+        assert_eq!(input["url"], "https://example.test/pets");
+        assert!(input.get("specRef").is_none());
     }
 }

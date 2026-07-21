@@ -1,38 +1,36 @@
-//! The "Light" theme — JetBrains *New UI* light look: white editor, very
-//! light gray `#F7F8FA` islands, faint `#EBECF0` borders and the shared
-//! `#3574F0` accent.
+//! Forge Light: cool neutral chrome, white working surface, one blue accent.
 
 use egui::{Color32, CornerRadius, Stroke, Style, Visuals};
 
 /// Background of the window chrome / outermost container.
 #[allow(dead_code)]
-pub const WINDOW_BG: Color32 = Color32::from_rgb(0xF7, 0xF8, 0xFA);
+pub const WINDOW_BG: Color32 = Color32::from_rgb(0xF3, 0xF5, 0xF9);
 /// Background of side/bottom panels, toolbars and the tab strip.
-pub const PANEL_BG: Color32 = Color32::from_rgb(0xF7, 0xF8, 0xFA);
+pub const PANEL_BG: Color32 = Color32::from_rgb(0xF5, 0xF7, 0xFA);
 /// Background of the code/response editors.
 pub const EDITOR_BG: Color32 = Color32::WHITE;
 /// Default text color.
-pub const TEXT: Color32 = Color32::from_rgb(0x27, 0x28, 0x2E);
+pub const TEXT: Color32 = Color32::from_rgb(0x1D, 0x24, 0x30);
 /// Secondary/dimmed text.
-pub const TEXT_DIM: Color32 = Color32::from_rgb(0x6C, 0x70, 0x7E);
+pub const TEXT_DIM: Color32 = Color32::from_rgb(0x69, 0x73, 0x86);
 /// The New UI accent blue.
-pub const ACCENT: Color32 = Color32::from_rgb(0x35, 0x74, 0xF0);
+pub const ACCENT: Color32 = Color32::from_rgb(0x4F, 0x6E, 0xF7);
 /// List/text selection background.
-pub const SELECTION: Color32 = Color32::from_rgb(0xD4, 0xE2, 0xFF);
+pub const SELECTION: Color32 = Color32::from_rgb(0xD9, 0xE1, 0xFF);
 /// Hovered widget background.
-pub const HOVERED: Color32 = Color32::from_rgb(0xE8, 0xEA, 0xEC);
+pub const HOVERED: Color32 = Color32::from_rgb(0xE9, 0xED, 0xF4);
 /// Active/pressed widget background.
-pub const ACTIVE: Color32 = Color32::from_rgb(0xDF, 0xE1, 0xE5);
+pub const ACTIVE: Color32 = Color32::from_rgb(0xDF, 0xE5, 0xF0);
 /// Border/outline color.
-pub const BORDER: Color32 = Color32::from_rgb(0xEB, 0xEC, 0xF0);
+pub const BORDER: Color32 = Color32::from_rgb(0xDA, 0xDF, 0xE8);
 /// Hyperlink color.
-pub const HYPERLINK: Color32 = Color32::from_rgb(0x2E, 0x55, 0xA3);
+pub const HYPERLINK: Color32 = Color32::from_rgb(0x3D, 0x5B, 0xC7);
 /// Failure/error accent.
-pub const ERROR: Color32 = Color32::from_rgb(0xDB, 0x3B, 0x4B);
+pub const ERROR: Color32 = Color32::from_rgb(0xD9, 0x3D, 0x50);
 /// Warning accent.
-pub const WARN: Color32 = Color32::from_rgb(0xB0, 0x7D, 0x02);
+pub const WARN: Color32 = Color32::from_rgb(0xA9, 0x70, 0x00);
 /// Success accent.
-pub const OK: Color32 = Color32::from_rgb(0x20, 0x8A, 0x3C);
+pub const OK: Color32 = Color32::from_rgb(0x1D, 0x91, 0x55);
 
 const ROUNDING: u8 = 6;
 
@@ -45,7 +43,7 @@ pub fn style() -> Style {
     visuals.window_fill = PANEL_BG;
     visuals.panel_fill = PANEL_BG;
     visuals.extreme_bg_color = EDITOR_BG;
-    visuals.faint_bg_color = Color32::from_rgb(0xEF, 0xF1, 0xF3);
+    visuals.faint_bg_color = Color32::from_rgb(0xEC, 0xF0, 0xF6);
     visuals.code_bg_color = EDITOR_BG;
     visuals.override_text_color = Some(TEXT);
     visuals.hyperlink_color = HYPERLINK;
@@ -62,8 +60,8 @@ pub fn style() -> Style {
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(ROUNDING);
 
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(0xED, 0xEE, 0xF0);
-    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(0xED, 0xEE, 0xF0);
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(0xE9, 0xED, 0xF3);
+    visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(0xE9, 0xED, 0xF3);
     visuals.widgets.inactive.bg_stroke = Stroke::NONE;
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(ROUNDING);
@@ -87,7 +85,7 @@ pub fn style() -> Style {
     visuals.widgets.open.corner_radius = CornerRadius::same(ROUNDING);
 
     visuals.selection.bg_fill = SELECTION;
-    visuals.selection.stroke = Stroke::NONE;
+    visuals.selection.stroke = Stroke::new(1.0, Color32::BLACK);
 
     style.visuals = visuals;
     super::polish_spacing(&mut style);

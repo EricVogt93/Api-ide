@@ -15,7 +15,7 @@ use super::diag::{Code, Diagnostic, Errors};
 use super::model::{Binding, RequestDocument};
 use super::refs::RefResolver;
 use super::resolve::DataStore;
-use super::runner::{load_project, run, RunMode, RunResult};
+use super::runner::{load_project, run_with_response_in_session, AuthSession, RunMode, RunResult};
 
 /// One matrix case: name → element, e.g. `{ "case": {…} }`, referenced in the
 /// document as `${matrix.case.*}`.
@@ -114,16 +114,66 @@ pub async fn run_matrix(
     mode: RunMode,
     cancel: CancellationToken,
 ) -> Result<Vec<(MatrixCase, RunResult)>, Errors> {
+    run_matrix_with_responses(doc, root, request_file, env, secret, engine, mode, cancel)
+        .await
+        .map(|results| {
+            results
+                .into_iter()
+                .map(|(case, result, _)| (case, result))
+                .collect()
+        })
+}
+
+/// [`run_matrix`] while retaining each case's response for interactive GUI
+/// inspection. CLI and headless callers should keep using [`run_matrix`].
+#[allow(clippy::too_many_arguments)]
+pub async fn run_matrix_with_responses(
+    doc: &RequestDocument,
+    root: &Path,
+    request_file: &Path,
+    env: Value,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
+    engine: &HttpEngine,
+    mode: RunMode,
+    cancel: CancellationToken,
+) -> Result<Vec<(MatrixCase, RunResult, Option<super::pipeline::ResponseView>)>, Errors> {
+    let auth = AuthSession::default();
+    run_matrix_with_responses_in_session(
+        doc,
+        root,
+        request_file,
+        env,
+        secret,
+        engine,
+        mode,
+        cancel,
+        &auth,
+    )
+    .await
+}
+
+/// [`run_matrix_with_responses`] using a caller-owned auth cache.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_matrix_with_responses_in_session(
+    doc: &RequestDocument,
+    root: &Path,
+    request_file: &Path,
+    env: Value,
+    secret: &(dyn Fn(&str) -> Option<String> + Sync),
+    engine: &HttpEngine,
+    mode: RunMode,
+    cancel: CancellationToken,
+    auth: &AuthSession,
+) -> Result<Vec<(MatrixCase, RunResult, Option<super::pipeline::ResponseView>)>, Errors> {
     let project = load_project(root).map_err(|d| Errors(vec![d]))?;
     let resolver = RefResolver::new(root, &project)?;
     let store = DataStore::new(&resolver);
     let base_dir = request_file.parent().unwrap_or(root);
-
     let cases = resolve_cases(&doc.matrix, &resolver, &store, base_dir, &env, secret)?;
 
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
-        let result = run(
+        let (result, response) = run_with_response_in_session(
             doc,
             root,
             request_file,
@@ -133,9 +183,10 @@ pub async fn run_matrix(
             mode,
             cancel.clone(),
             Value::Object(case.clone()),
+            auth,
         )
         .await;
-        results.push((case, result));
+        results.push((case, result, response));
     }
     Ok(results)
 }

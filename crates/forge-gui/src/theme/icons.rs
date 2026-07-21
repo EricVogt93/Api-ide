@@ -27,10 +27,10 @@ pub const PLAY: &str = "\u{EC0F}"; // cod-send
 pub const STOP: &str = "\u{25A0}"; // ■ (no codicon in the subset)
 /// Settings/gear.
 pub const GEAR: &str = "\u{EAF8}"; // cod-gear
-/// Theme toggle (half sun / half moon).
-pub const THEME: &str = "\u{F050E}"; // md-theme-light-dark
 /// Git branch (status bar).
 pub const BRANCH: &str = "\u{F062C}"; // md-source-branch
+/// Jira link marker. The compact diamond stays legible when the project pane narrows.
+pub const JIRA: &str = "\u{25C6}"; // ◆
 /// Split layout: request/response stacked (horizontal divider).
 pub const SPLIT_STACKED: &str = "\u{EB56}"; // cod-split-horizontal
 /// Split layout: request/response side by side (vertical divider).
@@ -59,6 +59,8 @@ pub const REQUEST: &str = "\u{2022}"; // •
 pub const FOLDER: &str = "\u{EA83}"; // cod-folder
 /// Collapsed tree-row expand chevron.
 pub const TRIANGLE_RIGHT: &str = "\u{EAB6}"; // cod-chevron-right
+/// Collapse a left-hand tool window.
+pub const TRIANGLE_LEFT: &str = "\u{EAB5}"; // cod-chevron-left
 /// Expanded tree-row chevron.
 pub const TRIANGLE_DOWN: &str = "\u{EAB4}"; // cod-chevron-down
 /// Close ("x") glyph for tab close buttons.
@@ -73,7 +75,11 @@ pub const TERMINAL: &str = "\u{EA85}"; // cod-terminal
 pub const LOG: &str = "\u{EB9D}"; // cod-output
 /// Error severity marker.
 pub const ERROR: &str = "\u{2716}"; // ✖
+/// Success / covered marker.
+pub const CHECK: &str = "\u{2713}"; // ✓
 /// Warning severity marker.
 pub const WARNING: &str = "\u{26A0}"; // ⚠
 /// Tool-window collapse/hide affordance.
 pub const COLLAPSE: &str = "\u{EABA}"; // cod-chrome-minimize
+/// Distraction-free editor mode.
+pub const ZEN: &str = "\u{2197}"; // ↗

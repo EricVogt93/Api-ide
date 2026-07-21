@@ -102,6 +102,24 @@ pub struct NewEntry<'a> {
     pub request_body: Option<Vec<u8>>,
 }
 
+/// Fully-owned input for adapters whose execution result is not the legacy
+/// [`ExecutionResult`] type.
+pub struct HistoryRecord {
+    pub executed_at: String,
+    pub request_id: String,
+    pub name: String,
+    pub method: String,
+    pub url: String,
+    pub status: Option<u16>,
+    pub duration_ms: i64,
+    pub request_headers: Vec<(String, String)>,
+    pub request_body: Option<Vec<u8>>,
+    pub response_headers: Vec<(String, String)>,
+    pub response_body: Option<Vec<u8>>,
+    pub error: Option<String>,
+    pub env: Option<String>,
+}
+
 /// SQLite-backed execution history.
 pub struct HistoryStore {
     conn: Mutex<Connection>,
@@ -158,12 +176,31 @@ impl HistoryStore {
                 ),
             };
 
+        self.record_raw(HistoryRecord {
+            executed_at,
+            request_id: entry.request_id,
+            name: entry.name,
+            method: entry.method,
+            url: entry.url,
+            status,
+            duration_ms,
+            request_headers: entry.request_headers,
+            request_body: entry.request_body,
+            response_headers,
+            response_body,
+            error,
+            env: entry.env,
+        })
+    }
+
+    /// Record a fully-owned execution produced by another request adapter.
+    pub fn record_raw(&self, entry: HistoryRecord) -> HistoryResult<i64> {
         let (request_body, request_truncated) = cap_body(entry.request_body);
-        let (response_body, response_truncated) = cap_body(response_body);
+        let (response_body, response_truncated) = cap_body(entry.response_body);
         let truncated = request_truncated || response_truncated;
 
         let request_headers_json = serde_json::to_string(&entry.request_headers)?;
-        let response_headers_json = serde_json::to_string(&response_headers)?;
+        let response_headers_json = serde_json::to_string(&entry.response_headers)?;
 
         let conn = self.conn();
         conn.execute(
@@ -173,18 +210,18 @@ impl HistoryStore {
                 error, env, truncated
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
-                executed_at,
+                entry.executed_at,
                 entry.request_id,
                 entry.name,
                 entry.method,
                 entry.url,
-                status,
-                duration_ms,
+                entry.status,
+                entry.duration_ms,
                 request_headers_json,
                 request_body,
                 response_headers_json,
                 response_body,
-                error,
+                entry.error,
                 entry.env,
                 truncated as i64,
             ],

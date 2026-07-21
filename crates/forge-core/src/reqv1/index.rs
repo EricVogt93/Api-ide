@@ -14,10 +14,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::catalog::ProjectAssetMetadata;
 use super::diag::Diagnostic;
 use super::model::{Binding, BodySpec, MockDef, ProjectConfig, RequestDocument};
 use super::refs::{RefResolver, RefScheme};
 use super::runner::load_project;
+use super::sequence::SequenceDocument;
 
 /// Where an asset hangs in the store, derived from its location/extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
@@ -64,6 +66,7 @@ pub struct AssetEntry {
     /// Parsed content for data assets (drives the browsable JSON tree).
     #[serde(skip)]
     pub data: Option<Value>,
+    pub metadata: Option<ProjectAssetMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -81,6 +84,17 @@ pub struct RequestEntry {
     pub name: String,
     /// Refs this request makes (resolved absolute path or builtin name).
     pub refs: Vec<String>,
+    pub uses_project_code: bool,
+}
+
+/// One persisted, ordered sequence document found in the project.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SequenceEntry {
+    pub path: String,
+    pub rel_path: String,
+    pub id: String,
+    pub name: String,
+    pub requests: Vec<String>,
 }
 
 /// A ref that no longer resolves (or a request that no longer parses).
@@ -97,6 +111,7 @@ pub struct ProjectIndex {
     pub root: String,
     pub assets: Vec<AssetEntry>,
     pub requests: Vec<RequestEntry>,
+    pub sequences: Vec<SequenceEntry>,
     pub environments: Vec<String>,
     pub broken: Vec<BrokenRef>,
 }
@@ -115,6 +130,7 @@ impl ProjectIndex {
         index.collect_assets(root, &project);
         index.collect_environments(root);
         index.collect_requests(root, &resolver);
+        index.collect_sequences(root);
         index
             .assets
             .sort_by(|a, b| (a.kind, &a.rel_path).cmp(&(b.kind, &b.rel_path)));
@@ -155,7 +171,9 @@ impl ProjectIndex {
                 continue;
             }
             // Sibling schemas describe their data asset; not assets themselves.
-            if path.to_string_lossy().ends_with(".schema.json") {
+            if path.to_string_lossy().ends_with(".schema.json")
+                || path.to_string_lossy().ends_with(".meta.json")
+            {
                 continue;
             }
             let kind = classify(&path, ext);
@@ -163,6 +181,19 @@ impl ProjectIndex {
                 .then(|| std::fs::read_to_string(&path).ok())
                 .flatten()
                 .and_then(|t| serde_json::from_str(&t).ok());
+            let metadata = match load_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(message) => {
+                    let metadata_path = metadata_path(&path);
+                    self.broken.push(BrokenRef {
+                        request: relative_path(root, &path),
+                        instance_path: String::new(),
+                        reference: relative_path(root, &metadata_path),
+                        message,
+                    });
+                    None
+                }
+            };
             let norm = normalize(&path);
             let prefix_ref = prefix_alias.iter().find_map(|(dir, alias)| {
                 norm.strip_prefix(dir).ok().map(|rest| {
@@ -179,6 +210,7 @@ impl ProjectIndex {
                 prefix_ref,
                 used_by: Vec::new(),
                 data,
+                metadata,
             });
         }
     }
@@ -206,26 +238,14 @@ impl ProjectIndex {
                 continue;
             }
             let rel = relative_path(root, &path);
-            let text = match std::fs::read_to_string(&path) {
-                Ok(t) => t,
-                Err(e) => {
-                    self.broken.push(BrokenRef {
-                        request: rel,
-                        instance_path: String::new(),
-                        reference: String::new(),
-                        message: format!("unreadable: {e}"),
-                    });
-                    continue;
-                }
-            };
-            let doc = match RequestDocument::parse(&text) {
+            let doc = match super::assertions::load_request_document(&path) {
                 Ok(d) => d,
                 Err(e) => {
                     self.broken.push(BrokenRef {
                         request: rel,
                         instance_path: String::new(),
                         reference: String::new(),
-                        message: format!("invalid document: {e}"),
+                        message: e,
                     });
                     continue;
                 }
@@ -276,10 +296,90 @@ impl ProjectIndex {
                 id: doc.meta.id.clone(),
                 name: doc.meta.name.clone(),
                 refs: resolved_refs,
+                uses_project_code: doc.uses_project_code(),
             });
         }
         self.requests.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     }
+
+    fn collect_sequences(&mut self, root: &Path) {
+        let mut files = Vec::new();
+        walk_files(root, &mut files);
+        for path in files {
+            if !path.to_string_lossy().ends_with(".sequence.json") {
+                continue;
+            }
+            let rel = relative_path(root, &path);
+            let document = std::fs::read_to_string(&path)
+                .map_err(|error| format!("unreadable: {error}"))
+                .and_then(|text| {
+                    SequenceDocument::parse(&text)
+                        .map_err(|error| format!("invalid document: {error}"))
+                });
+            match document {
+                Ok(document) => {
+                    if let Err(message) = document.resolve_files(root) {
+                        self.broken.push(BrokenRef {
+                            request: rel,
+                            instance_path: "/requests".to_string(),
+                            reference: String::new(),
+                            message,
+                        });
+                        continue;
+                    }
+                    self.sequences.push(SequenceEntry {
+                        path: path.to_string_lossy().into_owned(),
+                        rel_path: rel,
+                        id: document.meta.id,
+                        name: document.meta.name,
+                        requests: document.requests,
+                    });
+                }
+                Err(message) => self.broken.push(BrokenRef {
+                    request: rel,
+                    instance_path: String::new(),
+                    reference: String::new(),
+                    message,
+                }),
+            }
+        }
+        self.sequences
+            .sort_by(|left, right| left.rel_path.cmp(&right.rel_path));
+    }
+}
+
+fn metadata_path(asset: &Path) -> PathBuf {
+    let stem = asset
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    asset.with_file_name(format!("{stem}.meta.json"))
+}
+
+fn load_metadata(asset: &Path) -> Result<Option<ProjectAssetMetadata>, String> {
+    let path = metadata_path(asset);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read asset metadata: {error}")),
+    };
+    let metadata: ProjectAssetMetadata =
+        serde_json::from_str(&text).map_err(|error| format!("invalid asset metadata: {error}"))?;
+    if metadata.title.trim().is_empty() {
+        return Err("asset metadata title must not be empty".to_string());
+    }
+    let mut names = std::collections::BTreeSet::new();
+    if let Some(parameter) = metadata
+        .parameters
+        .iter()
+        .find(|parameter| parameter.name.trim().is_empty() || !names.insert(&parameter.name))
+    {
+        return Err(format!(
+            "asset metadata parameter name {:?} is empty or duplicated",
+            parameter.name
+        ));
+    }
+    Ok(Some(metadata))
 }
 
 /// Every `(instance_path, ref-or-use)` a document makes.
@@ -418,6 +518,49 @@ mod tests {
     }
 
     #[test]
+    fn loads_colocated_executable_metadata_and_rejects_bad_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("project.json"), r#"{"aliases":{}}"#).unwrap();
+        std::fs::create_dir_all(dir.path().join("assets/assertions")).unwrap();
+        let asset = dir.path().join("assets/assertions/status.js");
+        std::fs::write(&asset, "function run() {}").unwrap();
+        std::fs::write(
+            dir.path().join("assets/assertions/status.meta.json"),
+            r#"{
+                "title":"Expected status",
+                "description":"Checks the response status.",
+                "intent":"validate",
+                "phase":"afterResponse",
+                "parameters":[{
+                    "name":"expected",
+                    "label":"Expected",
+                    "kind":"integer",
+                    "required":true,
+                    "example":"201"
+                }],
+                "example":{"expected":201}
+            }"#,
+        )
+        .unwrap();
+
+        let index = ProjectIndex::scan(dir.path()).unwrap();
+        let metadata = index.assets[0].metadata.as_ref().unwrap();
+        assert_eq!(metadata.title, "Expected status");
+        assert_eq!(metadata.parameters[0].name, "expected");
+        assert!(index.broken.is_empty());
+
+        std::fs::write(
+            dir.path().join("assets/assertions/status.meta.json"),
+            r#"{"title":"","intent":"validate"}"#,
+        )
+        .unwrap();
+        let index = ProjectIndex::scan(dir.path()).unwrap();
+        assert!(index.assets[0].metadata.is_none());
+        assert_eq!(index.broken.len(), 1);
+        assert!(index.broken[0].message.contains("title must not be empty"));
+    }
+
+    #[test]
     fn tracks_usage_across_requests() {
         let index = ProjectIndex::scan(&fixture_root()).expect("scan");
         let users = index
@@ -440,6 +583,36 @@ mod tests {
         assert!(index.requests.iter().any(|r| r.id == "users.create"));
         assert!(index.requests.iter().any(|r| r.id == "users.create.js"));
         assert_eq!(index.environments, vec!["local".to_string()]);
+        assert!(index.broken.is_empty(), "{:?}", index.broken);
+    }
+
+    #[test]
+    fn finds_persisted_sequences_in_declared_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("project.json"), r#"{"aliases":{}}"#).unwrap();
+        std::fs::create_dir_all(dir.path().join("requests")).unwrap();
+        for name in ["a", "b"] {
+            std::fs::write(
+                dir.path().join(format!("requests/{name}.request.json")),
+                format!(
+                    r#"{{"formatVersion":1,"kind":"request","meta":{{"id":"{name}","name":"{name}"}},"request":{{"method":"GET","url":"http://localhost"}}}}"#
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("smoke.sequence.json"),
+            r#"{"formatVersion":1,"kind":"sequence","meta":{"id":"smoke","name":"Smoke"},"requests":["requests/b.request.json","requests/a.request.json"]}"#,
+        )
+        .unwrap();
+
+        let index = ProjectIndex::scan(dir.path()).unwrap();
+
+        assert_eq!(index.sequences.len(), 1);
+        assert_eq!(
+            index.sequences[0].requests,
+            ["requests/b.request.json", "requests/a.request.json"]
+        );
         assert!(index.broken.is_empty(), "{:?}", index.broken);
     }
 

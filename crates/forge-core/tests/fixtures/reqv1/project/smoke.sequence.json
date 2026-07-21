@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "kind": "sequence",
+  "meta": {
+    "id": "smoke",
+    "name": "Login smoke"
+  },
+  "requests": [
+    "requests/users/seq-a.request.json",
+    "requests/users/seq-b.request.json"
+  ]
+}

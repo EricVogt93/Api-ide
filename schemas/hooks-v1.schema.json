@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://forge.dev/schemas/hooks-v1.schema.json",
+  "title": "Forge hook document (v1)",
+  "description": "Hooks stored beside a request as <name>.hooks.json.",
+  "type": "object",
+  "required": ["formatVersion", "kind", "hooks"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "formatVersion": { "const": 1 },
+    "kind": { "const": "hooks" },
+    "hooks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/hook" }
+    }
+  },
+  "$defs": {
+    "hook": {
+      "type": "object",
+      "required": ["phase", "use"],
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "enum": ["beforeRequest", "afterResponse", "onError", "finally"]
+        },
+        "use": {
+          "type": "string",
+          "pattern": "^[^\\\\]+$"
+        },
+        "with": { "type": "object" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

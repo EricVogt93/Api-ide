@@ -423,7 +423,7 @@ pub fn resolve_refs(root: &Value, node: &Value, depth: u32) -> Value {
 }
 
 /// Extract the path component of a request URL for matching against spec
-/// path templates: strips a leading `{{variable}}` (typically the base URL),
+/// path templates: strips a leading `{{variable}}` or `${variable}` base URL,
 /// then `scheme://host`, then the query string.
 pub fn url_to_path(url: &str) -> String {
     let mut s = url.trim();
@@ -431,6 +431,10 @@ pub fn url_to_path(url: &str) -> String {
     if let Some(rest) = s.strip_prefix("{{") {
         if let Some(end) = rest.find("}}") {
             s = &rest[end + 2..];
+        }
+    } else if let Some(rest) = s.strip_prefix("${") {
+        if let Some(end) = rest.find('}') {
+            s = &rest[end + 1..];
         }
     }
     // Strip scheme://host.
@@ -466,7 +470,10 @@ pub fn path_matches_template(template: &str, path: &str) -> bool {
         .collect();
     t.len() == p.len()
         && t.iter().zip(&p).all(|(ts, ps)| {
-            (ts.starts_with('{') && ts.ends_with('}')) || ts == ps || ps.contains("{{")
+            (ts.starts_with('{') && ts.ends_with('}'))
+                || ts == ps
+                || ps.contains("{{")
+                || ps.contains("${")
         })
 }
 
@@ -537,6 +544,7 @@ mod tests {
     #[test]
     fn url_to_path_strips_var_scheme_host_query() {
         assert_eq!(url_to_path("{{baseUrl}}/pets/1?x=2"), "/pets/1");
+        assert_eq!(url_to_path("${env.baseUrl}/pets/1?x=2"), "/pets/1");
         assert_eq!(url_to_path("https://api.example.com/v1/pets"), "/v1/pets");
         assert_eq!(url_to_path("https://api.example.com"), "/");
         assert_eq!(url_to_path("/pets"), "/pets");
@@ -550,6 +558,10 @@ mod tests {
         assert!(!path_matches_template("/pets", "/pets/42"));
         // A {{variable}} segment in the request URL matches any template seg.
         assert!(path_matches_template("/pets/literal", "/pets/{{id}}"));
+        assert!(path_matches_template(
+            "/pets/literal",
+            "/pets/${bindings.id}"
+        ));
     }
 
     #[test]

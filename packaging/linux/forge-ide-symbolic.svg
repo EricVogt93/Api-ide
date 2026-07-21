@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <style id="current-color-scheme" type="text/css">
+    .ColorScheme-Text { color: #232629; }
+  </style>
+  <g class="ColorScheme-Text" fill="currentColor">
+    <path d="M30 82 104 26c4-3 8-1 8 5v37c0 4-2 7-5 10l-39 29c-5 4-5 8 0 12l44 33v44c0 7-4 9-9 5l-73-55c-4-3-6-7-6-12V94c0-5 2-9 6-12Z"/>
+    <path d="m152 26 74 56c4 3 6 7 6 12v40c0 5-2 9-6 12l-73 55c-5 4-9 2-9-5v-44l44-33c5-4 5-8 0-12l-39-29c-3-3-5-6-5-10V31c0-6 4-8 8-5Z"/>
+    <rect x="101" y="103" width="54" height="14" rx="7"/>
+    <circle cx="101" cy="110" r="18"/>
+    <circle cx="155" cy="110" r="18"/>
+  </g>
+</svg>

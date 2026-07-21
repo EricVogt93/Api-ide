@@ -22,6 +22,26 @@ use crate::panels::variables::VariablesUiState;
 use crate::theme::ThemeKind;
 use crate::widgets::response_view::ResponseViewState;
 
+pub const DEFAULT_EDITOR_FONT_SIZE: f32 = 15.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiFont {
+    #[default]
+    Sans,
+    Monospace,
+}
+
+impl UiFont {
+    pub const ALL: [Self; 2] = [Self::Sans, Self::Monospace];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sans => "IBM Plex Sans",
+            Self::Monospace => "JetBrains Mono",
+        }
+    }
+}
+
 /// Which sub-tab of the request editor is active. Consolidated: `Params` is
 /// the combined "Request" tab (query params + headers + auth), `Assertions`
 /// is the combined "Tests" tab (assertions + extract + scripts).
@@ -180,6 +200,14 @@ pub struct AppState {
     pub show_collections: bool,
     pub show_environment: bool,
     pub show_assets: bool,
+    pub show_activity_bar: bool,
+    pub show_status_bar: bool,
+    pub show_bottom_bar: bool,
+    pub zen_mode: bool,
+    pub zen_left_revealed: bool,
+    pub zen_right_revealed: bool,
+    pub zen_bottom_revealed: bool,
+    pub auto_save: bool,
     pub run_state: RunState,
     pub status: Option<StatusMessage>,
     pub collections: CollectionsUiState,
@@ -215,9 +243,10 @@ pub struct AppState {
     pub terminal: TerminalState,
     /// Application event log (bottom tool window).
     pub log: EventLog,
-    /// Font size (px) of the monospace text style, live-adjustable from the
-    /// Settings dialog's Editor tab.
+    /// Font size (px) of code editors, live-adjustable from the Settings dialog.
     pub editor_font_size: f32,
+    pub ui_font_size: f32,
+    pub ui_font: UiFont,
     /// State of every dialog beyond the simple modals inlined in
     /// `panels::collections` — see `crate::dialogs`.
     pub dialogs: DialogManager,
@@ -236,12 +265,20 @@ impl Default for AppState {
             active_tab: None,
             active_env: None,
             theme: ThemeKind::default(),
-            show_collections: true,
+            show_collections: false,
             // Relay has no right-hand environment panel — the environment
             // lives in the top-bar pill. Keep the tool window available via
             // the stripe / View menu, just closed by default.
             show_environment: false,
             show_assets: false,
+            show_activity_bar: true,
+            show_status_bar: true,
+            show_bottom_bar: true,
+            zen_mode: false,
+            zen_left_revealed: false,
+            zen_right_revealed: false,
+            zen_bottom_revealed: false,
+            auto_save: true,
             run_state: RunState::default(),
             status: None,
             collections: CollectionsUiState::default(),
@@ -260,7 +297,9 @@ impl Default for AppState {
             git: crate::git::GitState::default(),
             terminal: TerminalState::default(),
             log: EventLog::default(),
-            editor_font_size: 15.0,
+            editor_font_size: DEFAULT_EDITOR_FONT_SIZE,
+            ui_font_size: 14.0,
+            ui_font: UiFont::default(),
             dialogs: DialogManager::default(),
             pending_workspace: None,
             next_run_id: 0,

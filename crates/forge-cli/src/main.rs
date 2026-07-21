@@ -2,7 +2,7 @@ mod print;
 
 use std::path::{Path, PathBuf};
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use forge_core::exec::HttpEngine;
 use forge_core::runner::{junit_xml, run, CancellationToken, DataSource, RunOptions, RunScope};
@@ -36,12 +36,51 @@ enum Command {
     Validate(V1Args),
     /// Request-format v1: run a request document.
     RunV1(V1RunArgs),
+    /// Request-format v1: run a persisted ordered sequence.
+    RunSequence(V1SequenceRunArgs),
     /// Request-format v1: list the project's asset store (usage, broken refs).
     Assets(AssetsArgs),
     /// Request-format v1: write .forge/lock.json (asset integrity hashes).
     Lock(LockArgs),
     /// Request-format v1: serve request documents' mocks over HTTP.
     Mock(MockArgs),
+    /// Convert one legacy request to request format v1 without silent loss.
+    Migrate(MigrateArgs),
+    /// Convert a legacy request tree, with an optional non-writing preview.
+    MigrateAll(MigrateAllArgs),
+    /// Export one request or a folder as a lossless JSON/cURL bundle.
+    Export(ExportArgs),
+    /// Import a lossless Forge JSON/cURL bundle below a destination folder.
+    Import(ImportArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ExportKind {
+    Json,
+    Curl,
+}
+
+#[derive(Args)]
+struct ExportArgs {
+    /// A `*.request.json` file or folder to export.
+    source: PathBuf,
+    /// Project root (holds project.json); defaults to walking up from the source.
+    #[arg(long)]
+    root: Option<PathBuf>,
+    /// Output representation. cURL embeds the lossless bundle for re-import.
+    #[arg(long, short, value_enum, default_value_t = ExportKind::Json)]
+    format: ExportKind,
+    /// Destination `*.forge.json` or `*.forge.sh` file.
+    #[arg(long, short)]
+    output: PathBuf,
+}
+
+#[derive(Args)]
+struct ImportArgs {
+    /// A `*.forge.json` or Forge-generated `*.forge.sh` file.
+    bundle: PathBuf,
+    /// Existing project folder below which bundle paths are restored.
+    destination: PathBuf,
 }
 
 #[derive(Args)]
@@ -63,6 +102,29 @@ struct MockArgs {
     /// Environment name under environments/ (for `${env.*}` in URLs/mocks).
     #[arg(long = "env")]
     env: Option<String>,
+    /// Permit repository-owned JavaScript assets to execute.
+    #[arg(long)]
+    allow_project_code: bool,
+}
+
+#[derive(Args)]
+struct MigrateArgs {
+    /// Legacy `*.request.json` document.
+    request: PathBuf,
+    /// Write the v1 document here; omit to print it to stdout.
+    #[arg(long, short)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct MigrateAllArgs {
+    /// Legacy tree to scan recursively.
+    source: PathBuf,
+    /// Destination root; relative request paths are preserved.
+    destination: PathBuf,
+    /// Report what would happen without creating files.
+    #[arg(long)]
+    dry_run: bool,
 }
 
 #[derive(Args)]
@@ -104,6 +166,30 @@ struct V1RunArgs {
     /// Verify assets against .forge/lock.json before running; abort on drift.
     #[arg(long)]
     frozen: bool,
+    /// Permit repository-owned JavaScript assets to execute.
+    #[arg(long)]
+    allow_project_code: bool,
+}
+
+#[derive(Args)]
+struct V1SequenceRunArgs {
+    /// The `*.sequence.json` document.
+    sequence: PathBuf,
+    /// Project root (holds project.json); defaults to walking up from the sequence.
+    #[arg(long)]
+    root: Option<PathBuf>,
+    /// Environment name under environments/.
+    #[arg(long = "env")]
+    env: Option<String>,
+    /// Serve each document's mock instead of sending over HTTP.
+    #[arg(long)]
+    mock: bool,
+    /// Verify assets against .forge/lock.json before running; abort on drift.
+    #[arg(long)]
+    frozen: bool,
+    /// Permit repository-owned JavaScript assets to execute.
+    #[arg(long)]
+    allow_project_code: bool,
 }
 
 #[derive(Subcommand)]
@@ -188,9 +274,14 @@ async fn main() {
         Command::Grpc(GrpcCommand::Call(args)) => cmd_grpc_call(args).await,
         Command::Validate(args) => cmd_validate(&args),
         Command::RunV1(args) => cmd_run_v1(args).await,
+        Command::RunSequence(args) => cmd_run_sequence(args).await,
         Command::Assets(args) => cmd_assets(&args),
         Command::Lock(args) => cmd_lock(&args),
         Command::Mock(args) => cmd_mock(&args),
+        Command::Migrate(args) => cmd_migrate(&args),
+        Command::MigrateAll(args) => cmd_migrate_all(&args),
+        Command::Export(args) => cmd_export(&args),
+        Command::Import(args) => cmd_import(&args),
     };
     std::process::exit(code);
 }
@@ -240,6 +331,26 @@ fn cmd_lock(args: &LockArgs) -> i32 {
 fn cmd_mock(args: &MockArgs) -> i32 {
     use forge_core::reqv1::{self, MockServerConfig};
 
+    if !args.allow_project_code {
+        match reqv1::ProjectIndex::scan(&args.root) {
+            Ok(index)
+                if index
+                    .requests
+                    .iter()
+                    .any(|request| request.uses_project_code) =>
+            {
+                eprintln!(
+                    "error: project-owned code is disabled; inspect the project and rerun with --allow-project-code"
+                );
+                return 2;
+            }
+            Ok(_) => {}
+            Err(diagnostic) => {
+                eprintln!("error: {}", diagnostic.message);
+                return 2;
+            }
+        }
+    }
     let env = match reqv1::load_environment(&args.root, args.env.as_deref()) {
         Ok(e) => e,
         Err(diagnostic) => {
@@ -277,6 +388,149 @@ fn cmd_mock(args: &MockArgs) -> i32 {
     }
     serve_mock(&config, &server, &secret);
     0
+}
+
+fn cmd_migrate(args: &MigrateArgs) -> i32 {
+    let legacy: forge_core::model::RequestDef = match forge_core::store::load_json(&args.request) {
+        Ok(request) => request,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+    let stem = args
+        .request
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("request");
+    let id = stem.strip_suffix(".request").unwrap_or(stem);
+    let migrated = match forge_core::reqv1::migrate_request(&legacy, id) {
+        Ok(document) => document,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 1;
+        }
+    };
+    let mut json = match serde_json::to_string_pretty(&migrated) {
+        Ok(json) => json,
+        Err(error) => {
+            eprintln!("error: cannot serialize migrated request: {error}");
+            return 2;
+        }
+    };
+    json.push('\n');
+    match &args.output {
+        None => {
+            print!("{json}");
+            0
+        }
+        Some(path) if path.exists() => {
+            eprintln!("error: {} already exists", path.display());
+            2
+        }
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                if let Err(error) = std::fs::create_dir_all(parent) {
+                    eprintln!("error: cannot create {}: {error}", parent.display());
+                    return 2;
+                }
+            }
+            match std::fs::write(path, json) {
+                Ok(()) => {
+                    println!("wrote {}", path.display());
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: cannot write {}: {error}", path.display());
+                    2
+                }
+            }
+        }
+    }
+}
+
+fn cmd_migrate_all(args: &MigrateAllArgs) -> i32 {
+    use forge_core::reqv1::MigrationStatus;
+
+    let report =
+        match forge_core::reqv1::migrate_tree(&args.source, &args.destination, args.dry_run) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("error: cannot scan {}: {error}", args.source.display());
+                return 2;
+            }
+        };
+    let mut blocked = false;
+    for item in &report {
+        let status = match item.status {
+            MigrationStatus::Ready => "READY",
+            MigrationStatus::Migrated => "MIGRATED",
+            MigrationStatus::Blocked => {
+                blocked = true;
+                "BLOCKED"
+            }
+            MigrationStatus::Exists => {
+                blocked = true;
+                "EXISTS"
+            }
+        };
+        println!(
+            "{status} {} -> {} — {}",
+            item.source.display(),
+            item.target.display(),
+            item.message
+        );
+    }
+    if report.is_empty() {
+        println!("no legacy request files found");
+    }
+    if blocked {
+        1
+    } else {
+        0
+    }
+}
+
+fn cmd_export(args: &ExportArgs) -> i32 {
+    use forge_core::reqv1::{export_bundle, BundleFormat};
+
+    let root = v1_root_for(&args.source, args.root.as_deref());
+    let format = match args.format {
+        ExportKind::Json => BundleFormat::Json,
+        ExportKind::Curl => BundleFormat::Curl,
+    };
+    match export_bundle(&root, &args.source, format, &args.output) {
+        Ok(summary) => {
+            println!(
+                "exported {} request(s), {} file(s) to {}",
+                summary.requests,
+                summary.files,
+                summary.output.display()
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            2
+        }
+    }
+}
+
+fn cmd_import(args: &ImportArgs) -> i32 {
+    match forge_core::reqv1::import_bundle(&args.bundle, &args.destination) {
+        Ok(summary) => {
+            println!(
+                "imported {} file(s) below {}",
+                summary.files.len(),
+                args.destination.display()
+            );
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            2
+        }
+    }
 }
 
 fn serve_mock(
@@ -384,18 +638,7 @@ fn cmd_assets(args: &AssetsArgs) -> i32 {
 /// either source; .env.local wins on collision (declared order, no implicit
 /// precedence beyond it).
 fn make_secret_provider(root: &Path) -> impl Fn(&str) -> Option<String> {
-    let mut file_vars = std::collections::HashMap::new();
-    if let Ok(text) = std::fs::read_to_string(root.join(".env.local")) {
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((k, v)) = line.split_once('=') {
-                file_vars.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
-            }
-        }
-    }
+    let file_vars = forge_core::reqv1::load_file_secrets(root);
     move |name: &str| {
         file_vars
             .get(name)
@@ -414,7 +657,11 @@ fn v1_root_for(request: &Path, root_override: Option<&Path>) -> PathBuf {
     if let Some(root) = root_override {
         return root.to_path_buf();
     }
-    let mut dir = request.parent().map(Path::to_path_buf);
+    let mut dir = if request.is_dir() {
+        Some(request.to_path_buf())
+    } else {
+        request.parent().map(Path::to_path_buf)
+    };
     while let Some(d) = dir {
         if d.join("project.json").exists() {
             return d;
@@ -427,21 +674,14 @@ fn v1_root_for(request: &Path, root_override: Option<&Path>) -> PathBuf {
 fn cmd_validate(args: &V1Args) -> i32 {
     use forge_core::reqv1;
     let root = v1_root(args);
-    let text = match std::fs::read_to_string(&args.request) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("error: cannot read {}: {e}", args.request.display());
-            return 2;
-        }
-    };
-    let doc = match reqv1::RequestDocument::parse(&text) {
+    let doc = match reqv1::load_request_document(&args.request) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("error: invalid request document: {e}");
+            eprintln!("error: {e}");
             return 2;
         }
     };
-    let env = match reqv1::load_environment(&root, args.env.as_deref()) {
+    let env = match reqv1::load_request_environment(&root, &args.request, args.env.as_deref()) {
         Ok(e) => e,
         Err(d) => {
             eprintln!("error: {}", d.message);
@@ -474,6 +714,40 @@ fn cmd_validate(args: &V1Args) -> i32 {
     }
 }
 
+async fn cmd_run_sequence(args: V1SequenceRunArgs) -> i32 {
+    let root = v1_root_for(&args.sequence, args.root.as_deref());
+    let text = match std::fs::read_to_string(&args.sequence) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("error: cannot read {}: {error}", args.sequence.display());
+            return 2;
+        }
+    };
+    let sequence = match forge_core::reqv1::SequenceDocument::parse(&text) {
+        Ok(sequence) => sequence,
+        Err(error) => {
+            eprintln!("error: invalid sequence: {error}");
+            return 2;
+        }
+    };
+    let requests = match sequence.resolve_files(&root) {
+        Ok(requests) => requests,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+    cmd_run_v1(V1RunArgs {
+        requests,
+        root: Some(root),
+        env: args.env,
+        mock: args.mock,
+        frozen: args.frozen,
+        allow_project_code: args.allow_project_code,
+    })
+    .await
+}
+
 async fn cmd_run_v1(args: V1RunArgs) -> i32 {
     use forge_core::exec::HttpEngine;
     use forge_core::reqv1::{self, RunMode, RunResult, RunStatus};
@@ -481,6 +755,56 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
 
     let first = &args.requests[0];
     let root = v1_root_for(first, args.root.as_deref());
+
+    let mut documents = Vec::with_capacity(args.requests.len());
+    for request in &args.requests {
+        let document = match reqv1::load_request_document(request) {
+            Ok(document) => document,
+            Err(error) => {
+                eprintln!("error: {error}");
+                return 2;
+            }
+        };
+        if !args.allow_project_code && document.uses_project_code() {
+            eprintln!(
+                "error: {} executes project-owned code; inspect it and rerun with --allow-project-code",
+                request.display()
+            );
+            return 2;
+        }
+        documents.push(document);
+    }
+    if !args.allow_project_code {
+        match reqv1::load_project_auth_document(&root) {
+            Ok(Some((request, document))) if document.uses_project_code() => {
+                eprintln!(
+                    "error: auth request {} executes project-owned code; inspect it and rerun with --allow-project-code",
+                    request.display()
+                );
+                return 2;
+            }
+            Ok(_) => {}
+            Err(diagnostic) => {
+                eprintln!("error: {}", diagnostic.message);
+                return 2;
+            }
+        }
+    }
+
+    if args.requests.len() > 1 {
+        if let Some((request, _)) = args
+            .requests
+            .iter()
+            .zip(&documents)
+            .find(|(_, document)| !document.matrix.is_empty())
+        {
+            eprintln!(
+                "error: {} has a matrix; run it separately because matrix × sequence semantics are not defined",
+                request.display()
+            );
+            return 2;
+        }
+    }
 
     if args.frozen {
         match reqv1::Lockfile::read(&root).and_then(|l| l.verify(&root)) {
@@ -499,10 +823,15 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
         }
     }
 
-    let env = match reqv1::load_environment(&root, args.env.as_deref()) {
-        Ok(e) => e,
-        Err(d) => {
-            eprintln!("error: {}", d.message);
+    let environments = match args
+        .requests
+        .iter()
+        .map(|request| reqv1::load_request_environment(&root, request, args.env.as_deref()))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(environments) => environments,
+        Err(diagnostic) => {
+            eprintln!("error: {}", diagnostic.message);
             return 2;
         }
     };
@@ -516,37 +845,36 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
 
     // Multiple files run as a sequence (runtime threaded forward); a single
     // file goes through run_matrix so matrix documents expand.
-    let results: Vec<RunResult> = if args.requests.len() > 1 {
-        reqv1::run_sequence(
+    let results: Vec<(Option<reqv1::MatrixCase>, RunResult)> = if args.requests.len() > 1 {
+        let auth = reqv1::AuthSession::default();
+        let sequence = match reqv1::run_sequence_with_environment_values_in_session(
             &args.requests,
             &root,
-            env,
+            &environments,
             &secret,
             &engine,
             mode,
             CancellationToken::new(),
+            &auth,
         )
         .await
+        {
+            Ok(sequence) => sequence,
+            Err(diagnostic) => {
+                eprintln!("error: {}", diagnostic.message);
+                return 2;
+            }
+        };
+        sequence
+            .into_iter()
+            .map(|(result, _)| (None, result))
+            .collect()
     } else {
-        let text = match std::fs::read_to_string(first) {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("error: cannot read {}: {e}", first.display());
-                return 2;
-            }
-        };
-        let doc = match reqv1::RequestDocument::parse(&text) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("error: invalid request document: {e}");
-                return 2;
-            }
-        };
         match reqv1::run_matrix(
-            &doc,
+            &documents[0],
             &root,
             first,
-            env,
+            environments[0].clone(),
             &secret,
             &engine,
             mode,
@@ -554,7 +882,10 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
         )
         .await
         {
-            Ok(cases) => cases.into_iter().map(|(_, r)| r).collect(),
+            Ok(cases) => cases
+                .into_iter()
+                .map(|(matrix, result)| (Some(matrix), result))
+                .collect(),
             Err(errs) => {
                 for d in &errs.0 {
                     let loc = d.instance_path.as_deref().unwrap_or("");
@@ -567,9 +898,15 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
 
     let multi = results.len() > 1;
     let mut worst = RunStatus::Passed;
-    for result in &results {
+    for (matrix, result) in &results {
         if multi {
             println!("--- {}", result.request_id);
+        }
+        if let Some(matrix) = matrix {
+            println!(
+                "  matrix: {}",
+                serde_json::to_string(matrix).unwrap_or_else(|_| "{}".to_string())
+            );
         }
         if let Some(http) = &result.http {
             println!(

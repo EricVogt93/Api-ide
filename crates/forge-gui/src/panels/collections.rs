@@ -172,9 +172,13 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     };
     let git_color_of = |s: crate::git::FileStatus| -> egui::Color32 {
         match s {
-            crate::git::FileStatus::Modified => egui::Color32::from_rgb(0x4A, 0x90, 0xD9),
+            crate::git::FileStatus::Modified | crate::git::FileStatus::StagedModified => {
+                egui::Color32::from_rgb(0x4A, 0x90, 0xD9)
+            }
             crate::git::FileStatus::Untracked => egui::Color32::from_rgb(0xD9, 0xA3, 0x43),
-            crate::git::FileStatus::Added => egui::Color32::from_rgb(0x59, 0xA8, 0x69),
+            crate::git::FileStatus::Added | crate::git::FileStatus::Staged => {
+                egui::Color32::from_rgb(0x59, 0xA8, 0x69)
+            }
             crate::git::FileStatus::Conflicted => egui::Color32::from_rgb(0xDB, 0x5C, 0x5C),
         }
     };
@@ -497,14 +501,18 @@ fn git_menu(
         return;
     };
     ui.separator();
-    if matches!(status, F::Untracked | F::Modified | F::Conflicted)
-        && ui.button("Git: Add").clicked()
+    if matches!(
+        status,
+        F::Untracked | F::Modified | F::StagedModified | F::Conflicted
+    ) && ui.button("Git: Add").clicked()
     {
         *git_add = Some(path.to_path_buf());
         ui.close();
     }
-    if matches!(status, F::Modified | F::Added | F::Conflicted)
-        && ui.button("Git: Revert Changes\u{2026}").clicked()
+    if matches!(
+        status,
+        F::Modified | F::Added | F::Staged | F::StagedModified | F::Conflicted
+    ) && ui.button("Git: Revert Changes\u{2026}").clicked()
     {
         *new_pending = Some(PendingAction::GitRevert(
             path.to_path_buf(),
@@ -522,7 +530,7 @@ fn git_menu(
 }
 
 /// Render whatever modal `state.collections.pending` currently calls for.
-fn show_modals(ui: &mut Ui, state: &mut AppState) {
+pub(crate) fn show_modals(ui: &mut Ui, state: &mut AppState) {
     let ctx = ui.ctx().clone();
     let Some(pending) = state.collections.pending.take() else {
         return;
@@ -600,7 +608,11 @@ fn show_modals(ui: &mut Ui, state: &mut AppState) {
 
 fn apply_pending(state: &mut AppState, pending: PendingAction) {
     let name = state.collections.pending_input.trim().to_string();
-    let root = state.workspace.as_ref().map(|w| w.root.clone());
+    let root = state
+        .workspace
+        .as_ref()
+        .map(|workspace| workspace.root.clone())
+        .or_else(|| state.assets.project_root());
 
     let result: Result<Option<(String, String, String)>, String> = (|| {
         match &pending {

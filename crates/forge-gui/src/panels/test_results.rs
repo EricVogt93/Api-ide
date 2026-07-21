@@ -303,7 +303,7 @@ fn toolbar(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         if ui
             .add_enabled(
                 can_rerun,
-                egui::Button::new(format!("{} Re-run", crate::theme::icons::PLAY)),
+                egui::Button::new(format!("{}  Re-run", crate::theme::icons::PLAY)),
             )
             .clicked()
         {
@@ -312,7 +312,7 @@ fn toolbar(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
 
         if state.run_log.is_running()
             && ui
-                .button(format!("{} Stop", crate::theme::icons::STOP))
+                .button(format!("{}  Stop", crate::theme::icons::STOP))
                 .clicked()
         {
             if let Some(run_id) = state.run_log.run_id {
