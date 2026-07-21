@@ -17,7 +17,7 @@
 <p align="center">
   <a href="https://github.com/EricVogt93/Api-ide/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/EricVogt93/Api-ide/actions/workflows/ci.yml/badge.svg?branch=development"></a>
   <a href="https://github.com/EricVogt93/Api-ide/actions/workflows/release.yml"><img alt="Release packages" src="https://github.com/EricVogt93/Api-ide/actions/workflows/release.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-4c8bf5.svg"></a>
+  <a href="LICENSE"><img alt="PolyForm Noncommercial License" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-4c8bf5.svg"></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-b7410e?logo=rust">
 </p>
 
@@ -238,4 +238,6 @@ GitHub Actions runs those checks on pull requests and builds the Windows EXE, Li
 
 ## License
 
-Forge is available under the [MIT License](LICENSE).
+Forge is free for personal and other noncommercial use under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use requires a
+separate paid license; see [Commercial Licensing](COMMERCIAL-LICENSE.md).

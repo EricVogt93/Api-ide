@@ -5,7 +5,7 @@ members = ["crates/forge-core", "crates/forge-gui", "crates/forge-cli"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 repository = "https://github.com/EricVogt93/Api-ide"
 
 [workspace.dependencies]
