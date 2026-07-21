@@ -182,12 +182,18 @@ The `forge` binary is suitable for local scripts and CI:
 ```sh
 cargo run -p forge-cli -- validate requests/users/get.request.json --root .
 cargo run -p forge-cli -- run-v1 requests/users/get.request.json --root .
+cargo run -p forge-cli -- ci requests/checkout --root .
+cargo run -p forge-cli -- ci --regression --root .
 cargo run -p forge-cli -- run-sequence smoke.sequence.json --root .
 cargo run -p forge-cli -- assets .
 cargo run -p forge-cli -- export requests/users --format json -o users.forge.json
 cargo run -p forge-cli -- export requests/users/get.request.json --format curl -o get-user.sh
 cargo run -p forge-cli -- import users.forge.json requests
 ```
+
+`forge ci` accepts absolute or project-relative request files and folders and always executes the resolved requests as independent tests in stable path order. Mark a request as **Regression test** in its Project-view Properties; `forge ci --regression --root .` then executes only those marked requests and returns CI-friendly exit codes (`0` passed, `1` assertion failure, `2` configuration or execution error). `run-v1` remains available for interactive single requests and explicit multi-file sequences.
+
+Forge checks the latest published GitHub Release at startup. A newer version opens a changelog dialog where it can be downloaded or skipped; downloaded packages are SHA-256 verified before the platform update flow starts. The release workflow publishes updates from version tags matching the Cargo version, such as `v0.2.0`.
 
 Legacy `forge.json` workspaces remain runnable through `forge run`, and `forge migrate` / `forge migrate-all` convert them without silently dropping unsupported fields.
 

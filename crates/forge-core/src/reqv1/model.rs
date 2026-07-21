@@ -54,6 +54,22 @@ pub struct RequestMeta {
     pub tags: Vec<String>,
 }
 
+impl RequestMeta {
+    pub fn is_regression(&self) -> bool {
+        self.tags
+            .iter()
+            .any(|tag| tag.eq_ignore_ascii_case("regression"))
+    }
+
+    pub fn set_regression(&mut self, enabled: bool) {
+        self.tags
+            .retain(|tag| !tag.eq_ignore_ascii_case("regression"));
+        if enabled {
+            self.tags.push("regression".to_string());
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestSpec {
@@ -374,6 +390,21 @@ mod tests {
         let doc = r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x"},
             "request":{"method":"GET","url":"http://x"},"auth":{}}"#;
         assert!(RequestDocument::parse(doc).is_err());
+    }
+
+    #[test]
+    fn regression_flag_uses_the_existing_metadata_tags() {
+        let mut document = RequestDocument::parse(
+            r#"{"formatVersion":1,"kind":"request","meta":{"id":"x","name":"x","tags":["smoke"]},
+                "request":{"method":"GET","url":"http://x"}}"#,
+        )
+        .unwrap();
+
+        document.meta.set_regression(true);
+        assert!(document.meta.is_regression());
+        assert_eq!(document.meta.tags, ["smoke", "regression"]);
+        document.meta.set_regression(false);
+        assert_eq!(document.meta.tags, ["smoke"]);
     }
 
     #[test]

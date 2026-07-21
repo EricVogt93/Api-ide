@@ -2099,6 +2099,7 @@ dependencies = [
  "clap",
  "forge-core",
  "serde_json",
+ "tempfile",
  "tiny_http",
  "tokio",
 ]
@@ -2181,12 +2182,15 @@ dependencies = [
  "open",
  "reqwest 0.13.1",
  "rfd",
+ "semver",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "tokio",
  "tokio-util",
  "url",
+ "wiremock",
 ]
 
 [[package]]

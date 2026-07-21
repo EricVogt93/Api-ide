@@ -32,6 +32,7 @@ pub struct ForgeApp {
     state: AppState,
     bridge: Bridge,
     window_icon_theme: Option<egui::Theme>,
+    next_update_check: std::time::Instant,
 }
 
 impl ForgeApp {
@@ -43,6 +44,8 @@ impl ForgeApp {
             state: AppState::new(),
             bridge,
             window_icon_theme: None,
+            next_update_check: std::time::Instant::now()
+                + std::time::Duration::from_secs(4 * 60 * 60),
         };
         if let Some(path) = initial_workspace {
             match Workspace::load(&path) {
@@ -85,6 +88,7 @@ impl ForgeApp {
         if std::env::var("FORGE_SEND").is_ok() {
             request_editor::send_active(&mut app.state, &app.bridge);
         }
+        app.state.dialogs.update.check(&app.bridge, false);
         app
     }
 
@@ -290,6 +294,10 @@ impl ForgeApp {
                     .dialogs
                     .v1_editor
                     .handle_advisor(advisor_id, result),
+                Evt::UpdateChecked { manual, result } => {
+                    self.state.dialogs.update.handle_check(manual, result)
+                }
+                Evt::UpdateDownloaded(result) => self.state.dialogs.update.handle_download(result),
             }
         }
     }
@@ -665,6 +673,16 @@ impl ForgeApp {
                 }
             });
             ui.menu_button("Help", |ui| {
+                if ui
+                    .add_enabled(
+                        !self.state.dialogs.update.checking,
+                        egui::Button::new("Check for updates…"),
+                    )
+                    .clicked()
+                {
+                    self.state.dialogs.update.check(&self.bridge, true);
+                    ui.close();
+                }
                 if ui.button("About Forge").clicked() {
                     self.state.dialogs.about_open = true;
                     ui.close();
@@ -1144,6 +1162,11 @@ impl ForgeApp {
 impl eframe::App for ForgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.sync_window_icon(ui.ctx());
+        if std::time::Instant::now() >= self.next_update_check {
+            self.state.dialogs.update.check(&self.bridge, false);
+            self.next_update_check =
+                std::time::Instant::now() + std::time::Duration::from_secs(4 * 60 * 60);
+        }
         self.drain_bridge_events();
         if let Some(ws) = self.state.pending_workspace.take() {
             self.switch_workspace(ws, ui.ctx());

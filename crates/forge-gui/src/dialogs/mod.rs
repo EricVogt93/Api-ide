@@ -45,6 +45,7 @@ pub struct DialogManager {
     pub hooks_editor: hooks_editor::HooksEditorState,
     pub grpc_call: grpc_call::GrpcCallState,
     pub v1_editor: v1_editor::V1EditorState,
+    pub update: crate::updater::UpdateState,
 }
 
 /// Render whichever overlay dialogs are currently open. Call once per frame;
@@ -63,6 +64,7 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     env_editor::show(ctx, state);
     hooks_editor::show(ctx, state);
     grpc_call::show(ctx, state, bridge);
+    crate::updater::show(ctx, &mut state.dialogs.update, bridge);
 }
 
 /// Detect the global dialog-opening gestures that don't fit a single

@@ -52,7 +52,7 @@ webpki-roots = "1.0.8"
 rustls-pemfile = "2.2.0"
 ntlmclient = "0.2.0"
 json-patch = "4"
-sha2 = "0.11.0"
+sha2.workspace = true
 
 [dev-dependencies]
 wiremock.workspace = true

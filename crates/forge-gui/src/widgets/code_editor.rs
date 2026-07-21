@@ -33,6 +33,8 @@ pub struct EditorDiagnostic {
     pub message: String,
 }
 
+pub const CODE_MINIMAP_WIDTH: f32 = 96.0;
+
 struct Palette {
     string: Color32,
     number: Color32,
@@ -258,26 +260,26 @@ pub fn code_editor_numbered_diagnostic(
 
 /// Compact, non-interactive overview of the current document.
 pub fn code_minimap(ui: &mut Ui, text: &str, diagnostic: Option<&EditorDiagnostic>, height: f32) {
-    let width = 62.0;
+    let width = CODE_MINIMAP_WIDTH;
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(width, height.max(1.0)), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     let lines: Vec<_> = text.lines().collect();
     let count = lines.len().max(1);
-    let row = (rect.height() / count as f32).clamp(1.0, 3.0);
+    let row = (rect.height() / count as f32).clamp(1.25, 4.0);
     let color = ui.visuals().weak_text_color().gamma_multiply(0.55);
     for (index, line) in lines.iter().enumerate() {
         let y = rect.top() + index as f32 * row;
         if y > rect.bottom() {
             break;
         }
-        let fraction = (line.trim().chars().count().min(100) as f32 / 100.0).max(0.08);
+        let fraction = (line.trim().chars().count().min(56) as f32 / 56.0).max(0.12);
         painter.line_segment(
             [
                 egui::pos2(rect.left() + 3.0, y),
                 egui::pos2(rect.left() + 3.0 + fraction * (width - 7.0), y),
             ],
-            Stroke::new(row.min(2.0), color),
+            Stroke::new(row.min(2.5), color),
         );
     }
     if let Some(diagnostic) = diagnostic {

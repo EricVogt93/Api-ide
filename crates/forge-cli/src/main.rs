@@ -36,6 +36,8 @@ enum Command {
     Validate(V1Args),
     /// Request-format v1: run a request document.
     RunV1(V1RunArgs),
+    /// CI/CD: run request files, recursive folders, or the regression set.
+    Ci(V1RunArgs),
     /// Request-format v1: run a persisted ordered sequence.
     RunSequence(V1SequenceRunArgs),
     /// Request-format v1: list the project's asset store (usage, broken refs).
@@ -150,13 +152,16 @@ struct V1Args {
 
 #[derive(Args)]
 struct V1RunArgs {
-    /// One or more `*.request.json` documents. Multiple files run as a
-    /// sequence, threading extracted `${runtime.*}` forward.
-    #[arg(required = true)]
-    requests: Vec<PathBuf>,
-    /// Project root (holds project.json); defaults to walking up from the first request.
+    /// One or more `*.request.json` files or folders. Folders are scanned
+    /// recursively and their requests run independently in stable path order.
+    targets: Vec<PathBuf>,
+    /// Project root (holds project.json); defaults to walking up from the first target.
     #[arg(long)]
     root: Option<PathBuf>,
+    /// Run only requests whose Properties mark them as regression tests.
+    /// With no target, scans `<root>/requests` (or the current project).
+    #[arg(long)]
+    regression: bool,
     /// Environment name under environments/.
     #[arg(long = "env")]
     env: Option<String>,
@@ -273,7 +278,8 @@ async fn main() {
         Command::Grpc(GrpcCommand::List(args)) => cmd_grpc_list(&args),
         Command::Grpc(GrpcCommand::Call(args)) => cmd_grpc_call(args).await,
         Command::Validate(args) => cmd_validate(&args),
-        Command::RunV1(args) => cmd_run_v1(args).await,
+        Command::RunV1(args) => cmd_run_v1(args, false).await,
+        Command::Ci(args) => cmd_run_v1(args, true).await,
         Command::RunSequence(args) => cmd_run_sequence(args).await,
         Command::Assets(args) => cmd_assets(&args),
         Command::Lock(args) => cmd_lock(&args),
@@ -737,27 +743,43 @@ async fn cmd_run_sequence(args: V1SequenceRunArgs) -> i32 {
             return 2;
         }
     };
-    cmd_run_v1(V1RunArgs {
-        requests,
-        root: Some(root),
-        env: args.env,
-        mock: args.mock,
-        frozen: args.frozen,
-        allow_project_code: args.allow_project_code,
-    })
+    cmd_run_v1(
+        V1RunArgs {
+            targets: requests,
+            root: Some(root),
+            regression: false,
+            env: args.env,
+            mock: args.mock,
+            frozen: args.frozen,
+            allow_project_code: args.allow_project_code,
+        },
+        false,
+    )
     .await
 }
 
-async fn cmd_run_v1(args: V1RunArgs) -> i32 {
+async fn cmd_run_v1(args: V1RunArgs, force_batch: bool) -> i32 {
     use forge_core::exec::HttpEngine;
     use forge_core::reqv1::{self, RunMode, RunResult, RunStatus};
     use forge_core::runner::CancellationToken;
 
-    let first = &args.requests[0];
-    let root = v1_root_for(first, args.root.as_deref());
+    let selection = match resolve_v1_targets(&args.targets, args.root.as_deref(), args.regression) {
+        Ok(selection) => selection,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return 2;
+        }
+    };
+    let V1TargetSelection {
+        root,
+        requests,
+        mut batch,
+    } = selection;
+    batch |= force_batch;
+    let first = &requests[0];
 
-    let mut documents = Vec::with_capacity(args.requests.len());
-    for request in &args.requests {
+    let mut documents = Vec::with_capacity(requests.len());
+    for request in &requests {
         let document = match reqv1::load_request_document(request) {
             Ok(document) => document,
             Err(error) => {
@@ -791,9 +813,8 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
         }
     }
 
-    if args.requests.len() > 1 {
-        if let Some((request, _)) = args
-            .requests
+    if !batch && requests.len() > 1 {
+        if let Some((request, _)) = requests
             .iter()
             .zip(&documents)
             .find(|(_, document)| !document.matrix.is_empty())
@@ -823,8 +844,7 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
         }
     }
 
-    let environments = match args
-        .requests
+    let environments = match requests
         .iter()
         .map(|request| reqv1::load_request_environment(&root, request, args.env.as_deref()))
         .collect::<Result<Vec<_>, _>>()
@@ -845,10 +865,47 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
 
     // Multiple files run as a sequence (runtime threaded forward); a single
     // file goes through run_matrix so matrix documents expand.
-    let results: Vec<(Option<reqv1::MatrixCase>, RunResult)> = if args.requests.len() > 1 {
+    let results: Vec<(Option<reqv1::MatrixCase>, RunResult)> = if batch {
+        let auth = reqv1::AuthSession::default();
+        let mut batch = Vec::new();
+        for ((request, document), environment) in requests.iter().zip(&documents).zip(&environments)
+        {
+            let cases = match reqv1::run_matrix_with_responses_in_session(
+                document,
+                &root,
+                request,
+                environment.clone(),
+                &secret,
+                &engine,
+                mode,
+                CancellationToken::new(),
+                &auth,
+            )
+            .await
+            {
+                Ok(cases) => cases,
+                Err(errors) => {
+                    for diagnostic in &errors.0 {
+                        let location = diagnostic.instance_path.as_deref().unwrap_or("");
+                        eprintln!(
+                            "  [{}] {} {}",
+                            diagnostic.code, location, diagnostic.message
+                        );
+                    }
+                    return 2;
+                }
+            };
+            batch.extend(
+                cases
+                    .into_iter()
+                    .map(|(matrix, result, _)| (Some(matrix), result)),
+            );
+        }
+        batch
+    } else if requests.len() > 1 {
         let auth = reqv1::AuthSession::default();
         let sequence = match reqv1::run_sequence_with_environment_values_in_session(
-            &args.requests,
+            &requests,
             &root,
             &environments,
             &secret,
@@ -935,6 +992,132 @@ async fn cmd_run_v1(args: V1RunArgs) -> i32 {
         RunStatus::Failed => 1,
         RunStatus::Error => 2,
     }
+}
+
+struct V1TargetSelection {
+    root: PathBuf,
+    requests: Vec<PathBuf>,
+    batch: bool,
+}
+
+fn resolve_v1_targets(
+    targets: &[PathBuf],
+    root_override: Option<&Path>,
+    regression_only: bool,
+) -> Result<V1TargetSelection, String> {
+    if targets.is_empty() && !regression_only {
+        return Err("provide a request file or folder, or use --regression".to_string());
+    }
+    let seed = targets
+        .first()
+        .cloned()
+        .or_else(|| root_override.map(Path::to_path_buf))
+        .unwrap_or(std::env::current_dir().map_err(|error| error.to_string())?);
+    let root_seed = if seed.is_absolute() {
+        seed
+    } else {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(seed)
+    };
+    let root = v1_root_for(&root_seed, root_override);
+    if !root.join("project.json").is_file() {
+        return Err(format!("{} is not a Forge project", root.display()));
+    }
+    let effective_targets = if targets.is_empty() {
+        vec![root.join("requests")]
+    } else {
+        targets
+            .iter()
+            .map(|target| {
+                if target.is_absolute() {
+                    target.clone()
+                } else {
+                    root.join(target)
+                }
+            })
+            .collect()
+    };
+    let batch = regression_only || effective_targets.iter().any(|target| target.is_dir());
+    let mut requests = Vec::new();
+    for target in &effective_targets {
+        collect_v1_requests(target, &mut requests)?;
+    }
+    requests.sort();
+    requests.dedup();
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot access project {}: {error}", root.display()))?;
+    for request in &requests {
+        let canonical_request = request
+            .canonicalize()
+            .map_err(|error| format!("cannot access {}: {error}", request.display()))?;
+        if !canonical_request.starts_with(&canonical_root) {
+            return Err(format!(
+                "{} is outside project {}",
+                request.display(),
+                root.display()
+            ));
+        }
+    }
+    if regression_only {
+        let mut regression = Vec::new();
+        for request in requests {
+            let document = forge_core::reqv1::load_request_document(&request)?;
+            if document.meta.is_regression() {
+                regression.push(request);
+            }
+        }
+        requests = regression;
+    }
+    if requests.is_empty() {
+        return Err(if regression_only {
+            "no regression-marked request documents matched the selected scope".to_string()
+        } else {
+            "no request documents matched the selected scope".to_string()
+        });
+    }
+    Ok(V1TargetSelection {
+        root,
+        requests,
+        batch,
+    })
+}
+
+fn collect_v1_requests(target: &Path, requests: &mut Vec<PathBuf>) -> Result<(), String> {
+    if target.is_file() {
+        if is_v1_request_file(target) {
+            requests.push(target.to_path_buf());
+            return Ok(());
+        }
+        return Err(format!("{} is not a *.request.json file", target.display()));
+    }
+    if !target.is_dir() {
+        return Err(format!("{} does not exist", target.display()));
+    }
+    let entries = std::fs::read_dir(target)
+        .map_err(|error| format!("cannot scan {}: {error}", target.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("cannot scan {}: {error}", target.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            collect_v1_requests(&entry.path(), requests)?;
+        } else if file_type.is_file() && is_v1_request_file(&entry.path()) {
+            requests.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn is_v1_request_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".request.json"))
 }
 
 fn cmd_grpc_list(args: &GrpcListArgs) -> i32 {
@@ -1164,5 +1347,116 @@ fn parse_data_source(path: &Path) -> anyhow::Result<DataSource> {
             "unsupported data file extension (expected .csv or .json): {}",
             path.display()
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_request(path: &Path, regression: bool) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let tags = if regression {
+            r#", "tags": ["regression"]"#
+        } else {
+            ""
+        };
+        std::fs::write(
+            path,
+            format!(
+                r#"{{"formatVersion":1,"kind":"request","meta":{{"id":"x","name":"x"{tags}}},"request":{{"method":"GET","url":"http://example.test"}}}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn folder_targets_are_recursive_sorted_batches() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("project.json"), "{}").unwrap();
+        write_request(&project.path().join("requests/story/z.request.json"), false);
+        write_request(&project.path().join("requests/a.request.json"), false);
+
+        let selection = resolve_v1_targets(
+            &[project.path().join("requests")],
+            Some(project.path()),
+            false,
+        )
+        .unwrap();
+        assert!(selection.batch);
+        assert!(selection.requests[0].ends_with("requests/a.request.json"));
+        assert!(selection.requests[1].ends_with("requests/story/z.request.json"));
+    }
+
+    #[test]
+    fn relative_targets_are_resolved_from_the_explicit_project_root() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("project.json"), "{}").unwrap();
+        write_request(&project.path().join("requests/story/a.request.json"), false);
+
+        let selection = resolve_v1_targets(
+            &[PathBuf::from("requests/story")],
+            Some(project.path()),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(selection.requests.len(), 1);
+        assert!(selection.requests[0].ends_with("requests/story/a.request.json"));
+    }
+
+    #[test]
+    fn regression_mode_selects_only_marked_requests() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("project.json"), "{}").unwrap();
+        write_request(
+            &project.path().join("requests/regression.request.json"),
+            true,
+        );
+        write_request(&project.path().join("requests/other.request.json"), false);
+
+        let selection = resolve_v1_targets(&[], Some(project.path()), true).unwrap();
+        assert_eq!(selection.requests.len(), 1);
+        assert!(selection.requests[0].ends_with("regression.request.json"));
+    }
+
+    #[tokio::test]
+    async fn ci_folder_executes_the_filtered_mock_suite() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(
+            project.path().join("project.json"),
+            r#"{"formatVersion":1,"aliases":{},"secrets":[]}"#,
+        )
+        .unwrap();
+        write_request(
+            &project.path().join("requests/regression.request.json"),
+            true,
+        );
+        let request = project.path().join("requests/regression.request.json");
+        let mut document = forge_core::reqv1::load_request_document(&request).unwrap();
+        document.mock = Some(forge_core::reqv1::model::MockDef::Static(
+            forge_core::reqv1::model::StaticMock {
+                status: 200,
+                headers: Vec::new(),
+                body: None,
+                delay_ms: None,
+            },
+        ));
+        std::fs::write(&request, serde_json::to_string_pretty(&document).unwrap()).unwrap();
+
+        let code = cmd_run_v1(
+            V1RunArgs {
+                targets: vec![project.path().join("requests")],
+                root: Some(project.path().to_path_buf()),
+                regression: true,
+                env: None,
+                mock: true,
+                frozen: false,
+                allow_project_code: false,
+            },
+            true,
+        )
+        .await;
+        assert_eq!(code, 0);
     }
 }

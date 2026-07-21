@@ -62,6 +62,7 @@ pub struct AssetsState {
     properties_target: Option<PathBuf>,
     properties_environment: Option<String>,
     properties_openapi: String,
+    properties_regression: bool,
 }
 
 impl AssetsState {
@@ -1137,6 +1138,7 @@ fn handle_project_action(action: ProjectAction, state: &mut AppState) {
                 .ok()
                 .flatten()
                 .unwrap_or_default();
+            state.assets.properties_regression = request_regression(&target).unwrap_or(false);
             state.assets.properties_target = Some(target);
         }
         ProjectAction::Open(directory) => {
@@ -1392,6 +1394,8 @@ fn properties_dialog(ctx: &egui::Context, state: &mut AppState) {
         .filter(|selection| selection.source != target);
     let previous_environment = state.assets.properties_environment.clone();
     let mut selected_environment = previous_environment.clone();
+    let previous_regression = state.assets.properties_regression;
+    let mut selected_regression = previous_regression;
     let mut open = true;
     let mut close = false;
     let mut open_folder = false;
@@ -1499,6 +1503,13 @@ fn properties_dialog(ctx: &egui::Context, state: &mut AppState) {
                     }
                 }
             }
+            if is_request_file(&target) {
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
+                ui.checkbox(&mut selected_regression, "Regression test")
+                    .on_hover_text("Included by `forge ci --regression` in CI.");
+            }
             ui.add_space(10.0);
             ui.separator();
             ui.horizontal(|ui| {
@@ -1555,6 +1566,35 @@ fn properties_dialog(ctx: &egui::Context, state: &mut AppState) {
             Err(error) => state.status = Some(StatusMessage::error(error)),
         }
     }
+    if selected_regression != previous_regression {
+        let result = state
+            .dialogs
+            .v1_editor
+            .set_regression(&target, selected_regression)
+            .and_then(|updated_open_editor| {
+                if updated_open_editor {
+                    Ok(())
+                } else {
+                    set_request_regression(&target, selected_regression)
+                }
+            });
+        match result {
+            Ok(()) => {
+                state.assets.properties_regression = selected_regression;
+                state.assets.load(root.clone());
+                state.git.refresh(&root, true);
+                state.status = Some(StatusMessage::info(if selected_regression {
+                    "Request marked as regression test"
+                } else {
+                    "Regression mark removed"
+                }));
+            }
+            Err(error) => {
+                state.assets.properties_regression = previous_regression;
+                state.status = Some(StatusMessage::error(error));
+            }
+        }
+    }
     if open_folder {
         let location = if target.is_dir() {
             target.as_path()
@@ -1569,7 +1609,38 @@ fn properties_dialog(ctx: &egui::Context, state: &mut AppState) {
         state.assets.properties_target = None;
         state.assets.properties_environment = None;
         state.assets.properties_openapi.clear();
+        state.assets.properties_regression = false;
     }
+}
+
+fn request_regression(path: &Path) -> Result<bool, String> {
+    if !is_request_file(path) {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    forge_core::reqv1::RequestDocument::parse(&text)
+        .map(|document| document.meta.is_regression())
+        .map_err(|error| format!("invalid {}: {error}", path.display()))
+}
+
+fn is_request_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".request.json"))
+}
+
+fn set_request_regression(path: &Path, enabled: bool) -> Result<(), String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let mut document = forge_core::reqv1::RequestDocument::parse(&text)
+        .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+    document.meta.set_regression(enabled);
+    let mut text = serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
+    text.push('\n');
+    std::fs::write(path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }
 
 fn jira_link_dialog(ctx: &egui::Context, state: &mut AppState) {
@@ -2158,6 +2229,22 @@ mod tests {
             std::fs::read_to_string(target.path().join("data.json")).unwrap(),
             "existing"
         );
+    }
+
+    #[test]
+    fn request_properties_persist_the_regression_mark() {
+        let root = tempfile::tempdir().unwrap();
+        let request = root.path().join("get.request.json");
+        std::fs::write(
+            &request,
+            r#"{"formatVersion":1,"kind":"request","meta":{"id":"get","name":"Get"},"request":{"method":"GET","url":"https://example.test"}}"#,
+        )
+        .unwrap();
+
+        set_request_regression(&request, true).unwrap();
+        assert!(request_regression(&request).unwrap());
+        set_request_regression(&request, false).unwrap();
+        assert!(!request_regression(&request).unwrap());
     }
 
     #[test]

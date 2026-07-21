@@ -155,6 +155,12 @@ pub enum Cmd {
         question: String,
         context: String,
     },
+    CheckForUpdates {
+        manual: bool,
+    },
+    DownloadUpdate {
+        release: crate::updater::UpdateRelease,
+    },
     Shutdown,
 }
 
@@ -207,6 +213,11 @@ pub enum Evt {
         advisor_id: u64,
         result: Result<String, String>,
     },
+    UpdateChecked {
+        manual: bool,
+        result: Result<Option<crate::updater::UpdateRelease>, String>,
+    },
+    UpdateDownloaded(Result<crate::updater::DownloadedUpdate, String>),
 }
 
 /// Handle to the background bridge thread.
@@ -546,6 +557,24 @@ fn bridge_main(
                                 Err(error) => Err(error),
                             };
                         let _ = evt_tx.send(Evt::Advisor { advisor_id, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::CheckForUpdates { manual } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = crate::updater::check_for_update().await;
+                        let _ = evt_tx.send(Evt::UpdateChecked { manual, result });
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::DownloadUpdate { release } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = crate::updater::download_update(release).await;
+                        let _ = evt_tx.send(Evt::UpdateDownloaded(result));
                         ctx.request_repaint();
                     });
                 }

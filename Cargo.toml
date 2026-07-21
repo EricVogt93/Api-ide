@@ -70,6 +70,8 @@ quick-xml = "0.38"
 quick-junit = "0.6"
 similar = "3"
 cookie = "0.18"
+semver = "1"
+sha2 = "0.11"
 # fs
 tempfile = "3"
 walkdir = "2"

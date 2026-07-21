@@ -9,6 +9,7 @@ mod local;
 mod panels;
 mod state;
 mod theme;
+mod updater;
 mod widgets;
 
 mod dialogs;

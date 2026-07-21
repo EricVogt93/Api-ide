@@ -329,6 +329,11 @@ export interface JsonPatchOperation {
 }
 ```
 
+The Properties checkbox **Regression test** is represented by the canonical
+`"regression"` entry in `meta.tags`. This keeps GUI selection and
+`forge ci --regression` on the same persisted metadata without a parallel
+sidecar flag.
+
 Semantics:
 
 - `value` — a request-local literal.

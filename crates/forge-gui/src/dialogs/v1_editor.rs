@@ -29,6 +29,7 @@ use crate::state::AppState;
 use crate::theme::icons;
 use crate::widgets::code_editor::{
     code_editor_numbered, code_editor_numbered_diagnostic, code_minimap, EditorDiagnostic, Lang,
+    CODE_MINIMAP_WIDTH,
 };
 
 #[derive(Default)]
@@ -418,6 +419,26 @@ impl V1EditorState {
                 .file
                 .as_deref()
                 .is_some_and(|file| file.starts_with(directory))
+    }
+
+    pub fn set_regression(&mut self, file: &Path, enabled: bool) -> Result<bool, String> {
+        if self.file.as_deref() != Some(file) {
+            return Ok(false);
+        }
+        let mut document = forge_core::reqv1::RequestDocument::parse(&self.text)
+            .map_err(|error| format!("invalid request JSON: {error}"))?;
+        document.meta.set_regression(enabled);
+        self.text = serialize_request(&document)?;
+        self.dirty = true;
+        if save_now(self) {
+            Ok(true)
+        } else {
+            Err(self
+                .diagnostics
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "failed to save regression property".to_string()))
+        }
     }
 
     pub fn reload_clean_request_under(&mut self, directory: &Path) -> Result<(), String> {
@@ -1071,7 +1092,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                         (total_h * d.split_ratio).clamp(180.0, (total_h - 120.0).max(180.0));
                     ui.allocate_ui(egui::vec2(ui.available_width(), top_h), |ui| {
                         ui.label(RichText::new("REQUEST").small().strong().weak());
-                        let assist_height = if d.openapi.is_some() { 88.0 } else { 28.0 };
+                        let assist_height = request_editor_footer_height(d);
                         let editor_height = (ui.available_height() - assist_height).max(120.0);
                         let editor_content_height = (editor_height - 16.0).max(104.0);
                         let editor_frame = egui::Frame::NONE
@@ -1085,7 +1106,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, bridge: &Bridge) {
                                 let mut editor_response = None;
                                 egui_extras::StripBuilder::new(ui)
                                     .size(egui_extras::Size::remainder())
-                                    .size(egui_extras::Size::exact(66.0))
+                                    .size(egui_extras::Size::exact(CODE_MINIMAP_WIDTH))
                                     .horizontal(|mut strip| {
                                         strip.cell(|ui| {
                                             editor_response = Some(
@@ -3410,6 +3431,29 @@ fn format_request(d: &mut V1EditorState) {
     }
 }
 
+fn request_editor_footer_height(d: &V1EditorState) -> f32 {
+    let diagnostic_height = if d.json_diagnostic.is_some() {
+        28.0
+    } else {
+        0.0
+    };
+    let assist_height = if d.openapi_error.is_some() || d.openapi.is_none() {
+        28.0
+    } else if let (Some(spec), Some(document)) = (&d.openapi, &d.validated_document) {
+        let matched = spec
+            .find_operation(document.request.method, &document.request.url)
+            .is_some();
+        if matched || spec.suggest(&document.request.url).is_empty() {
+            28.0
+        } else {
+            64.0
+        }
+    } else {
+        0.0
+    };
+    diagnostic_height + assist_height
+}
+
 fn openapi_assist(ui: &mut egui::Ui, d: &mut V1EditorState, response: &egui::Response) {
     if let Some(error) = &d.openapi_error {
         ui.colored_label(ui.visuals().error_fg_color, error);
@@ -5431,6 +5475,32 @@ mod tests {
         assert!(zoomed > 15.0 && zoomed < 16.0);
         assert_eq!(zoom_editor_font_size(24.0, 2.0), 24.0);
         assert_eq!(zoom_editor_font_size(9.0, 0.5), 9.0);
+    }
+
+    #[test]
+    fn matched_openapi_assist_only_reserves_its_compact_row() {
+        let spec = openapi_fixture();
+        let text = apply_openapi_operation(SKELETON, &spec.operations[0]).unwrap();
+        let editor = V1EditorState {
+            validated_document: forge_core::reqv1::RequestDocument::parse(&text).ok(),
+            openapi: Some(spec),
+            ..V1EditorState::default()
+        };
+
+        assert_eq!(request_editor_footer_height(&editor), 28.0);
+    }
+
+    #[test]
+    fn openapi_suggestions_reserve_two_assist_rows() {
+        let spec = openapi_fixture();
+        let document = forge_core::reqv1::RequestDocument::parse(SKELETON).unwrap();
+        let editor = V1EditorState {
+            validated_document: Some(document),
+            openapi: Some(spec),
+            ..V1EditorState::default()
+        };
+
+        assert_eq!(request_editor_footer_height(&editor), 64.0);
     }
 
     #[test]

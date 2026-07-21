@@ -26,6 +26,9 @@ log = "0.4"
 anyhow.workspace = true
 chrono.workspace = true
 url.workspace = true
+semver.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+wiremock.workspace = true
