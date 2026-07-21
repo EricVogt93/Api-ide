@@ -61,16 +61,6 @@ Download the latest package from [GitHub Releases](https://github.com/EricVogt93
 
 Until signed builds are available, Windows SmartScreen and macOS Gatekeeper may show an unknown-publisher warning. Release assets include SHA-256 checksums.
 
-### Steam Deck
-
-In Desktop Mode, open Konsole and paste:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/EricVogt93/Api-ide/main/scripts/install-steamdeck.sh | bash
-```
-
-The script installs the latest Linux AppImage under `~/.local/share/forge`, creates a desktop launcher, and registers Forge as a Non-Steam game when SteamOS' `steamos-add-to-steam` helper is available. The launcher can then be started from Desktop Mode or the normal Steam/Big Picture interface.
-
 ### Build from source
 
 Install the stable Rust toolchain, then run:
