@@ -129,7 +129,7 @@ impl ProjectIndex {
 
         index.collect_assets(root, &project);
         index.collect_environments(root);
-        index.collect_requests(root, &resolver);
+        index.collect_requests(&root.join("requests"), root, &resolver);
         index.collect_sequences(root);
         index
             .assets
@@ -230,9 +230,9 @@ impl ProjectIndex {
         self.environments.sort();
     }
 
-    fn collect_requests(&mut self, root: &Path, resolver: &RefResolver) {
+    fn collect_requests(&mut self, requests_root: &Path, root: &Path, resolver: &RefResolver) {
         let mut files = Vec::new();
-        walk_files(root, &mut files);
+        walk_files(requests_root, &mut files);
         for path in files {
             if !path.to_string_lossy().ends_with(".request.json") {
                 continue;

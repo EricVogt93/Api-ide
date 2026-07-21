@@ -10,7 +10,7 @@ collection remains available as a legacy-format example.
 
 ```sh
 forge run examples/demo-workspace --env httpbin
-forge ci examples/demo-workspace/requests --root examples/demo-workspace \
+forge ci requests --root examples/demo-workspace \
   --env demo --mock --allow-project-code
 ```
 

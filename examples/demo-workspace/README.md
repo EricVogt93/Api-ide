@@ -23,9 +23,9 @@ feature tour remains deterministic even without network access.
 Run the modern project offline:
 
 ```sh
-forge ci examples/demo-workspace/requests \
+forge ci requests \
   --root examples/demo-workspace --env demo --mock --allow-project-code
-forge ci examples/demo-workspace/requests \
+forge ci requests \
   --root examples/demo-workspace --env demo --mock --regression --allow-project-code
 ```
 
