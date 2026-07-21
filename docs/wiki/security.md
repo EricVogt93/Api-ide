@@ -1,5 +1,12 @@
 # Secrets and security
 
+## Licensing boundary
+
+Forge is source-available under PolyForm Noncommercial 1.0.0. Personal and
+other noncommercial use is permitted. Internal business use, commercial
+services, paid products and customer work require a separate paid commercial
+license; see the repository's `COMMERCIAL-LICENSE.md`.
+
 ## Local-only data
 
 Forge keeps machine-specific state out of normal project files:
