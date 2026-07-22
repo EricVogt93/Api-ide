@@ -1,6 +1,6 @@
 # Getting started
 
-This guide takes a clean installation to a runnable, file-backed API project. Forge does not require an account, cloud workspace, or per-file storage configuration.
+This guide takes a clean installation to a runnable, file-backed API project. ApiWright does not require an account, cloud workspace, or per-file storage configuration.
 
 ## Install and launch
 
@@ -14,14 +14,14 @@ Unsigned packages may trigger the operating system's unknown-publisher warning. 
 
 ## Create a project
 
-1. Start Forge and select **New project** on the welcome screen, or use **File → New Project…**.
+1. Start ApiWright and select **New project** on the welcome screen, or use **File → New Project…**.
 2. Choose an empty directory. Its directory name becomes the project name.
-3. Forge creates the conventional structure and immediately opens a new request.
+3. ApiWright creates the conventional structure and immediately opens a new request.
 4. Edit the request, select an environment if needed, and choose **Run**.
 
 Creation supplies `forge.json`, `project.json`, `requests/`, `sequences/`, `environments/`, `specs/`, and typed directories below `assets/`. It also updates `.gitignore` for local state. Assertions and hooks are saved as sibling sidecars, so there are no separate save-path choices.
 
-Use **Open project…** for an existing Forge workspace. **Open Standalone API Project…** accepts a directory containing `project.json`. Recent valid projects are listed on the welcome screen.
+Use **Open project…** for an existing ApiWright workspace. **Open Standalone API Project…** accepts a directory containing `project.json`. Recent valid projects are listed on the welcome screen.
 
 ## First request
 

@@ -60,8 +60,9 @@ rhai = { version = "1", features = ["sync", "serde"] }
 rquickjs = { version = "0.12", features = ["bindgen"] }
 # storage
 rusqlite = { version = "0.37", features = ["bundled"] }
-# auth
+# auth / crypto
 oauth2 = "5"
+ed25519-dalek = "2"
 tiny_http = "0.12"
 open = "5"
 # misc formats

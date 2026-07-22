@@ -23,7 +23,7 @@ These settings update the interface immediately. Code editors keep a separate mo
 ## Editor
 
 - **Code font size:** 9–24 px. The same value can be changed with `Ctrl/Cmd+mouse wheel` over the request or result area.
-- **Save dirty files when switching or closing:** when enabled, Forge saves the active request before opening/creating another or closing it. If saving fails, the current request remains open.
+- **Save dirty files when switching or closing:** when enabled, ApiWright saves the active request before opening/creating another or closing it. If saving fails, the current request remains open.
 
 A v1 Save writes the request plus assertion and hook sidecars. Autosave is enabled by default.
 
@@ -51,4 +51,4 @@ The Keymap page is the read-only source of current shortcuts. Shortcuts follow t
 
 ## Restored workspace state
 
-Forge restores valid open legacy tabs, active environment, theme, tool visibility, autosave, typography, and the selected bottom tool. Missing files are skipped; if the previously active file disappeared, Forge selects the last restored tab. Modern request state remains file-backed and is reopened from Project.
+ApiWright restores valid open legacy tabs, active environment, theme, tool visibility, autosave, typography, and the selected bottom tool. Missing files are skipped; if the previously active file disappeared, ApiWright selects the last restored tab. Modern request state remains file-backed and is reopened from Project.

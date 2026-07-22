@@ -1,6 +1,6 @@
 # Catalog and reusable assets
 
-The catalog is Forge's single point of concern for behavior that would otherwise be
+The catalog is ApiWright's single point of concern for behavior that would otherwise be
 copied into every test. A request stores only a stable `use` reference and test-specific
 `with` values. Fixing the builtin or project asset changes every consumer without
 rewriting request files.

@@ -54,8 +54,8 @@ struct Step {
 
 const STEPS: [Step; STEP_COUNT] = [
     Step {
-        title: "Welcome to Forge",
-        text: "Forge keeps requests, reusable behavior and project metadata in ordinary files. The demo workspace is safe to explore and every modern request has an offline mock.",
+        title: "Welcome to ApiWright",
+        text: "ApiWright keeps requests, reusable behavior and project metadata in ordinary files. The demo workspace is safe to explore and every modern request has an offline mock.",
         action: "Use Next or the arrow keys to follow the main workflow.",
         target: Target::Whole,
     },
@@ -103,7 +103,7 @@ const STEPS: [Step; STEP_COUNT] = [
     },
     Step {
         title: "Git, worktrees and timing",
-        text: "The status bar switches branches, creates worktrees, reports readiness, execution time and the installed Forge version.",
+        text: "The status bar switches branches, creates worktrees, reports readiness, execution time and the installed ApiWright version.",
         action: "Click the branch name for repository actions.",
         target: Target::Status,
     },

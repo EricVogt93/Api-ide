@@ -2,7 +2,7 @@
 //! imported from Postman collections run without rewriting: `pm.test`,
 //! a mini-chai `pm.expect`, `pm.response` / `pm.request` wrappers and the
 //! variable scopes (`pm.environment` / `pm.variables` /
-//! `pm.collectionVariables` / `pm.globals` — all backed by Forge's single
+//! `pm.collectionVariables` / `pm.globals` — all backed by ApiWright's single
 //! runtime variable scope).
 //!
 //! Built as a pure-JS prelude over the host bindings `js.rs` already
@@ -176,7 +176,7 @@ const PM_PRELUDE: &str = r#"
         return this._check(pass, "to be one of " + show(arr));
     };
 
-    // Every Postman variable scope maps onto Forge's single runtime scope.
+    // Every Postman variable scope maps onto ApiWright's single runtime scope.
     var pmVars = {
         get: function (k) { return vars.get(String(k)); },
         set: function (k, v) { vars.set(String(k), String(v)); },

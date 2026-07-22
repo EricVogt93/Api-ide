@@ -25,6 +25,55 @@ pub fn build_binding(spec_path: &str, pairs: &[(String, String)]) -> crate::mode
     }
 }
 
+/// Find and parse the project's OpenAPI spec by convention: well-known
+/// root-level file names first, then everything under `specs/`. Returns
+/// the first candidate that parses.
+pub fn discover_spec(root: &std::path::Path) -> Option<ParsedSpec> {
+    let mut candidates: Vec<std::path::PathBuf> = [
+        "openapi.json",
+        "openapi.yaml",
+        "openapi.yml",
+        "swagger.json",
+        "swagger.yaml",
+        "swagger.yml",
+    ]
+    .into_iter()
+    .map(|name| root.join(name))
+    .filter(|path| path.is_file())
+    .collect();
+
+    let specs = root.join("specs");
+    let mut pending = specs.is_dir().then_some(specs).into_iter().collect::<Vec<_>>();
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    matches!(
+                        extension.to_ascii_lowercase().as_str(),
+                        "json" | "yaml" | "yml"
+                    )
+                })
+            {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates.sort();
+    candidates.dedup();
+    candidates.into_iter().find_map(|path| {
+        let text = std::fs::read_to_string(&path).ok()?;
+        parse_spec(&text).ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

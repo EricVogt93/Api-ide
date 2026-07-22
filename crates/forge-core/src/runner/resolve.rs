@@ -123,7 +123,7 @@ pub async fn resolve_request(
             .settings
             .user_agent
             .clone()
-            .unwrap_or_else(|| "Forge/0.1".to_string());
+            .unwrap_or_else(|| "ApiWright/0.1".to_string());
         headers.push(("User-Agent".to_string(), ua));
     }
     if !headers

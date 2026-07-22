@@ -161,6 +161,23 @@ pub enum Cmd {
     DownloadUpdate {
         release: crate::updater::UpdateRelease,
     },
+    /// Ask a license server about a key; replies with `Evt::LicenseValidated`.
+    ValidateLicense {
+        manual: bool,
+        key: String,
+        server: Option<String>,
+    },
+    /// Fetch Jira issue details; replies with `Evt::JiraIssue`.
+    #[cfg(feature = "pro")]
+    JiraFetchIssue {
+        key: String,
+    },
+    /// Post a comment on a Jira issue; replies with `Evt::JiraCommented`.
+    #[cfg(feature = "pro")]
+    JiraAddComment {
+        key: String,
+        body: String,
+    },
     Shutdown,
 }
 
@@ -218,6 +235,20 @@ pub enum Evt {
         result: Result<Option<crate::updater::UpdateRelease>, String>,
     },
     UpdateDownloaded(Result<crate::updater::DownloadedUpdate, String>),
+    LicenseValidated {
+        manual: bool,
+        result: Result<crate::license::Validation, String>,
+    },
+    #[cfg(feature = "pro")]
+    JiraIssue {
+        key: String,
+        result: Result<forge_pro::jira::JiraIssue, String>,
+    },
+    #[cfg(feature = "pro")]
+    JiraCommented {
+        key: String,
+        result: Result<(), String>,
+    },
 }
 
 /// Handle to the background bridge thread.
@@ -575,6 +606,41 @@ fn bridge_main(
                     tokio::spawn(async move {
                         let result = crate::updater::download_update(release).await;
                         let _ = evt_tx.send(Evt::UpdateDownloaded(result));
+                        ctx.request_repaint();
+                    });
+                }
+                Cmd::ValidateLicense {
+                    manual,
+                    key,
+                    server,
+                } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let result = crate::license::validate(key, server).await;
+                        let _ = evt_tx.send(Evt::LicenseValidated { manual, result });
+                        ctx.request_repaint();
+                    });
+                }
+                #[cfg(feature = "pro")]
+                Cmd::JiraFetchIssue { key } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let config = crate::jira::load_config();
+                        let result = forge_pro::jira::fetch_issue(&config, &key).await;
+                        let _ = evt_tx.send(Evt::JiraIssue { key, result });
+                        ctx.request_repaint();
+                    });
+                }
+                #[cfg(feature = "pro")]
+                Cmd::JiraAddComment { key, body } => {
+                    let evt_tx = evt_tx.clone();
+                    let ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        let config = crate::jira::load_config();
+                        let result = forge_pro::jira::add_comment(&config, &key, &body).await;
+                        let _ = evt_tx.send(Evt::JiraCommented { key, result });
                         ctx.request_repaint();
                     });
                 }

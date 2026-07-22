@@ -1,6 +1,6 @@
 # Authentication
 
-Forge supports request-local authentication and a project auth fetcher for short-lived Bearer tokens. The latter runs an ordinary request, extracts a token, caches it, and refreshes before a protected call can outlive the remaining lifetime.
+ApiWright supports request-local authentication and a project auth fetcher for short-lived Bearer tokens. The latter runs an ordinary request, extracts a token, caches it, and refreshes before a protected call can outlive the remaining lifetime.
 
 ## Request-local authentication
 
@@ -34,7 +34,7 @@ The configuration lives in `project.json`:
 
 ## Create a provider request
 
-Choose **Provider setup** in the Auth tab. Forge creates a normal form-encoded Client Credentials request below `requests/auth/`, activates it, and keeps it editable:
+Choose **Provider setup** in the Auth tab. ApiWright creates a normal form-encoded Client Credentials request below `requests/auth/`, activates it, and keeps it editable:
 
 | Provider | Enter | Derived token endpoint |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ Choose **Provider setup** in the Auth tab. Forge creates a normal form-encoded C
 | Auth0 | Domain, client ID, audience | `/oauth/token` |
 | Microsoft Entra | Tenant ID, client ID, scope | Microsoft v2.0 token endpoint |
 
-If a client secret is entered, Forge writes it to `.env.local` as `OAUTH_CLIENT_SECRET`, `KEYCLOAK_CLIENT_SECRET`, `AUTH0_CLIENT_SECRET`, or `ENTRA_CLIENT_SECRET`, restricts the file to owner access on Unix, and stores only `${secret.NAME}` in the request. Leave the field empty to reuse an existing secret value.
+If a client secret is entered, ApiWright writes it to `.env.local` as `OAUTH_CLIENT_SECRET`, `KEYCLOAK_CLIENT_SECRET`, `AUTH0_CLIENT_SECRET`, or `ENTRA_CLIENT_SECRET`, restricts the file to owner access on Unix, and stores only `${secret.NAME}` in the request. Leave the field empty to reuse an existing secret value.
 
 ## Cache and predictive refresh
 
@@ -53,7 +53,7 @@ The cache key includes project, auth request, effective environment, auth settin
 refresh reserve + longest observed duration of this protected request
 ```
 
-After each run, Forge records the maximum observed duration for that request. If the next call might finish too close to expiry, Forge executes the auth request first and then continues with a fresh token. Refreshes are serialized within the session to avoid duplicate concurrent fetches. A successful refresh appears as an auth-refresh diagnostic.
+After each run, ApiWright records the maximum observed duration for that request. If the next call might finish too close to expiry, ApiWright executes the auth request first and then continues with a fresh token. Refreshes are serialized within the session to avoid duplicate concurrent fetches. A successful refresh appears as an auth-refresh diagnostic.
 
 GUI sessions share the cache for their lifetime; each CLI command owns its own session. Changing environment or auth settings naturally uses a different cache entry.
 

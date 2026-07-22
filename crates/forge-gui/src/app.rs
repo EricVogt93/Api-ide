@@ -27,7 +27,7 @@ fn window_icon_png(theme: egui::Theme) -> &'static [u8] {
     }
 }
 
-/// The Forge IDE application.
+/// The ApiWright IDE application.
 pub struct ForgeApp {
     state: AppState,
     bridge: Bridge,
@@ -89,6 +89,7 @@ impl ForgeApp {
             request_editor::send_active(&mut app.state, &app.bridge);
         }
         app.state.dialogs.update.check(&app.bridge, false);
+        app.state.dialogs.license.revalidate_on_start(&app.bridge);
         app
     }
 
@@ -298,6 +299,17 @@ impl ForgeApp {
                     self.state.dialogs.update.handle_check(manual, result)
                 }
                 Evt::UpdateDownloaded(result) => self.state.dialogs.update.handle_download(result),
+                Evt::LicenseValidated { manual, result } => {
+                    self.state.dialogs.license.handle_validated(manual, result)
+                }
+                #[cfg(feature = "pro")]
+                Evt::JiraIssue { key, result } => {
+                    self.state.dialogs.jira.handle_issue(key, result)
+                }
+                #[cfg(feature = "pro")]
+                Evt::JiraCommented { key, result } => {
+                    self.state.dialogs.jira.handle_commented(key, result)
+                }
             }
         }
     }
@@ -549,7 +561,7 @@ impl ForgeApp {
             ui.menu_button("File", |ui| {
                 if ui
                     .button("New Project...")
-                    .on_hover_text("Create a ready-to-use Forge workspace")
+                    .on_hover_text("Create a ready-to-use ApiWright workspace")
                     .clicked()
                 {
                     self.new_workspace_dialog();
@@ -557,7 +569,7 @@ impl ForgeApp {
                 }
                 if ui
                     .add(Self::action_button(ui.ctx(), ActionId::OpenWorkspace))
-                    .on_hover_text("Open an existing Forge workspace")
+                    .on_hover_text("Open an existing ApiWright workspace")
                     .clicked()
                 {
                     self.open_workspace_dialog();
@@ -634,7 +646,7 @@ impl ForgeApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Quit").on_hover_text("Close Forge").clicked() {
+                if ui.button("Quit").on_hover_text("Close ApiWright").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             })
@@ -667,6 +679,32 @@ impl ForgeApp {
                 {
                     self.state.dialogs.grpc_call.open();
                     ui.close();
+                }
+                ui.separator();
+                if ui
+                    .add_enabled(can_run, egui::Button::new("Coverage report…"))
+                    .on_hover_text(
+                        "Ticket → OpenAPI → coverage with runtime and flaky analysis (Pro)",
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    #[cfg(feature = "pro")]
+                    if self.state.dialogs.license.pro_features() {
+                        crate::dialogs::report::open_dialog(&mut self.state);
+                    } else {
+                        self.state.status = Some(StatusMessage::info(
+                            "The coverage report is a ApiWright Pro feature — start the free 60-day commercial trial or activate a license under Help → License & Billing.",
+                        ));
+                        self.state.dialogs.license.open_dialog();
+                    }
+                    #[cfg(not(feature = "pro"))]
+                    {
+                        self.state.status = Some(StatusMessage::info(
+                            "The coverage report ships with ApiWright Pro builds — see Help → License & Billing.",
+                        ));
+                        self.state.dialogs.license.open_dialog();
+                    }
                 }
             })
             .response
@@ -723,7 +761,7 @@ impl ForgeApp {
                 ui.separator();
                 if ui
                     .button("User tour…")
-                    .on_hover_text("Walk through the main Forge workflow")
+                    .on_hover_text("Walk through the main ApiWright workflow")
                     .clicked()
                 {
                     self.state.dialogs.tour.start();
@@ -738,14 +776,22 @@ impl ForgeApp {
                         !self.state.dialogs.update.checking,
                         egui::Button::new("Check for updates…"),
                     )
-                    .on_hover_text("Check the configured release source for a newer Forge build")
+                    .on_hover_text("Check the configured release source for a newer ApiWright build")
                     .clicked()
                 {
                     self.state.dialogs.update.check(&self.bridge, true);
                     ui.close();
                 }
                 if ui
-                    .button("About Forge")
+                    .button("License & Billing…")
+                    .on_hover_text("Current plan, pricing and license activation")
+                    .clicked()
+                {
+                    self.state.dialogs.license.open_dialog();
+                    ui.close();
+                }
+                if ui
+                    .button("About ApiWright")
                     .on_hover_text("Show version and application information")
                     .clicked()
                 {

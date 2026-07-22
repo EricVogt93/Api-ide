@@ -2,7 +2,7 @@
 //!
 //! This is a small, independent implementation over the `cookie` crate's
 //! `Set-Cookie` parser — it deliberately does **not** use reqwest's built-in
-//! cookie store, because Forge needs to inspect, edit and persist cookies
+//! cookie store, because ApiWright needs to inspect, edit and persist cookies
 //! from a manager UI (`all()`, `remove()`, `to_json()`/`from_json()`), which
 //! reqwest's opaque `CookieStore` trait does not support.
 

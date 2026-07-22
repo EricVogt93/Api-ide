@@ -12,7 +12,7 @@ use crate::exec::ExecutionResult;
 /// `truncated` set to `true` on the row.
 pub const MAX_STORED_BODY_BYTES: usize = 512 * 1024;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
@@ -42,6 +42,10 @@ pub struct HistoryEntry {
     pub response_body: Option<Vec<u8>>,
     pub error: Option<String>,
     pub env: Option<String>,
+    /// Assertion verdict of the run, when the adapter knows one:
+    /// `Some(true)` all assertions passed, `Some(false)` at least one
+    /// failed, `None` no verdict (ad-hoc send or transport error).
+    pub passed: Option<bool>,
     /// `true` if either body was truncated to fit `MAX_STORED_BODY_BYTES`.
     pub truncated: bool,
 }
@@ -58,6 +62,8 @@ pub struct HistorySummary {
     pub status: Option<u16>,
     pub duration_ms: i64,
     pub error: Option<String>,
+    /// See [`HistoryEntry::passed`].
+    pub passed: Option<bool>,
 }
 
 /// Filter/pagination options for [`HistoryStore::list`].
@@ -118,6 +124,8 @@ pub struct HistoryRecord {
     pub response_body: Option<Vec<u8>>,
     pub error: Option<String>,
     pub env: Option<String>,
+    /// See [`HistoryEntry::passed`].
+    pub passed: Option<bool>,
 }
 
 /// SQLite-backed execution history.
@@ -190,6 +198,7 @@ impl HistoryStore {
             response_body,
             error,
             env: entry.env,
+            passed: None,
         })
     }
 
@@ -207,8 +216,8 @@ impl HistoryStore {
             "INSERT INTO entries (
                 executed_at, request_id, name, method, url, status, duration_ms,
                 request_headers, request_body, response_headers, response_body,
-                error, env, truncated
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                error, env, truncated, passed
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 entry.executed_at,
                 entry.request_id,
@@ -224,6 +233,7 @@ impl HistoryStore {
                 entry.error,
                 entry.env,
                 truncated as i64,
+                entry.passed,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -232,7 +242,7 @@ impl HistoryStore {
     /// List entries matching `filter`, newest first.
     pub fn list(&self, filter: &HistoryFilter) -> HistoryResult<Vec<HistorySummary>> {
         let mut sql = String::from(
-            "SELECT id, executed_at, request_id, name, method, url, status, duration_ms, error
+            "SELECT id, executed_at, request_id, name, method, url, status, duration_ms, error, passed
              FROM entries WHERE 1=1",
         );
         let mut values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -278,6 +288,7 @@ impl HistoryStore {
                 status: row.get::<_, Option<i64>>(6)?.map(|s| s as u16),
                 duration_ms: row.get(7)?,
                 error: row.get(8)?,
+                passed: row.get(9)?,
             })
         })?;
 
@@ -295,7 +306,7 @@ impl HistoryStore {
             .query_row(
                 "SELECT id, executed_at, request_id, name, method, url, status, duration_ms,
                         request_headers, request_body, response_headers, response_body,
-                        error, env, truncated
+                        error, env, truncated, passed
                  FROM entries WHERE id = ?1",
                 params![id],
                 row_to_entry,
@@ -362,6 +373,7 @@ fn row_to_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryResult<Histo
             response_body: row.get(11)?,
             error: row.get(12)?,
             env: row.get(13)?,
+            passed: row.get(15)?,
             truncated: truncated != 0,
         })
     })();
@@ -387,11 +399,19 @@ fn init_schema(conn: &Connection) -> HistoryResult<()> {
                 response_body BLOB,
                 error TEXT,
                 env TEXT,
-                truncated INTEGER NOT NULL DEFAULT 0
+                truncated INTEGER NOT NULL DEFAULT 0,
+                passed INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_entries_request_id ON entries(request_id);
             CREATE INDEX IF NOT EXISTS idx_entries_executed_at ON entries(executed_at);",
         )?;
+        // v1 -> v2: the verdict column. Fresh databases already have it
+        // from CREATE TABLE; existing ones gain it here.
+        match conn.execute("ALTER TABLE entries ADD COLUMN passed INTEGER", []) {
+            Ok(_) => {}
+            Err(error) if error.to_string().contains("duplicate column") => {}
+            Err(error) => return Err(error.into()),
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())

@@ -1,6 +1,6 @@
 # Release Guide
 
-Forge packages are built by `.github/workflows/release.yml`. A release tag
+ApiWright packages are built by `.github/workflows/release.yml`. A release tag
 produces an x86_64 Linux AppImage, x86_64 Windows executable, Apple Silicon
 macOS DMG and `SHA256SUMS.txt`, then publishes them to a GitHub Release.
 
@@ -56,9 +56,9 @@ creating a GitHub Release.
 
 | Job | Runner | Output |
 | --- | --- | --- |
-| Linux | Ubuntu 22.04 | `Forge-<version>-linux-x86_64.AppImage` |
-| Windows | Windows 2025 | `Forge-<version>-windows-x86_64.exe` |
-| macOS | macOS 15 | `Forge-<version>-macOS-arm64.dmg` |
+| Linux | Ubuntu 22.04 | `ApiWright-<version>-linux-x86_64.AppImage` |
+| Windows | Windows 2025 | `ApiWright-<version>-windows-x86_64.exe` |
+| macOS | macOS 15 | `ApiWright-<version>-macOS-arm64.dmg` |
 
 The final job downloads all three artifacts into one directory, runs
 `sha256sum * > SHA256SUMS.txt`, and publishes every file with generated release
@@ -76,7 +76,7 @@ download.
 ./packaging/linux/build-appimage.sh 0.2.0
 ```
 
-macOS packaging uses `packaging/macos/build-dmg.sh`. It creates `Forge.app`,
+macOS packaging uses `packaging/macos/build-dmg.sh`. It creates `ApiWright.app`,
 sets the plist version, generates an ICNS from the project logo, applies an
 ad-hoc signature and creates a compressed DMG containing an Applications
 shortcut.
@@ -105,7 +105,7 @@ missing or mismatched checksum.
 
 Installation differs by platform:
 
-- Linux can replace and restart only when Forge is running from an AppImage
+- Linux can replace and restart only when ApiWright is running from an AppImage
   and the `APPIMAGE` path is available.
 - Windows waits for the current process, replaces the executable and restarts
   it through PowerShell.

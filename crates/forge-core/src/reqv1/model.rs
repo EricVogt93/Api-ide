@@ -227,7 +227,7 @@ impl RequestDocument {
     }
 
     /// Whether running this document can execute repository-owned code.
-    /// Builtins are shipped by Forge; every other `use` target is a project
+    /// Builtins are shipped by ApiWright; every other `use` target is a project
     /// asset and requires adapter-level trust confirmation.
     pub fn uses_project_code(&self) -> bool {
         let project_use = |uses: &str| !uses.starts_with("builtin:");

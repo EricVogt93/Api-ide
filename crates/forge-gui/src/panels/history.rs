@@ -115,6 +115,11 @@ pub fn record_from_v1(item: &crate::bridge::V1RunItem, env: Option<String>) -> H
         response_body: item.response.as_ref().map(|response| response.body.clone()),
         error,
         env,
+        passed: match item.result.status {
+            forge_core::reqv1::runner::RunStatus::Passed => Some(true),
+            forge_core::reqv1::runner::RunStatus::Failed => Some(false),
+            forge_core::reqv1::runner::RunStatus::Error => None,
+        },
     }
 }
 
