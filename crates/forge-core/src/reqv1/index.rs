@@ -442,9 +442,8 @@ fn walk_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in entries.flatten() {
         let p = entry.path();
         if p.is_dir() {
-            // Skip generated/VCS dirs.
-            let name = entry.file_name();
-            if name == ".git" || name == ".forge" || name == "node_modules" || name == "target" {
+            // Skip hidden/generated/VCS dirs.
+            if crate::is_ignored_dir(&entry.file_name().to_string_lossy()) {
                 continue;
             }
             walk_files(&p, out);

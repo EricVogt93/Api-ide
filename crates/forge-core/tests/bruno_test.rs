@@ -317,3 +317,33 @@ fn rejects_a_directory_without_bruno_json() {
     let err = import_bruno(dir.path()).expect_err("no bruno.json must fail");
     assert!(err.to_string().contains("bruno.json"));
 }
+
+#[test]
+fn skips_ignored_hidden_and_unrelated_directories() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::write(root.join("bruno.json"), r#"{"name":"Skip Test"}"#).unwrap();
+
+    let bru = "meta {\n  name: Ping\n  type: http\n}\nget {\n  url: https://example.com\n}\n";
+    std::fs::create_dir(root.join("api")).unwrap();
+    std::fs::write(root.join("api/ping.bru"), bru).unwrap();
+
+    // Must all be invisible to the import:
+    std::fs::create_dir_all(root.join("node_modules/some-pkg")).unwrap();
+    std::fs::write(root.join("node_modules/some-pkg/evil.bru"), bru).unwrap();
+    std::fs::create_dir(root.join(".git")).unwrap();
+    std::fs::write(root.join(".git/hidden.bru"), bru).unwrap();
+    std::fs::create_dir(root.join("venv")).unwrap();
+    std::fs::write(root.join("venv/pyvenv.bru"), bru).unwrap();
+    std::fs::create_dir(root.join("src")).unwrap();
+    std::fs::write(root.join("src/main.js"), "// no .bru here").unwrap();
+
+    let import = import_bruno(root).expect("collection should import");
+    assert_eq!(import.collection.request_count(), 1);
+    assert_eq!(import.collection.items.len(), 1);
+    let ImportedItem::Folder { name, items, .. } = &import.collection.items[0] else {
+        panic!("expected the api folder, got {:?}", import.collection.items);
+    };
+    assert_eq!(name, "api");
+    assert_eq!(items.len(), 1);
+}

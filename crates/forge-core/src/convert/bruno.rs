@@ -2,7 +2,7 @@
 //! `.bru` files (`bruno.json` marker at the root, one file per request,
 //! plain subdirectories as folders, `environments/*.bru` for environments).
 //!
-//! The importer maps everything with a Forge equivalent — methods, URLs,
+//! The importer maps everything with a ApiWright equivalent — methods, URLs,
 //! headers, query/path params, every body mode, basic/bearer/apikey/oauth2
 //! auth, `assert` blocks (to declarative assertions), `vars:post-response`
 //! extractions and `{{var}}` syntax (shared verbatim) — and reports what it
@@ -136,8 +136,13 @@ fn read_dir_items(
             if is_root && fname == "environments" {
                 continue;
             }
+            if crate::is_ignored_dir(&fname) {
+                continue;
+            }
             let folder_bru = p.join("folder.bru");
-            let (folder_name, seq, auth, folder_desc) = match std::fs::read_to_string(&folder_bru) {
+            let meta_text = std::fs::read_to_string(&folder_bru);
+            let has_meta = meta_text.is_ok();
+            let (folder_name, seq, auth, folder_desc) = match meta_text {
                 Ok(text) => {
                     let blocks = parse_blocks(&text);
                     let meta: BTreeMap<String, String> = dict_block(&blocks, "meta")
@@ -159,6 +164,11 @@ fn read_dir_items(
             };
             let item_path = join_path(path, &folder_name);
             let items = read_dir_items(&p, &item_path, false, skipped)?;
+            // A directory with no .bru content anywhere and no folder.bru is
+            // not part of the collection (src/, docs/, …) — drop it.
+            if items.is_empty() && !has_meta {
+                continue;
+            }
             entries.push((
                 seq,
                 folder_name.clone(),
