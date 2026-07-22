@@ -5,17 +5,17 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>Forge</string>
+  <string>ApiWright</string>
   <key>CFBundleExecutable</key>
-  <string>forge-ide</string>
+  <string>apiwright-ide</string>
   <key>CFBundleIconFile</key>
-  <string>Forge</string>
+  <string>ApiWright</string>
   <key>CFBundleIdentifier</key>
-  <string>com.ericvogt.forge</string>
+  <string>com.ericvogt.apiwright</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Forge</string>
+  <string>ApiWright</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
