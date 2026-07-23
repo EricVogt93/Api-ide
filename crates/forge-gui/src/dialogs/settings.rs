@@ -399,7 +399,9 @@ fn jira_tab(ui: &mut Ui, state: &mut AppState) {
     state.dialogs.jira.ensure_config();
     let mut save = false;
     settings_card(ui, "Connection", |ui| {
-        ui.label("Used by the Jira integration (ticket details, comments) — a ApiWright Pro feature.");
+        ui.label(
+            "Used by the Jira integration (ticket details, comments) — a ApiWright Pro feature.",
+        );
         ui.add_space(8.0);
         egui::Grid::new("jira-settings-grid")
             .num_columns(2)

@@ -303,9 +303,7 @@ impl ForgeApp {
                     self.state.dialogs.license.handle_validated(manual, result)
                 }
                 #[cfg(feature = "pro")]
-                Evt::JiraIssue { key, result } => {
-                    self.state.dialogs.jira.handle_issue(key, result)
-                }
+                Evt::JiraIssue { key, result } => self.state.dialogs.jira.handle_issue(key, result),
                 #[cfg(feature = "pro")]
                 Evt::JiraCommented { key, result } => {
                     self.state.dialogs.jira.handle_commented(key, result)

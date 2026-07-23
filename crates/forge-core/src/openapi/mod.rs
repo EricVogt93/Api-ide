@@ -43,7 +43,11 @@ pub fn discover_spec(root: &std::path::Path) -> Option<ParsedSpec> {
     .collect();
 
     let specs = root.join("specs");
-    let mut pending = specs.is_dir().then_some(specs).into_iter().collect::<Vec<_>>();
+    let mut pending = specs
+        .is_dir()
+        .then_some(specs)
+        .into_iter()
+        .collect::<Vec<_>>();
     while let Some(directory) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;

@@ -30,4 +30,4 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --locked
       - name: Check release-only code paths
-        run: cargo check --release --locked -p forge-gui --bin forge-ide
+        run: cargo check --release --locked -p forge-gui --bin apiwright-ide

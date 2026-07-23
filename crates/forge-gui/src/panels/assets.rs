@@ -1296,7 +1296,9 @@ fn export_path(state: &mut AppState, source: &Path, format: BundleFormat) {
         BundleFormat::Json => dialog
             .add_filter("ApiWright JSON bundle", &["json"])
             .save_file(),
-        BundleFormat::Curl => dialog.add_filter("ApiWright cURL script", &["sh"]).save_file(),
+        BundleFormat::Curl => dialog
+            .add_filter("ApiWright cURL script", &["sh"])
+            .save_file(),
     };
     let Some(output) = output else {
         return;

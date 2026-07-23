@@ -38,7 +38,8 @@ pub fn save_config(config: &JiraConfig) -> Result<(), String> {
     }
     let text = serde_json::to_string_pretty(config)
         .map_err(|error| format!("Cannot serialize the Jira settings: {error}"))?;
-    std::fs::write(&file, text).map_err(|error| format!("Cannot save the Jira settings: {error}"))?;
+    std::fs::write(&file, text)
+        .map_err(|error| format!("Cannot save the Jira settings: {error}"))?;
     // The file holds an API token: keep it owner-readable only.
     #[cfg(unix)]
     {

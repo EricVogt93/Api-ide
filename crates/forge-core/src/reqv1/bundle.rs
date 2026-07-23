@@ -526,12 +526,15 @@ fn parse_bundle(text: &str) -> Result<ForgeBundle, String> {
         }
     }
     if inside || encoded.is_empty() {
-        return Err("file is neither a ApiWright JSON bundle nor a ApiWright cURL export".to_string());
+        return Err(
+            "file is neither a ApiWright JSON bundle nor a ApiWright cURL export".to_string(),
+        );
     }
     let json = BASE64
         .decode(encoded)
         .map_err(|error| format!("invalid embedded ApiWright bundle: {error}"))?;
-    serde_json::from_slice(&json).map_err(|error| format!("invalid embedded ApiWright bundle: {error}"))
+    serde_json::from_slice(&json)
+        .map_err(|error| format!("invalid embedded ApiWright bundle: {error}"))
 }
 
 fn validate_bundle(bundle: &ForgeBundle) -> Result<(), String> {

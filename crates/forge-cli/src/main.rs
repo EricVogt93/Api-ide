@@ -606,7 +606,11 @@ fn cmd_report(args: &ReportArgs) -> i32 {
     let index = match forge_core::reqv1::index::ProjectIndex::scan(&args.root) {
         Ok(index) => index,
         Err(diagnostic) => {
-            eprintln!("cannot index {}: {}", args.root.display(), diagnostic.message);
+            eprintln!(
+                "cannot index {}: {}",
+                args.root.display(),
+                diagnostic.message
+            );
             return 2;
         }
     };

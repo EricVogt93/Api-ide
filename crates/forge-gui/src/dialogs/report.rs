@@ -3,8 +3,8 @@
 //! Markdown/JSON export and "comment to Jira" per ticket. Pro-gated at the
 //! menu entry that opens it.
 
-use forge_pro::report::{build_report, render_markdown, CoverageReport, DEFAULT_WINDOW};
 use forge_core::reqv1::index::ProjectIndex;
+use forge_pro::report::{build_report, render_markdown, CoverageReport, DEFAULT_WINDOW};
 
 use crate::bridge::Bridge;
 use crate::state::{AppState, StatusMessage};
@@ -135,9 +135,9 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
                                 .striped(true)
                                 .spacing([14.0, 4.0])
                                 .show(ui, |ui| {
-                                    for header in
-                                        ["Test", "Runs", "Pass", "Median", "p95", "Hiccups", "Flaky"]
-                                    {
+                                    for header in [
+                                        "Test", "Runs", "Pass", "Median", "p95", "Hiccups", "Flaky",
+                                    ] {
                                         ui.strong(header);
                                     }
                                     ui.end_row();
@@ -211,7 +211,10 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
             serde_json::to_string_pretty(report).unwrap_or_default()
         }),
         DialogAction::CommentToJira { key, comment } => {
-            state.dialogs.jira.open_ticket_with_comment(key, comment, bridge);
+            state
+                .dialogs
+                .jira
+                .open_ticket_with_comment(key, comment, bridge);
         }
     }
 }

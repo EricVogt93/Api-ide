@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 
 use crate::bridge::{Bridge, Cmd};
 
-const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/EricVogt93/apiwright/releases/latest";
+const LATEST_RELEASE_URL: &str =
+    "https://api.github.com/repos/EricVogt93/apiwright/releases/latest";
 
 #[derive(Debug, Clone)]
 pub struct UpdateRelease {

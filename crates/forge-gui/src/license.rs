@@ -170,12 +170,7 @@ fn verify_and_parse(
 
 fn config_file(name: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("forge")
-            .join(name),
-    )
+    Some(PathBuf::from(home).join(".config").join("forge").join(name))
 }
 
 fn load_license() -> Option<StoredLicense> {
@@ -308,7 +303,10 @@ async fn validate_at(
         .build()
         .map_err(|error| format!("Cannot build the HTTP client: {error}"))?;
     let response = client
-        .post(format!("{}/v1/licenses/validate", base.trim_end_matches('/')))
+        .post(format!(
+            "{}/v1/licenses/validate",
+            base.trim_end_matches('/')
+        ))
         .json(&serde_json::json!({
             "key": key,
             "product": PRODUCT,
@@ -699,10 +697,7 @@ mod tests {
     fn sign_payload(payload: serde_json::Value, signing_key: &SigningKey) -> (String, String) {
         let bytes = serde_json::to_vec(&payload).expect("payload serializes");
         let signature = signing_key.sign(&bytes);
-        (
-            BASE64.encode(&bytes),
-            BASE64.encode(signature.to_bytes()),
-        )
+        (BASE64.encode(&bytes), BASE64.encode(signature.to_bytes()))
     }
 
     fn stored(tier: Tier, valid_until: DateTime<Utc>) -> StoredLicense {
@@ -730,7 +725,10 @@ mod tests {
             Tier::Paid
         );
         assert_eq!(
-            effective_tier(Some(&stored(Tier::Enterprise, now - Duration::days(1))), now),
+            effective_tier(
+                Some(&stored(Tier::Enterprise, now - Duration::days(1))),
+                now
+            ),
             Tier::Free
         );
     }
