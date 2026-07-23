@@ -1,6 +1,6 @@
 # Architecture
 
-Forge has a pragmatic hexagonal structure: native UI and command-line entry
+ApiWright has a pragmatic hexagonal structure: native UI and command-line entry
 points depend inward on a GUI-free core. The crate boundary is strict; inside
 `forge-core`, application logic and concrete infrastructure live in focused
 modules rather than behind a trait for every dependency.
@@ -88,7 +88,7 @@ parse → reference resolution → bindings/generators → interpolation
 5. `build_ir` topologically resolves binding dependencies, runs generators,
    interpolates the `env`, `bindings`, `matrix`, `runtime` and `secret` scopes,
    and collects independent diagnostics. This stage is pure with respect to
-   network I/O and backs `forge validate`.
+   network I/O and backs `apiwright validate`.
 6. The runner optionally obtains a cached project-auth token, executes
    `beforeRequest`, sends through `HttpEngine` or renders the request mock,
    executes `afterResponse`, conditionally executes `onError`, and always

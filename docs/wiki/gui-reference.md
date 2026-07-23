@@ -1,6 +1,6 @@
 # GUI reference
 
-Forge uses a resizable IDE shell. Compact icon controls expose their purpose after a two-second hover; disabled controls explain missing prerequisites where relevant.
+ApiWright uses a resizable IDE shell. Compact icon controls expose their purpose after a two-second hover; disabled controls explain missing prerequisites where relevant.
 
 ## Application shell
 
@@ -13,7 +13,7 @@ From left to right and top to bottom:
 - **Request editor:** toolbar, JSON editor/minimap, OpenAPI assistance, and result splitter.
 - **Right tool window:** icon tabs for OpenAPI, contract generation, API generation, k6 generation, and AI Advisor. Drag its left edge or collapse to an icon strip.
 - **Bottom tools:** Run, Problems, Terminal, History; **More** contains Log, Console, Cookies, and Variables. Clicking the active tab collapses it.
-- **Status bar:** branch/worktree actions, environment/readiness, execution time, and Forge version.
+- **Status bar:** branch/worktree actions, environment/readiness, execution time, and ApiWright version.
 
 At narrow widths, the request toolbar moves Format/Validate into its overflow menu and lower result tabs move Runtime/Trace/Diagnostics into **More**.
 
@@ -21,11 +21,11 @@ At narrow widths, the request toolbar moves Format/Validate into its overflow me
 
 The **Files** tab presents ordinary filesystem folders. `assets` and `environments` use distinct icons; request, sequence, and general files are visually separated. Click a directory to make it the destination for new content. Jira icons appear only when enough horizontal space exists; inherited links are muted and own links use the accent color.
 
-Folder/project context actions include **Run project/folder**, **New request**, **New folder**, **Add files**, recursive JSON beautification, Forge bundle/cURL export, Forge bundle import, Properties, file-manager reveal, Jira link actions, and Git actions. Request menus add Open, export, Properties, and Jira; asset menus can copy a stable reference or run affected requests.
+Folder/project context actions include **Run project/folder**, **New request**, **New folder**, **Add files**, recursive JSON beautification, ApiWright bundle/cURL export, ApiWright bundle import, Properties, file-manager reveal, Jira link actions, and Git actions. Request menus add Open, export, Properties, and Jira; asset menus can copy a stable reference or run affected requests.
 
 The **Git** tab groups conflicts, untracked files, unstaged changes, partially staged files, and staged changes. Context Git actions stage, revert with confirmation, or open a commit dialog. The status-bar branch menu switches branches and opens **New worktree…**.
 
-Properties show the effective path and request count, then configure inherited environment and OpenAPI source. Request Properties additionally toggles **Regression test** for `forge ci --regression`.
+Properties show the effective path and request count, then configure inherited environment and OpenAPI source. Request Properties additionally toggles **Regression test** for `apiwright ci --regression`.
 
 ## Catalog workflow
 

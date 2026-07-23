@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::bridge::{Bridge, Cmd};
 
-const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/EricVogt93/Api-ide/releases/latest";
+const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/EricVogt93/apiwright/releases/latest";
 
 #[derive(Debug, Clone)]
 pub struct UpdateRelease {
@@ -73,7 +73,7 @@ impl UpdateState {
             }
             Ok(None) if manual => {
                 self.notice = Some(format!(
-                    "Forge v{} is the latest published version.",
+                    "ApiWright v{} is the latest published version.",
                     env!("CARGO_PKG_VERSION")
                 ));
                 self.open = true;
@@ -216,7 +216,7 @@ fn release_from_api(
         title: release
             .name
             .filter(|name| !name.trim().is_empty())
-            .unwrap_or_else(|| format!("Forge {}", release.tag_name)),
+            .unwrap_or_else(|| format!("ApiWright {}", release.tag_name)),
         notes: release
             .body
             .filter(|notes| !notes.trim().is_empty())
@@ -338,7 +338,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn update_client(timeout: std::time::Duration) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent(format!("Forge/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("ApiWright/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(timeout)
         .build()
@@ -418,7 +418,7 @@ pub fn show(ctx: &egui::Context, state: &mut UpdateState, bridge: &Bridge) {
     }
     let mut open = state.open;
     let mut action = None;
-    egui::Window::new("Forge update")
+    egui::Window::new("ApiWright update")
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -547,7 +547,7 @@ fn install_downloaded(downloaded: &DownloadedUpdate) -> Result<bool, String> {
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .ok_or_else(|| {
-            "Automatic replacement is available when Forge runs as an AppImage. Open the release page for other installations.".to_string()
+            "Automatic replacement is available when ApiWright runs as an AppImage. Open the release page for other installations.".to_string()
         })?;
     let script = r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
 chmod +x "$2" || exec "$3"
@@ -611,12 +611,12 @@ mod tests {
     fn release_selection_is_semantic_and_platform_specific() {
         let release = serde_json::from_value::<ApiRelease>(serde_json::json!({
             "tag_name": "v0.10.0",
-            "name": "Forge v0.10.0",
+            "name": "ApiWright v0.10.0",
             "body": "Changes",
             "html_url": "https://example.test/release",
             "assets": [
-                {"name": "Forge-0.10.0-linux-x86_64.AppImage", "browser_download_url": "https://example.test/linux", "digest": "sha256:aa"},
-                {"name": "Forge-0.10.0-windows-x86_64.exe", "browser_download_url": "https://example.test/windows", "digest": "sha256:bb"},
+                {"name": "ApiWright-0.10.0-linux-x86_64.AppImage", "browser_download_url": "https://example.test/linux", "digest": "sha256:aa"},
+                {"name": "ApiWright-0.10.0-windows-x86_64.exe", "browser_download_url": "https://example.test/windows", "digest": "sha256:bb"},
                 {"name": "SHA256SUMS.txt", "browser_download_url": "https://example.test/sums", "digest": null}
             ]
         }))
@@ -633,10 +633,10 @@ mod tests {
     fn checksum_parser_requires_the_exact_asset_name() {
         let digest = "a".repeat(64);
         let text = format!(
-            "{digest}  Forge.AppImage\n{}  Other.AppImage\n",
+            "{digest}  ApiWright.AppImage\n{}  Other.AppImage\n",
             "b".repeat(64)
         );
-        assert_eq!(checksum_for(&text, "Forge.AppImage"), Some(digest));
+        assert_eq!(checksum_for(&text, "ApiWright.AppImage"), Some(digest));
         assert_eq!(checksum_for(&text, "Missing.AppImage"), None);
     }
 
@@ -648,7 +648,7 @@ mod tests {
             .and(header("accept", "application/vnd.github+json"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "tag_name": "v1.2.0",
-                "name": "Forge v1.2.0",
+                "name": "ApiWright v1.2.0",
                 "body": "A useful change",
                 "html_url": "https://example.test/release",
                 "assets": []
@@ -673,19 +673,19 @@ mod tests {
         let server = MockServer::start().await;
         let bytes = b"verified executable";
         Mock::given(method("GET"))
-            .and(path("/Forge.AppImage"))
+            .and(path("/ApiWright.AppImage"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes))
             .mount(&server)
             .await;
         let release = UpdateRelease {
             tag: "v1.2.0".to_string(),
             version: "1.2.0".to_string(),
-            title: "Forge v1.2.0".to_string(),
+            title: "ApiWright v1.2.0".to_string(),
             notes: "Changes".to_string(),
             page_url: "https://example.test/release".to_string(),
             asset: Some(UpdateAsset {
-                name: "Forge.AppImage".to_string(),
-                url: format!("{}/Forge.AppImage", server.uri()),
+                name: "ApiWright.AppImage".to_string(),
+                url: format!("{}/ApiWright.AppImage", server.uri()),
                 digest: Some(format!("sha256:{}", sha256_hex(bytes))),
             }),
             checksums_url: None,

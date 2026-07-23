@@ -1,6 +1,6 @@
-# Forge Demo Workspace
+# ApiWright Demo Workspace
 
-Open this folder in Forge to explore the complete project workflow without
+Open this folder in ApiWright to explore the complete project workflow without
 creating configuration first. Every modern request has an offline mock, so the
 feature tour remains deterministic even without network access.
 
@@ -23,9 +23,9 @@ feature tour remains deterministic even without network access.
 Run the modern project offline:
 
 ```sh
-forge ci requests \
+apiwright ci requests \
   --root examples/demo-workspace --env demo --mock --allow-project-code
-forge ci requests \
+apiwright ci requests \
   --root examples/demo-workspace --env demo --mock --regression --allow-project-code
 ```
 

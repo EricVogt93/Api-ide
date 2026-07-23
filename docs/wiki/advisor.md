@@ -18,7 +18,7 @@ Configuration is stored locally in `.forge-local/advisor.json`. It contains the 
 
 The context row shows the authoritative active file. Enter a concrete question and choose **Ask advisor**. **Include last response** becomes available after a run; leave it off when response data is irrelevant or sensitive. Answers are selectable and can be copied.
 
-Forge assembles, in this order and within a 48,000-character ceiling:
+ApiWright assembles, in this order and within a 48,000-character ceiling:
 
 - active request path and parsed request JSON;
 - active assertion, hook, and project-auth documents;
@@ -38,11 +38,11 @@ Good prompts name the desired outcome, for example:
 
 ## Redaction and trust boundary
 
-Before transport, Forge recursively masks JSON keys containing `authorization`, `apikey`, `password`, `secret`, `token`, or `cookie`. Header objects with a sensitive `name` also have their `value` masked. Sensitive response headers and JSON bodies receive the same treatment.
+Before transport, ApiWright recursively masks JSON keys containing `authorization`, `apikey`, `password`, `secret`, `token`, or `cookie`. Header objects with a sensitive `name` also have their `value` masked. Sensitive response headers and JSON bodies receive the same treatment.
 
 Redaction is a safety net, not a data-classification system. Plain text, unusual field names, source comments, and nearby JavaScript may still contain confidential data. Review the active file and provider policy before sending. Keep **Include last response** disabled unless needed.
 
-The provider receives one system instruction, the question, and the assembled API context. Forge does not send the complete repository, execute model suggestions, or grant the model filesystem access.
+The provider receives one system instruction, the question, and the assembled API context. ApiWright does not send the complete repository, execute model suggestions, or grant the model filesystem access.
 
 ## Troubleshooting
 

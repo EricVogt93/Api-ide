@@ -393,6 +393,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
     let mut to_run: Option<Vec<PathBuf>> = None;
     let mut to_sequence: Option<PathBuf> = None;
     let mut to_jira: Option<PathBuf> = None;
+    let mut to_ticket_info: Option<String> = None;
     let mut project_action: Option<ProjectAction> = None;
     let mut git_add = None;
     let mut git_pending = None;
@@ -432,6 +433,7 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
                     &mut to_run,
                     &mut to_sequence,
                     &mut to_jira,
+                    &mut to_ticket_info,
                     &mut project_action,
                     git_status.as_ref(),
                     &mut git_add,
@@ -448,12 +450,47 @@ pub fn show(ui: &mut Ui, state: &mut AppState, bridge: &Bridge) {
         });
 
     if let Some(target) = to_jira {
-        state.assets.jira_value = forge_core::reqv1::own_ticket(&target)
-            .ok()
-            .flatten()
-            .unwrap_or_default();
-        state.assets.jira_target = Some(target);
-        state.assets.jira_link_open = true;
+        // ponytail: single choke point for the Pro gate — every "Link/Edit/
+        // Override Jira ticket" menu item funnels through here.
+        if state.dialogs.license.pro_features() {
+            state.assets.jira_value = forge_core::reqv1::own_ticket(&target)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            state.assets.jira_target = Some(target);
+            state.assets.jira_link_open = true;
+        } else {
+            state.status = Some(StatusMessage::info(
+                "Jira links are a ApiWright Pro feature — start the free 60-day commercial trial or activate a license under Help → License & Billing.",
+            ));
+            state.dialogs.license.open_dialog();
+        }
+    }
+
+    if let Some(value) = to_ticket_info {
+        #[cfg(feature = "pro")]
+        match forge_pro::jira::ticket_key(&value) {
+            _ if !state.dialogs.license.pro_features() => {
+                state.status = Some(StatusMessage::info(
+                    "The Jira integration is a ApiWright Pro feature — start the free 60-day commercial trial or activate a license under Help → License & Billing.",
+                ));
+                state.dialogs.license.open_dialog();
+            }
+            Some(key) => state.dialogs.jira.open_ticket(key, bridge),
+            None => {
+                state.status = Some(StatusMessage::error(format!(
+                    "'{value}' contains no Jira issue key (like SHOP-42)."
+                )));
+            }
+        }
+        #[cfg(not(feature = "pro"))]
+        {
+            let _ = value;
+            state.status = Some(StatusMessage::info(
+                "The Jira integration ships with ApiWright Pro builds — see Help → License & Billing.",
+            ));
+            state.dialogs.license.open_dialog();
+        }
     }
 
     if let Some(file) = to_edit {
@@ -539,6 +576,7 @@ fn project_nodes(
     to_run: &mut Option<Vec<PathBuf>>,
     to_sequence: &mut Option<PathBuf>,
     to_jira: &mut Option<PathBuf>,
+    to_ticket_info: &mut Option<String>,
     project_action: &mut Option<ProjectAction>,
     git_status: Option<&GitStatus>,
     git_add: &mut Option<PathBuf>,
@@ -592,6 +630,7 @@ fn project_nodes(
                 root,
                 to_run,
                 to_jira,
+                to_ticket_info,
                 project_action,
                 git_status,
                 git_add,
@@ -614,6 +653,7 @@ fn project_nodes(
                         to_run,
                         to_sequence,
                         to_jira,
+                        to_ticket_info,
                         project_action,
                         git_status,
                         git_add,
@@ -707,7 +747,7 @@ fn project_nodes(
                     *project_action = Some(ProjectAction::Properties(node.path.clone()));
                     ui.close();
                 }
-                ticket_menu(ui, node, to_jira);
+                ticket_menu(ui, node, to_jira, to_ticket_info);
             }
             asset_git_menu(
                 ui,
@@ -868,6 +908,7 @@ fn folder_context_menu(
     root: &Path,
     to_run: &mut Option<Vec<PathBuf>>,
     to_jira: &mut Option<PathBuf>,
+    to_ticket_info: &mut Option<String>,
     action: &mut Option<ProjectAction>,
     git_status: Option<&GitStatus>,
     git_add: &mut Option<PathBuf>,
@@ -924,8 +965,8 @@ fn folder_context_menu(
         }
         export_menu(ui, &node.path, action);
         if ui
-            .button("Import Forge bundle…")
-            .on_hover_text("Import requests, assertions and hooks from a Forge bundle")
+            .button("Import ApiWright bundle…")
+            .on_hover_text("Import requests, assertions and hooks from a ApiWright bundle")
             .clicked()
         {
             *action = Some(ProjectAction::Import(node.path.clone()));
@@ -949,7 +990,7 @@ fn folder_context_menu(
             ui.close();
         }
         ui.separator();
-        ticket_menu(ui, node, to_jira);
+        ticket_menu(ui, node, to_jira, to_ticket_info);
         asset_git_menu(
             ui,
             git_status,
@@ -966,7 +1007,7 @@ fn folder_context_menu(
 
 fn export_menu(ui: &mut Ui, source: &Path, action: &mut Option<ProjectAction>) {
     ui.menu_button("Export", |ui| {
-        if ui.button("Forge JSON bundle…").clicked() {
+        if ui.button("ApiWright JSON bundle…").clicked() {
             *action = Some(ProjectAction::Export(
                 source.to_path_buf(),
                 BundleFormat::Json,
@@ -1036,8 +1077,21 @@ fn collect_request_paths(node: &ProjectNode, requests: &mut Vec<PathBuf>) {
     }
 }
 
-fn ticket_menu(ui: &mut Ui, node: &ProjectNode, to_jira: &mut Option<PathBuf>) {
+fn ticket_menu(
+    ui: &mut Ui,
+    node: &ProjectNode,
+    to_jira: &mut Option<PathBuf>,
+    to_ticket_info: &mut Option<String>,
+) {
     if let Some(ticket) = &node.ticket {
+        if ui
+            .button("Ticket details…")
+            .on_hover_text("Fetch summary, status and assignee from Jira (Pro)")
+            .clicked()
+        {
+            *to_ticket_info = Some(ticket.value.clone());
+            ui.close();
+        }
         if let Some(url) = jira_url(&ticket.value) {
             if ui.button("Open Jira ticket").clicked() {
                 let _ = open::that(url);
@@ -1240,9 +1294,9 @@ fn export_path(state: &mut AppState, source: &Path, format: BundleFormat) {
         .set_file_name(file_name);
     let output = match format {
         BundleFormat::Json => dialog
-            .add_filter("Forge JSON bundle", &["json"])
+            .add_filter("ApiWright JSON bundle", &["json"])
             .save_file(),
-        BundleFormat::Curl => dialog.add_filter("Forge cURL script", &["sh"]).save_file(),
+        BundleFormat::Curl => dialog.add_filter("ApiWright cURL script", &["sh"]).save_file(),
     };
     let Some(output) = output else {
         return;
@@ -1263,7 +1317,7 @@ fn export_path(state: &mut AppState, source: &Path, format: BundleFormat) {
 fn import_into(state: &mut AppState, destination: &Path) {
     let Some(input) = rfd::FileDialog::new()
         .set_directory(destination)
-        .add_filter("Forge bundle", &["json", "sh"])
+        .add_filter("ApiWright bundle", &["json", "sh"])
         .pick_file()
     else {
         return;

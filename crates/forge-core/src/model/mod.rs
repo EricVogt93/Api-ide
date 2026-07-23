@@ -1,4 +1,4 @@
-//! Domain model: the serde types that make up a Forge workspace on disk.
+//! Domain model: the serde types that make up a ApiWright workspace on disk.
 //!
 //! Every file-level type carries a `format` field for forward migration.
 //! Identity of requests/folders is their file/directory name — these types

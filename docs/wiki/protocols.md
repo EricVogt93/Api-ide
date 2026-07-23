@@ -4,7 +4,7 @@
 
 HTTP is the main executable request model. It supports headers, query parameters, JSON/text/form/multipart/binary bodies, cookies, redirects, TLS controls, assertions, extractors, hooks and mocks.
 
-GraphQL uses the same HTTP engine: Forge builds the standard `{query, variables, operationName}` JSON payload and validates GraphQL syntax before sending. Schema introspection is available for servers that permit the standard introspection query. GraphQL errors returned with HTTP 200 still need assertions against the response body.
+GraphQL uses the same HTTP engine: ApiWright builds the standard `{query, variables, operationName}` JSON payload and validates GraphQL syntax before sending. Schema introspection is available for servers that permit the standard introspection query. GraphQL errors returned with HTTP 200 still need assertions against the response body.
 
 ## WebSocket
 
@@ -16,7 +16,7 @@ The SSE adapter sends a GET with `Accept: text/event-stream`, parses event IDs, 
 
 ## gRPC
 
-Forge currently supports unary gRPC from `.proto` definitions. The GUI dialog and CLI can list services/methods and call a selected method with a JSON request body:
+ApiWright currently supports unary gRPC from `.proto` definitions. The GUI dialog and CLI can list services/methods and call a selected method with a JSON request body:
 
 ```sh
 forge grpc list proto/catalog.proto -I proto

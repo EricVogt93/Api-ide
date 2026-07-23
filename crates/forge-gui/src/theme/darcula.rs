@@ -1,4 +1,4 @@
-//! Forge Dark: neutral graphite surfaces, crisp hierarchy, one blue accent.
+//! ApiWright Dark: neutral graphite surfaces, crisp hierarchy, one blue accent.
 
 use egui::{Color32, CornerRadius, Stroke, Style, Visuals};
 

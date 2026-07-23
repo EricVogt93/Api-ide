@@ -1,4 +1,4 @@
-//! Forge Light: cool neutral chrome, white working surface, one blue accent.
+//! ApiWright Light: cool neutral chrome, white working surface, one blue accent.
 
 use egui::{Color32, CornerRadius, Stroke, Style, Visuals};
 

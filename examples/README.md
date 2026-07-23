@@ -2,15 +2,15 @@
 
 ## `demo-workspace/`
 
-A complete Forge workspace that acts as an executable product tour. Open the
-`demo-workspace` folder directly in the Forge IDE to explore modern request
+A complete ApiWright workspace that acts as an executable product tour. Open the
+`demo-workspace` folder directly in the ApiWright IDE to explore modern request
 documents, sidecars, reusable catalog assets, mocks, matrices, sequences,
 project auth, OpenAPI and inherited project properties. The original HTTPBin
 collection remains available as a legacy-format example.
 
 ```sh
-forge run examples/demo-workspace --env httpbin
-forge ci requests --root examples/demo-workspace \
+apiwright run examples/demo-workspace --env httpbin
+apiwright ci requests --root examples/demo-workspace \
   --env demo --mock --allow-project-code
 ```
 

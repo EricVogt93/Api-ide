@@ -7,7 +7,7 @@ The `forge` binary is the headless adapter over `forge-core`. Build it with
 
 ## Choose the correct runner
 
-Forge currently supports two on-disk generations:
+ApiWright currently supports two on-disk generations:
 
 | Project marker | Commands | Purpose |
 | --- | --- | --- |
@@ -22,21 +22,21 @@ and a folder runs independently in stable path order.
 ## Project roots and targets
 
 `--root` must point at the directory containing `project.json`. If omitted,
-Forge walks upward from the first target until it finds that file. Relative
+ApiWright walks upward from the first target until it finds that file. Relative
 targets are resolved **below the selected root**; absolute targets are allowed
 only when they remain inside the project. Folder scans are recursive, skip
 symbolic links, sort by path, and de-duplicate files.
 
 ```sh
 # From the repository root
-forge ci requests/checkout --root . --env staging
+apiwright ci requests/checkout --root . --env staging
 
 # The complete offline demo
-forge ci requests --root examples/demo-workspace \
+apiwright ci requests --root examples/demo-workspace \
   --env demo --mock --allow-project-code
 
 # No target is required for the regression selection
-forge ci --root . --regression
+apiwright ci --root . --regression
 ```
 
 `--regression` keeps only request documents marked as regression tests in
@@ -48,10 +48,10 @@ an error, not a successful no-op.
 ### Validate and execute
 
 ```sh
-forge validate requests/users/get.request.json --root . --env staging
-forge run-v1 requests/login.request.json requests/profile.request.json --root .
-forge ci requests/users requests/orders/create.request.json --root .
-forge run-sequence smoke.sequence.json --root .
+apiwright validate requests/users/get.request.json --root . --env staging
+apiwright run-v1 requests/login.request.json requests/profile.request.json --root .
+apiwright ci requests/users requests/orders/create.request.json --root .
+apiwright run-sequence smoke.sequence.json --root .
 ```
 
 - `validate <request>` parses the request and sidecars, resolves references,
@@ -85,11 +85,11 @@ variables. Do not commit either resolved values or `.env.local`.
 ### Inspect, lock and mock
 
 ```sh
-forge assets .
-forge assets . --json
-forge lock .
-forge lock . --check
-forge mock . --port 9090 --env staging
+apiwright assets .
+apiwright assets . --json
+apiwright lock .
+apiwright lock . --check
+apiwright mock . --port 9090 --env staging
 ```
 
 `assets` reports assets, request usage, environments and broken references;
@@ -106,13 +106,13 @@ network.
 ### Import, export and migration
 
 ```sh
-forge export requests/orders --root . --format json -o orders.forge.json
-forge export requests/orders/get.request.json --root . \
+apiwright export requests/orders --root . --format json -o orders.forge.json
+apiwright export requests/orders/get.request.json --root . \
   --format curl -o get-order.forge.sh
-forge import orders.forge.json requests/imported
+apiwright import orders.forge.json requests/imported
 
-forge migrate legacy.request.json -o requests/legacy.request.json
-forge migrate-all legacy/ requests/migrated --dry-run
+apiwright migrate legacy.request.json -o requests/legacy.request.json
+apiwright migrate-all legacy/ requests/migrated --dry-run
 ```
 
 `export` never overwrites an existing output. JSON bundles retain readable
@@ -128,18 +128,18 @@ unsupported lossless conversions are reported instead of overwritten.
 ## Legacy workspace commands
 
 ```sh
-forge list examples/demo-workspace
-forge envs examples/demo-workspace
-forge run examples/demo-workspace --scope collections/httpbin \
+apiwright list examples/demo-workspace
+apiwright envs examples/demo-workspace
+apiwright run examples/demo-workspace --scope collections/httpbin \
   --env httpbin --bail --delay-ms 100 --report target/httpbin.xml
-forge run examples/demo-workspace --data cases.csv
+apiwright run examples/demo-workspace --data cases.csv
 ```
 
 `run <workspace>` loads `forge.json`. `--scope` may identify a request,
 collection or nested folder; omission runs the workspace. `--data` accepts
 CSV or JSON rows, `--bail` stops after the first failed request,
 `--delay-ms` throttles requests, and `--report` writes JUnit XML. JUnit output
-is currently an option of this legacy runner, not `forge ci`.
+is currently an option of this legacy runner, not `apiwright ci`.
 
 ## gRPC commands
 
@@ -168,11 +168,11 @@ inline JSON object, `@file.json`, or `-` for stdin; `--meta key:value` and
 
 For multi-result v1 runs, the worst status wins: `Error` overrides `Failed`,
 which overrides `Passed`. Shell termination by a signal follows the operating
-system's status and is not normalized by Forge.
+system's status and is not normalized by ApiWright.
 
 ## CI examples
 
-Keep secrets in the CI secret store, pin `Cargo.lock`, and preserve Forge's
+Keep secrets in the CI secret store, pin `Cargo.lock`, and preserve ApiWright's
 exit code:
 
 ```sh
@@ -187,7 +187,7 @@ Minimal GitHub Actions step:
 - uses: actions/checkout@v4
 - uses: dtolnay/rust-toolchain@stable
 - run: cargo build --release --locked -p forge-cli
-- name: Run Forge regression suite
+- name: Run ApiWright regression suite
   env:
     API_TOKEN: ${{ secrets.API_TOKEN }}
   run: target/release/forge ci --root . --env ci --regression

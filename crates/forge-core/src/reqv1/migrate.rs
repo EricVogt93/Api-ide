@@ -58,6 +58,11 @@ pub fn migrate_tree(
 ) -> Result<Vec<MigrationItem>, std::io::Error> {
     let mut sources = walkdir::WalkDir::new(source_root)
         .into_iter()
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || !entry.file_type().is_dir()
+                || !crate::is_ignored_dir(&entry.file_name().to_string_lossy())
+        })
         .collect::<Result<Vec<_>, _>>()
         .map_err(std::io::Error::other)?
         .into_iter()

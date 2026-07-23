@@ -30,7 +30,7 @@ jobs:
           ./packaging/linux/build-appimage.sh "$VERSION"
       - uses: actions/upload-artifact@v7
         with:
-          name: forge-linux-x86_64
+          name: apiwright-linux-x86_64
           path: target/release-packages/*.AppImage
           if-no-files-found: error
 
@@ -42,14 +42,14 @@ jobs:
       - name: Build executable
         shell: pwsh
         run: |
-          cargo build --release --locked -p forge-gui --bin forge-ide
+          cargo build --release --locked -p forge-gui --bin apiwright-ide
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $version = ($metadata.packages | Where-Object name -eq "forge-gui").version
           New-Item -ItemType Directory -Force target/release-packages | Out-Null
-          Copy-Item target/release/forge-ide.exe "target/release-packages/Forge-$version-windows-x86_64.exe"
+          Copy-Item target/release/apiwright-ide.exe "target/release-packages/ApiWright-$version-windows-x86_64.exe"
       - uses: actions/upload-artifact@v7
         with:
-          name: forge-windows-x86_64
+          name: apiwright-windows-x86_64
           path: target/release-packages/*.exe
           if-no-files-found: error
 
@@ -64,7 +64,7 @@ jobs:
           ./packaging/macos/build-dmg.sh "$VERSION"
       - uses: actions/upload-artifact@v7
         with:
-          name: forge-macos-arm64
+          name: apiwright-macos-arm64
           path: target/release-packages/*.dmg
           if-no-files-found: error
 
@@ -90,4 +90,4 @@ jobs:
         run: |
           cd dist
           sha256sum * > SHA256SUMS.txt
-          gh release create "$GITHUB_REF_NAME" ./* --generate-notes --title "Forge $GITHUB_REF_NAME"
+          gh release create "$GITHUB_REF_NAME" ./* --generate-notes --title "ApiWright $GITHUB_REF_NAME"

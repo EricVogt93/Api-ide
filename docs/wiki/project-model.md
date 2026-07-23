@@ -1,6 +1,6 @@
 # Project model
 
-Forge projects are ordinary directories. The filesystem is the source of truth; the
+ApiWright projects are ordinary directories. The filesystem is the source of truth; the
 project tree, catalog index and Git view are derived from it.
 
 ## Files created for a new project
@@ -27,7 +27,7 @@ my-api/
 Creation also adds `.forge-local/`, `*.secrets.json` and `.env.local` to
 `.gitignore`. `.forge/` is generated state and should also remain uncommitted. Request
 documents may live anywhere below the root, but `requests/<story>/` is the convention.
-Forge discovers request and sequence files recursively by the exact suffixes
+ApiWright discovers request and sequence files recursively by the exact suffixes
 `.request.json` and `.sequence.json`; it skips `.git`, `.forge`, `node_modules` and
 `target` while indexing.
 
@@ -89,7 +89,7 @@ than the lifetime. See [Authentication](authentication.md) for refresh behavior.
 
 The CLI locates a Request Format v1 root by walking upward to the nearest
 `project.json`. The core runner can operate without that file using an empty config,
-but a generated Forge workspace contains both root documents.
+but a generated ApiWright workspace contains both root documents.
 
 ## Environment files
 

@@ -7,3 +7,4 @@
 .env.local
 .forge/
 .codesearch.db/
+/crates/forge-pro/

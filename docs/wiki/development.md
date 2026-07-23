@@ -1,6 +1,6 @@
 # Development Guide
 
-Forge is a Rust 2021 workspace built with the stable toolchain declared in
+ApiWright is a Rust 2021 workspace built with the stable toolchain declared in
 `rust-toolchain.toml`. Cargo resolver v2 covers three crates: `forge-core`,
 `forge-cli` and `forge-gui`.
 

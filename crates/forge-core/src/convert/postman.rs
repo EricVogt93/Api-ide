@@ -223,7 +223,7 @@ fn parse_request(item: &Value, path: &str, skipped: &mut Vec<String>) -> Request
     def.auth = parse_auth(&req["auth"], path, skipped);
     def.body = parse_body(&req["body"], path, skipped);
 
-    // pm.* scripts run on Forge's JS engine through the pm compatibility
+    // pm.* scripts run on ApiWright's JS engine through the pm compatibility
     // shim, so events import as regular scripts instead of being dropped.
     def.scripts.pre_request = event_script(item, "prerequest");
     def.scripts.post_response = event_script(item, "test");

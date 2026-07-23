@@ -17,6 +17,8 @@ pub mod grpc_call;
 pub mod hooks_editor;
 pub mod openapi_import;
 pub mod postman_import;
+#[cfg(feature = "pro")]
+pub mod report;
 pub mod search;
 pub mod settings;
 pub mod snippet_export;
@@ -48,6 +50,11 @@ pub struct DialogManager {
     pub grpc_call: grpc_call::GrpcCallState,
     pub v1_editor: v1_editor::V1EditorState,
     pub update: crate::updater::UpdateState,
+    pub license: crate::license::LicenseState,
+    #[cfg(feature = "pro")]
+    pub jira: crate::jira::JiraState,
+    #[cfg(feature = "pro")]
+    pub report: report::ReportState,
 }
 
 /// Render whichever overlay dialogs are currently open. Call once per frame;
@@ -67,6 +74,12 @@ pub fn show(ctx: &egui::Context, state: &mut AppState, bridge: &Bridge) {
     hooks_editor::show(ctx, state);
     grpc_call::show(ctx, state, bridge);
     crate::updater::show(ctx, &mut state.dialogs.update, bridge);
+    crate::license::show(ctx, state, bridge);
+    #[cfg(feature = "pro")]
+    {
+        crate::jira::show(ctx, state, bridge);
+        report::show(ctx, state, bridge);
+    }
     tour::show(ctx, state);
 }
 

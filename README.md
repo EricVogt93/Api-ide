@@ -2,11 +2,11 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="crates/forge-gui/assets/logo-light.png">
     <source media="(prefers-color-scheme: light)" srcset="crates/forge-gui/assets/logo-dark.png">
-    <img src="crates/forge-gui/assets/logo-dark.png" alt="Forge" width="116">
+    <img src="crates/forge-gui/assets/logo-dark.png" alt="ApiWright" width="116">
   </picture>
 </p>
 
-<h1 align="center">Forge</h1>
+<h1 align="center">ApiWright</h1>
 
 <p align="center">
   A native, git-first IDE for building, running, and maintaining API tests.
@@ -15,18 +15,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/EricVogt93/Api-ide/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/EricVogt93/Api-ide/actions/workflows/ci.yml/badge.svg?branch=development"></a>
-  <a href="https://github.com/EricVogt93/Api-ide/actions/workflows/release.yml"><img alt="Release packages" src="https://github.com/EricVogt93/Api-ide/actions/workflows/release.yml/badge.svg"></a>
+  <a href="https://github.com/EricVogt93/apiwright/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/EricVogt93/apiwright/actions/workflows/ci.yml/badge.svg?branch=development"></a>
+  <a href="https://github.com/EricVogt93/apiwright/actions/workflows/release.yml"><img alt="Release packages" src="https://github.com/EricVogt93/apiwright/actions/workflows/release.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="PolyForm Noncommercial License" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-4c8bf5.svg"></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-stable-b7410e?logo=rust">
 </p>
 
 > [!NOTE]
-> Forge is under active development. The request format is versioned and validated, but the desktop packages are not code-signed yet.
+> ApiWright is under active development. The request format is versioned and validated, but the desktop packages are not code-signed yet.
 
-## Why Forge?
+## Why ApiWright?
 
-API test tools tend to turn a request into a document full of scripts, copied assertions, hidden state, and team-specific setup. Forge takes the opposite approach:
+API test tools tend to turn a request into a document full of scripts, copied assertions, hidden state, and team-specific setup. ApiWright takes the opposite approach:
 
 - **Install, create a project, start working.** Conventional folders and asset paths are generated automatically.
 - **Your project is the source of truth.** Requests, environments, hooks, assertions, and metadata are ordinary reviewable files.
@@ -34,9 +34,27 @@ API test tools tend to turn a request into a document full of scripts, copied as
 - **The IDE and CI run the same core.** The native GUI and headless CLI are adapters around the same Rust execution engine.
 - **OpenAPI is active tooling.** Browse operations, generate valid values, complete requests, validate responses, track coverage, and generate test suites.
 
+## Jira integration
+
+The biggest win for teams: ApiWright ties API tests to the tickets they belong to.
+Attach a Jira link to any story folder or single test — children inherit it, so
+one link at the story level covers every request underneath. Links stay visible
+next to each node in the project tree, travel with exported bundles, and are
+stored as plain `.forge-jira` files, so they are reviewable in every pull
+request and never live in a proprietary workspace database.
+
+It goes beyond links: connect ApiWright to Jira Cloud or Server (Settings → Jira)
+and fetch ticket details — summary, status, assignee — straight into the
+project tree, or post run summaries as ticket comments without leaving the
+IDE.
+
+Editing Jira links is a ApiWright Pro feature (existing links stay visible for
+everyone); the free 60-day commercial trial includes it — see
+[COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+
 ## Highlights
 
-| Area | What Forge provides |
+| Area | What ApiWright provides |
 | --- | --- |
 | Project view | File-explorer hierarchy, story folders, Git state, branch/worktree actions, inherited Jira links, recursive formatting and export |
 | Request editor | JSON beautification, syntax highlighting, diagnostics, minimap, completion, OpenAPI suggestions, autosave and Zen mode |
@@ -47,17 +65,17 @@ API test tools tend to turn a request into a document full of scripts, copied as
 | Authentication | Basic/Bearer helpers, reusable auth requests, Keycloak/Auth0/Azure presets, expiry-aware refresh before a dependent request |
 | AI Advisor | OpenAI-compatible advisor with automatic active-file, sidecar, OpenAPI, project-metadata and nearby-file context; secrets are redacted before sending |
 | Protocols | HTTP, GraphQL, WebSocket, SSE and unary gRPC |
-| Portability | Lossless Forge bundles, cURL export/import, Postman import, JUnit XML and a headless runner |
+| Portability | Lossless ApiWright bundles, cURL export/import, Postman import, JUnit XML and a headless runner |
 
 ## Install
 
-Download the latest package from [GitHub Releases](https://github.com/EricVogt93/Api-ide/releases):
+Download the latest package from [GitHub Releases](https://github.com/EricVogt93/apiwright/releases):
 
 | Platform | Artifact |
 | --- | --- |
-| Windows x86_64 | `Forge-<version>-windows-x86_64.exe` |
-| Linux x86_64 | `Forge-<version>-linux-x86_64.AppImage` |
-| macOS Apple Silicon | `Forge-<version>-macOS-arm64.dmg` |
+| Windows x86_64 | `ApiWright-<version>-windows-x86_64.exe` |
+| Linux x86_64 | `ApiWright-<version>-linux-x86_64.AppImage` |
+| macOS Apple Silicon | `ApiWright-<version>-macOS-arm64.dmg` |
 
 Until signed builds are available, Windows SmartScreen and macOS Gatekeeper may show an unknown-publisher warning. Release assets include SHA-256 checksums.
 
@@ -66,8 +84,8 @@ Until signed builds are available, Windows SmartScreen and macOS Gatekeeper may 
 Install the stable Rust toolchain, then run:
 
 ```sh
-git clone https://github.com/EricVogt93/Api-ide.git
-cd Api-ide
+git clone https://github.com/EricVogt93/apiwright.git
+cd apiwright
 cargo run --release -p forge-gui --bin forge-ide
 ```
 
@@ -80,9 +98,9 @@ sudo apt install cmake pkg-config libgl1-mesa-dev libwayland-dev \
 
 ## The zero-config workflow
 
-1. Start Forge.
+1. Start ApiWright.
 2. Select **New Project** and choose a directory.
-3. Forge creates the conventional project structure and opens the first request.
+3. ApiWright creates the conventional project structure and opens the first request.
 4. Add story folders and requests from the project tree.
 5. Run, inspect, assert, and commit.
 
@@ -106,7 +124,7 @@ my-api/
 └── specs/
 ```
 
-Assertions and hooks deliberately live beside a request instead of inside it. The request document remains focused on HTTP data; Forge loads the sidecars as one effective executable request.
+Assertions and hooks deliberately live beside a request instead of inside it. The request document remains focused on HTTP data; ApiWright loads the sidecars as one effective executable request.
 
 ## Request format v1
 
@@ -137,7 +155,7 @@ The schemas in [`schemas/`](schemas) define requests and sidecars. The complete 
 
 ## Documentation
 
-The [Forge Wiki](docs/wiki/README.md) is the full product guide. It covers the zero-config workflow, project layout, request and sidecar formats, the catalog, OpenAPI tooling, authentication, the AI Advisor, generated suites, CLI/CI usage, and the hexagonal architecture. Use [Repository Guidelines](AGENTS.md) for contribution rules.
+The [ApiWright Wiki](docs/wiki/README.md) is the full product guide. It covers the zero-config workflow, project layout, request and sidecar formats, the catalog, OpenAPI tooling, authentication, the AI Advisor, generated suites, CLI/CI usage, and the hexagonal architecture. Use [Repository Guidelines](AGENTS.md) for contribution rules.
 
 ## One catalog, no assertion copy-paste
 
@@ -158,12 +176,12 @@ Project-owned assets use the same UI. A JavaScript implementation such as `asset
 - Put a spec below `specs/`, configure a project URL, or inherit an OpenAPI source from folder properties.
 - Browse operations by method and request shape, generate valid parameter values, add operations to the current request, and see which endpoints are already covered.
 - Assign environments at project, folder, or request level; children inherit unless they override.
-- Mark an existing request as an auth provider or configure a provider preset. Forge tracks token lifetime and refreshes before a dependent request would outlive the remaining token window.
+- Mark an existing request as an auth provider or configure a provider preset. ApiWright tracks token lifetime and refreshes before a dependent request would outlive the remaining token window.
 - Jira links and OpenAPI/environment properties inherit from folders to descendants, keeping story-level setup in one place.
 
 ### Generated OpenAPI suites
 
-Select a project folder and open the tools on the right. Forge writes generated output below that folder and keeps hand-written files outside it untouched:
+Select a project folder and open the tools on the right. ApiWright writes generated output below that folder and keeps hand-written files outside it untouched:
 
 | Generator | Output | Contents |
 | --- | --- | --- |
@@ -171,7 +189,7 @@ Select a project folder and open the tools on the right. Forge writes generated 
 | API tests | `api/` | Complete operation requests, assertions and an ordered sequence |
 | Load & performance | `performance/` | k6 operation data and smoke, load, stress, spike and soak profiles |
 
-Generated folders carry a Forge manifest and can be regenerated. Existing folders without that manifest are never replaced. k6 runs only GET, HEAD and OPTIONS by default:
+Generated folders carry a ApiWright manifest and can be regenerated. Existing folders without that manifest are never replaced. k6 runs only GET, HEAD and OPTIONS by default:
 
 ```sh
 cd requests/checkout/performance
@@ -196,11 +214,11 @@ cargo run -p forge-cli -- export requests/users/get.request.json --format curl -
 cargo run -p forge-cli -- import users.forge.json requests
 ```
 
-`forge ci` accepts absolute or project-relative request files and folders and always executes the resolved requests as independent tests in stable path order. Mark a request as **Regression test** in its Project-view Properties; `forge ci --regression --root .` then executes only those marked requests and returns CI-friendly exit codes (`0` passed, `1` assertion failure, `2` configuration or execution error). `run-v1` remains available for interactive single requests and explicit multi-file sequences.
+`apiwright ci` accepts absolute or project-relative request files and folders and always executes the resolved requests as independent tests in stable path order. Mark a request as **Regression test** in its Project-view Properties; `apiwright ci --regression --root .` then executes only those marked requests and returns CI-friendly exit codes (`0` passed, `1` assertion failure, `2` configuration or execution error). `run-v1` remains available for interactive single requests and explicit multi-file sequences.
 
-Forge checks the latest published GitHub Release at startup. A newer version opens a changelog dialog where it can be downloaded or skipped; downloaded packages are SHA-256 verified before the platform update flow starts. The release workflow publishes updates from version tags matching the Cargo version, such as `v0.2.0`.
+ApiWright checks the latest published GitHub Release at startup. A newer version opens a changelog dialog where it can be downloaded or skipped; downloaded packages are SHA-256 verified before the platform update flow starts. The release workflow publishes updates from version tags matching the Cargo version, such as `v0.2.0`.
 
-Legacy `forge.json` workspaces remain runnable through `forge run`, and `forge migrate` / `forge migrate-all` convert them without silently dropping unsupported fields.
+Legacy `forge.json` workspaces remain runnable through `apiwright run`, and `apiwright migrate` / `apiwright migrate-all` convert them without silently dropping unsupported fields.
 
 ## Architecture
 
@@ -238,6 +256,6 @@ GitHub Actions runs those checks on pull requests and builds the Windows EXE, Li
 
 ## License
 
-Forge is free for personal and other noncommercial use under the
+ApiWright is free for personal and other noncommercial use under the
 [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use requires a
 separate paid license; see [Commercial Licensing](COMMERCIAL-LICENSE.md).

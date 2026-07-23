@@ -5,8 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "forge"
+name = "apiwright"
 path = "src/main.rs"
+
+[features]
+# Built by the official release pipeline with the private forge-pro
+# overlay cloned to crates/forge-pro (its enable-pro.sh rewrites this
+# feature). Without the overlay, --features pro does not resolve.
+pro = []
 
 [dependencies]
 forge-core = { path = "../forge-core" }

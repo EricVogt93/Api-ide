@@ -119,7 +119,7 @@ Bindings are resolved in dependency order. `${bindings.b}` inside binding `a` cr
 real dependency; cycles fail with `BINDING_CYCLE`. Independent resolution errors are
 collected before execution.
 
-`matrix` uses the same shapes, but each resolved value must be an array. Forge executes
+`matrix` uses the same shapes, but each resolved value must be an array. ApiWright executes
 one case per element; multiple names form a Cartesian product. `${matrix.case}` points
 to the current element. Bindings are rebuilt per case, and runtime writes do not leak
 between cases.

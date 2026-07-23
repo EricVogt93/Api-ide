@@ -32,7 +32,7 @@ pub enum StoreError {
         #[source]
         source: serde_json::Error,
     },
-    #[error("{0} is not a Forge workspace (missing forge.json)")]
+    #[error("{0} is not a ApiWright workspace (missing forge.json)")]
     NotAWorkspace(PathBuf),
     #[error("{path}: unsupported format version {found} (this build supports up to {supported})")]
     UnsupportedFormat {

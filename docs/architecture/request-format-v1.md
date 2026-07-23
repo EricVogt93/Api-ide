@@ -1,4 +1,4 @@
-# Forge Request Format & Execution Architecture (v1)
+# ApiWright Request Format & Execution Architecture (v1)
 
 Status: design specification. This describes a **new, IDE-independent subsystem** — a
 persisted request format, an asset store, and a resolution/execution engine. It is not
@@ -26,7 +26,7 @@ reuse is a reference.** Hooks/extractors and assertions live in the derived sibl
 ## Implementation status
 
 A working first version lives in `crates/forge-core/src/reqv1/` and the
-`forge validate` / `forge run-v1` CLI subcommands. Built:
+`apiwright validate` / `apiwright run-v1` CLI subcommands. Built:
 
 - Document model + `deny_unknown_fields` validation (`model.rs`), schema at
   `schemas/request-v1.schema.json`.
@@ -97,7 +97,7 @@ format already supported the referencing.
 — assets grouped by kind, each data asset browsable to any JSON node, a
 reverse-reference (usage) graph, broken-ref detection with request + instance
 path, and `suggest_ref` (alias-preferred, else relative). Surfaced by
-`forge assets [--json]` and a GUI "Assets" tool window (left stripe): browse
+`apiwright assets [--json]` and a GUI "Assets" tool window (left stripe): browse
 by kind, expand data assets to copy a `data:x#/pointer` ref for any node,
 per-asset usage badges, broken refs flagged, open-in-editor. Read-only — the
 filesystem stays the source of truth.
@@ -105,10 +105,10 @@ filesystem stays the source of truth.
 - **Full sibling-schema validation** (`resolve.rs`): a data asset with a
   `*.schema.json` sibling is validated against it (draft-2020-12) at load time
   — the `ponytail:` presence+parse seam is closed.
-- **Lockfile + integrity** (`lock.rs`): `forge lock` writes `.forge/lock.json`
-  (sha256 per file asset); `forge lock --check` and `run-v1 --frozen` verify
+- **Lockfile + integrity** (`lock.rs`): `apiwright lock` writes `.forge/lock.json`
+  (sha256 per file asset); `apiwright lock --check` and `run-v1 --frozen` verify
   and report drift (changed / missing / unlocked). Off by default.
-- **Mock server** (`mock.rs`): `forge mock <root>` serves each mock-bearing
+- **Mock server** (`mock.rs`): `apiwright mock <root>` serves each mock-bearing
   request document over HTTP, routed by method + a path template derived from
   its URL (`:seg` and `${...}` segments are wildcards; literal routes beat
   wildcards). Static and dynamic (JS) mocks both served; an optional
@@ -331,7 +331,7 @@ export interface JsonPatchOperation {
 
 The Properties checkbox **Regression test** is represented by the canonical
 `"regression"` entry in `meta.tags`. This keeps GUI selection and
-`forge ci --regression` on the same persisted metadata without a parallel
+`apiwright ci --regression` on the same persisted metadata without a parallel
 sidecar flag.
 
 Semantics:
@@ -812,7 +812,7 @@ Request JSON
 ```
 
 Stages 1–5 are pure and side-effect-free except reads; they can run in CI as a "validate
-only" pass (`forge validate`) that never touches the network. Stages 6–8 are the run.
+only" pass (`apiwright validate`) that never touches the network. Stages 6–8 are the run.
 
 ---
 
@@ -916,7 +916,7 @@ running genuinely untrusted assets is a demonstrated workflow.
 ## 16. Asset versioning and lockfile strategy
 
 - **Document version:** every persisted document carries `formatVersion` + `kind`.
-  The existing `forge-core` `*.request.json` is **v0**. `forge migrate` maps the
+  The existing `forge-core` `*.request.json` is **v0**. `apiwright migrate` maps the
   representable request/auth/assertion/extractor subset onto v1 and refuses the
   entire conversion when a field (for example inline scripts or unsupported
   transport auth) would otherwise be lost.
@@ -936,7 +936,7 @@ running genuinely untrusted assets is a demonstrated workflow.
 - **Lockfile (`.forge/lock.json`, optional, off by default):** pins each resolved asset's
   absolute-ish path and a content **integrity hash** (sha256). Purpose: reproducible CI
   and detecting a fixture changing under you. It is a **cache/guard**, never the project
-  definition — deletable and `forge lock`-rebuildable. Turn it on for release CI or
+  definition — deletable and `apiwright lock`-rebuildable. Turn it on for release CI or
   shared fixture suites; leave it off for day-to-day local work.
 
 ---
@@ -970,7 +970,7 @@ export interface Diagnostic {
 - Response **history is not persisted in the request document**. The IDE writes
   it to `.forge-local/history.sqlite`; CLI output/JUnit remain separate artifacts,
   keeping request files clean and diff-friendly.
-- The same `RunResult`/`Diagnostic` types back both the CLI (`forge run`, JUnit output)
+- The same `RunResult`/`Diagnostic` types back both the CLI (`apiwright run`, JUnit output)
   and the IDE; the GUI renders them but the types are UI-agnostic.
 
 ---
@@ -1116,8 +1116,8 @@ next to `users.json`) so a fixture and its contract move together.
 - Secret provider: `.env.local` + process env only.
 - Executable assets: in-process QuickJS with timeout, memory cap, deep-frozen
   context and explicit adapter-level trust confirmation.
-- `RunResult`/`Diagnostic`; JUnit output. `forge validate` (stages 1–5, no network) and
-  `forge run`.
+- `RunResult`/`Diagnostic`; JUnit output. `apiwright validate` (stages 1–5, no network) and
+  `apiwright run`.
 
 **Defer until a real need appears (each is additive, no format break):**
 

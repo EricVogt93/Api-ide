@@ -39,7 +39,7 @@ jetzt ebenfalls geschlossen:
 - Matrixfälle und gespeicherte Request-Sequenzen laufen im zentralen
   v1-Editor.
 - Projekt-JavaScript benötigt in GUI und CLI eine explizite Freigabe.
-- `forge migrate` konvertiert den verlustfrei darstellbaren Teil eines
+- `apiwright migrate` konvertiert den verlustfrei darstellbaren Teil eines
   Legacy-Requests und bricht bei nicht abbildbaren Feldern ab.
 
 Arbeitsweise: ein Feature pro Commit, Tests + clippy grün vor jedem Commit,

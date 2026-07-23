@@ -130,12 +130,14 @@ fn owned_adapter_record_uses_the_same_store() {
             response_body: Some(b"[]".to_vec()),
             error: None,
             env: Some("local".to_string()),
+            passed: Some(true),
         })
         .unwrap();
 
     let entry = store.get(id).unwrap().unwrap();
     assert_eq!(entry.request_id, "v1.users");
     assert_eq!(entry.response_body.as_deref(), Some(&b"[]"[..]));
+    assert_eq!(entry.passed, Some(true));
 }
 
 #[test]
@@ -491,4 +493,68 @@ fn open_file_backed_store_persists_across_reopen() {
     let all = reopened.list(&HistoryFilter::default()).unwrap();
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].name, "Persisted");
+}
+
+#[test]
+fn v1_databases_gain_the_passed_column_on_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                executed_at TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                method TEXT NOT NULL,
+                url TEXT NOT NULL,
+                status INTEGER,
+                duration_ms INTEGER NOT NULL,
+                request_headers TEXT NOT NULL,
+                request_body BLOB,
+                response_headers TEXT NOT NULL,
+                response_body BLOB,
+                error TEXT,
+                env TEXT,
+                truncated INTEGER NOT NULL DEFAULT 0
+            );
+            PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entries (executed_at, request_id, name, method, url, status,
+                duration_ms, request_headers, response_headers)
+             VALUES ('2026-01-01T00:00:00Z', 'legacy', 'Legacy', 'GET', 'u', 200, 5, '[]', '[]')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let store = HistoryStore::open(&path).expect("v1 database migrates on open");
+    let rows = store.list(&HistoryFilter::default()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].passed, None, "legacy rows have no verdict");
+
+    // And new rows persist a verdict in the migrated database.
+    store
+        .record_raw(HistoryRecord {
+            executed_at: Utc::now().to_rfc3339(),
+            request_id: "new".to_string(),
+            name: "New".to_string(),
+            method: "GET".to_string(),
+            url: "u".to_string(),
+            status: Some(200),
+            duration_ms: 3,
+            request_headers: Vec::new(),
+            request_body: None,
+            response_headers: Vec::new(),
+            response_body: None,
+            error: None,
+            env: None,
+            passed: Some(false),
+        })
+        .unwrap();
+    let rows = store.list(&HistoryFilter::default()).unwrap();
+    assert_eq!(rows[0].passed, Some(false));
 }

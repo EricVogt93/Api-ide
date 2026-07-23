@@ -1,0 +1,43 @@
+name: Wiki
+
+on:
+  push:
+    branches: [development]
+    paths: ['docs/wiki/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish docs/wiki to the GitHub wiki
+        # The wiki git repository only exists after the first page has been
+        # created once through the GitHub UI; until then the clone fails here.
+        # docs/wiki is the source of truth: pages edited or added directly in
+        # the wiki UI are overwritten or deleted on the next sync.
+        run: |
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" /tmp/wiki
+          rm -f /tmp/wiki/*.md
+          cp docs/wiki/*.md /tmp/wiki/
+          mv /tmp/wiki/README.md /tmp/wiki/Home.md
+          # Wiki pages are served at /<name> without extension; drop .md from
+          # links between flat page names so cross-links keep working.
+          sed -i -E 's/\]\(([A-Za-z0-9._-]+)\.md(#[A-Za-z0-9._-]+)?\)/](\1\2)/g' /tmp/wiki/*.md
+          # Links that leave docs/wiki point back at the main repository.
+          sed -i "s|](\.\./|](https://github.com/${GITHUB_REPOSITORY}/blob/development/docs/|g" /tmp/wiki/*.md
+          cd /tmp/wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "wiki already up to date"
+            exit 0
+          fi
+          git commit -m "Sync from docs/wiki @ ${GITHUB_SHA::7}"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

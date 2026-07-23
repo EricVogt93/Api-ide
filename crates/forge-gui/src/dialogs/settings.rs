@@ -21,10 +21,22 @@ enum Category {
     View,
     Http,
     Editor,
+    #[cfg(feature = "pro")]
+    Jira,
     Keymap,
 }
 
 impl Category {
+    #[cfg(feature = "pro")]
+    const ALL: [Category; 6] = [
+        Category::Appearance,
+        Category::View,
+        Category::Http,
+        Category::Editor,
+        Category::Jira,
+        Category::Keymap,
+    ];
+    #[cfg(not(feature = "pro"))]
     const ALL: [Category; 5] = [
         Category::Appearance,
         Category::View,
@@ -39,6 +51,8 @@ impl Category {
             Category::View => "View",
             Category::Http => "HTTP",
             Category::Editor => "Editor",
+            #[cfg(feature = "pro")]
+            Category::Jira => "Jira",
             Category::Keymap => "Keymap",
         }
     }
@@ -238,6 +252,8 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
                                         }
                                     }
                                     Category::Editor => editor_tab(ui, state),
+                                    #[cfg(feature = "pro")]
+                                    Category::Jira => jira_tab(ui, state),
                                     Category::Keymap => keymap_tab(ui),
                                 }
                             });
@@ -374,6 +390,58 @@ fn view_tab(ui: &mut Ui, state: &mut AppState) {
         ui.label("Ctrl+Shift+F11")
             .on_hover_text("Zen mode hides chrome; move to an edge to reveal its tool window.");
     });
+}
+
+#[cfg(feature = "pro")]
+fn jira_tab(ui: &mut Ui, state: &mut AppState) {
+    ui.heading("Jira");
+    ui.add_space(12.0);
+    state.dialogs.jira.ensure_config();
+    let mut save = false;
+    settings_card(ui, "Connection", |ui| {
+        ui.label("Used by the Jira integration (ticket details, comments) — a ApiWright Pro feature.");
+        ui.add_space(8.0);
+        egui::Grid::new("jira-settings-grid")
+            .num_columns(2)
+            .spacing([12.0, 8.0])
+            .show(ui, |ui| {
+                ui.label("Base URL");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.dialogs.jira.config.base_url)
+                        .desired_width(320.0)
+                        .hint_text("https://yourcompany.atlassian.net"),
+                );
+                ui.end_row();
+                ui.label("Email").on_hover_text(
+                    "Jira Cloud: account email for the API token. Leave empty on Server/Data Center to use a personal access token.",
+                );
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.dialogs.jira.config.email)
+                        .desired_width(320.0)
+                        .hint_text("you@company.com (Cloud) — empty for Server/DC"),
+                );
+                ui.end_row();
+                ui.label("API token");
+                ui.add(
+                    egui::TextEdit::singleline(&mut state.dialogs.jira.config.api_token)
+                        .desired_width(320.0)
+                        .password(true),
+                );
+                ui.end_row();
+            });
+        ui.add_space(8.0);
+        ui.weak("Stored in ~/.config/forge/jira.json (owner-readable only), never in the project.");
+        ui.add_space(4.0);
+        if ui.button("Save connection").clicked() {
+            save = true;
+        }
+    });
+    if save {
+        match crate::jira::save_config(&state.dialogs.jira.config) {
+            Ok(()) => state.status = Some(StatusMessage::info("Jira connection saved")),
+            Err(error) => state.status = Some(StatusMessage::error(error)),
+        }
+    }
 }
 
 fn settings_card(ui: &mut Ui, title: &str, add_contents: impl FnOnce(&mut Ui)) {

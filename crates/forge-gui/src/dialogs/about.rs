@@ -1,4 +1,4 @@
-//! About Forge (Help menu): version/build info and third-party credits.
+//! About ApiWright (Help menu): version/build info and third-party credits.
 
 use egui::Window;
 
@@ -10,13 +10,13 @@ pub fn show(ctx: &egui::Context, state: &mut AppState) {
         return;
     }
     let mut open = state.dialogs.about_open;
-    Window::new("About Forge")
+    Window::new("About ApiWright")
         .id(egui::Id::new("about-dialog"))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
         .show(ctx, |ui| {
-            ui.heading("Forge");
+            ui.heading("ApiWright");
             ui.label("A local-first IDE for building, inspecting, and verifying APIs.");
             ui.add_space(8.0);
             egui::Grid::new("about-grid")

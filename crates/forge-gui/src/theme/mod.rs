@@ -1,4 +1,4 @@
-//! Forge's shared visual system: dark/light palettes, typography, spacing,
+//! ApiWright's shared visual system: dark/light palettes, typography, spacing,
 //! and the few controls that need consistent emphasis across screens.
 
 pub mod darcula;

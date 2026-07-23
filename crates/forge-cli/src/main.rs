@@ -12,9 +12,9 @@ use print::{print_summary, run_printer, supports_color};
 
 #[derive(Parser)]
 #[command(
-    name = "forge",
+    name = "apiwright",
     version,
-    about = "Headless runner for Forge API test workspaces"
+    about = "Headless runner for ApiWright API test workspaces"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -42,6 +42,9 @@ enum Command {
     RunSequence(V1SequenceRunArgs),
     /// Request-format v1: list the project's asset store (usage, broken refs).
     Assets(AssetsArgs),
+    /// Ticket → OpenAPI → coverage report with runtime and flaky analysis.
+    #[cfg(feature = "pro")]
+    Report(ReportArgs),
     /// Request-format v1: write .forge/lock.json (asset integrity hashes).
     Lock(LockArgs),
     /// Request-format v1: serve request documents' mocks over HTTP.
@@ -52,7 +55,7 @@ enum Command {
     MigrateAll(MigrateAllArgs),
     /// Export one request or a folder as a lossless JSON/cURL bundle.
     Export(ExportArgs),
-    /// Import a lossless Forge JSON/cURL bundle below a destination folder.
+    /// Import a lossless ApiWright JSON/cURL bundle below a destination folder.
     Import(ImportArgs),
 }
 
@@ -79,7 +82,7 @@ struct ExportArgs {
 
 #[derive(Args)]
 struct ImportArgs {
-    /// A `*.forge.json` or Forge-generated `*.forge.sh` file.
+    /// A `*.forge.json` or ApiWright-generated `*.forge.sh` file.
     bundle: PathBuf,
     /// Existing project folder below which bundle paths are restored.
     destination: PathBuf,
@@ -136,6 +139,25 @@ struct AssetsArgs {
     /// Emit the full index as JSON instead of the table.
     #[arg(long)]
     json: bool,
+}
+
+#[cfg(feature = "pro")]
+#[derive(Args)]
+struct ReportArgs {
+    /// Project root (holds project.json).
+    root: PathBuf,
+    /// Narrow the report to one ticket (key or full link value).
+    #[arg(long)]
+    ticket: Option<String>,
+    /// Emit JSON instead of Markdown.
+    #[arg(long)]
+    json: bool,
+    /// Statistics window: most recent runs per test.
+    #[arg(long, default_value_t = forge_pro::report::DEFAULT_WINDOW)]
+    window: usize,
+    /// Write to a file instead of stdout.
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -282,6 +304,8 @@ async fn main() {
         Command::Ci(args) => cmd_run_v1(args, true).await,
         Command::RunSequence(args) => cmd_run_sequence(args).await,
         Command::Assets(args) => cmd_assets(&args),
+        #[cfg(feature = "pro")]
+        Command::Report(args) => cmd_report(&args),
         Command::Lock(args) => cmd_lock(&args),
         Command::Mock(args) => cmd_mock(&args),
         Command::Migrate(args) => cmd_migrate(&args),
@@ -575,6 +599,66 @@ fn serve_mock(
             eprintln!("error: failed to send mock response: {error}");
         }
     }
+}
+
+#[cfg(feature = "pro")]
+fn cmd_report(args: &ReportArgs) -> i32 {
+    let index = match forge_core::reqv1::index::ProjectIndex::scan(&args.root) {
+        Ok(index) => index,
+        Err(diagnostic) => {
+            eprintln!("cannot index {}: {}", args.root.display(), diagnostic.message);
+            return 2;
+        }
+    };
+    let history_path = args
+        .root
+        .join(forge_core::store::LOCAL_DIR)
+        .join("history.sqlite");
+    // No history yet (fresh checkout, CI): report against an empty store
+    // instead of creating .forge-local as a side effect.
+    let history = if history_path.is_file() {
+        forge_core::history::HistoryStore::open(&history_path)
+    } else {
+        forge_core::history::HistoryStore::open_in_memory()
+    };
+    let history = match history {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("cannot open {}: {error}", history_path.display());
+            return 2;
+        }
+    };
+    let spec = forge_core::openapi::discover_spec(&args.root);
+    let report = forge_pro::report::build_report(
+        &args.root,
+        &index,
+        &history,
+        spec.as_ref(),
+        args.window,
+        args.ticket.as_deref(),
+    );
+    let output = if args.json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(json) => json,
+            Err(error) => {
+                eprintln!("cannot serialize the report: {error}");
+                return 2;
+            }
+        }
+    } else {
+        forge_pro::report::render_markdown(&report)
+    };
+    match &args.out {
+        Some(path) => {
+            if let Err(error) = std::fs::write(path, output) {
+                eprintln!("cannot write {}: {error}", path.display());
+                return 2;
+            }
+            println!("report written to {}", path.display());
+        }
+        None => print!("{output}"),
+    }
+    0
 }
 
 fn cmd_assets(args: &AssetsArgs) -> i32 {
@@ -1022,7 +1106,7 @@ fn resolve_v1_targets(
     };
     let root = v1_root_for(&root_seed, root_override);
     if !root.join("project.json").is_file() {
-        return Err(format!("{} is not a Forge project", root.display()));
+        return Err(format!("{} is not a ApiWright project", root.display()));
     }
     let effective_targets = if targets.is_empty() {
         vec![root.join("requests")]
@@ -1106,6 +1190,9 @@ fn collect_v1_requests(target: &Path, requests: &mut Vec<PathBuf>) -> Result<(),
             continue;
         }
         if file_type.is_dir() {
+            if forge_core::is_ignored_dir(&entry.file_name().to_string_lossy()) {
+                continue;
+            }
             collect_v1_requests(&entry.path(), requests)?;
         } else if file_type.is_file() && is_v1_request_file(&entry.path()) {
             requests.push(entry.path());

@@ -4,7 +4,10 @@ mod advisor;
 mod app;
 mod bridge;
 mod git;
+#[cfg(feature = "pro")]
+mod jira;
 mod keymap;
+mod license;
 mod local;
 mod panels;
 mod state;
@@ -52,10 +55,10 @@ fn main() -> eframe::Result {
     let initial_workspace: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
 
     let mut viewport = egui::ViewportBuilder::default()
-        .with_app_id("forge-ide")
+        .with_app_id("apiwright")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([1100.0, 680.0])
-        .with_title("Forge — API IDE");
+        .with_title("ApiWright — API IDE");
     // Window/taskbar icon. A bad decode just means no icon, never a crash.
     if let Ok(icon) = eframe::icon_data::from_png_bytes(DARK_WINDOW_ICON_PNG) {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
@@ -67,7 +70,7 @@ fn main() -> eframe::Result {
     };
 
     eframe::run_native(
-        "forge-ide",
+        "apiwright",
         options,
         Box::new(move |cc| {
             theme::fonts::install_fonts(&cc.egui_ctx);

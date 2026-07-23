@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Forge
+Name=ApiWright
 GenericName=API IDE
 Comment=Build, inspect, and verify APIs
-Exec=forge-ide
-Icon=forge-ide-symbolic
+Exec=apiwright-ide
+Icon=apiwright-symbolic
 Terminal=false
 Categories=Development;
 StartupNotify=true
