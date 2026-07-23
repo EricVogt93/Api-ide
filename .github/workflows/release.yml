@@ -81,7 +81,7 @@ jobs:
           test "$GITHUB_REF_NAME" = "v$VERSION"
       - uses: actions/download-artifact@v8
         with:
-          pattern: forge-*
+          pattern: apiwright-*
           path: dist
           merge-multiple: true
       - name: Publish checksummed assets
